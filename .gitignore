@@ -51,3 +51,8 @@ settings.yml
 app.exe
 app
 dist/
+
+# Profiling files
+*.pb.gz
+*.prof
+pprof/
