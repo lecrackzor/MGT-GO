@@ -1,5 +1,7 @@
 # Market Terminal Gexbot - Go/Wails Version
 
+> **⚠️ IMPORTANT**: Please read the [DISCLAIMER.md](DISCLAIMER.md) before using this software. This software is not affiliated with Gexbot, is provided "as is" without warranty, and is not financial advice.
+
 ## Prerequisites
 
 ### Install Go
