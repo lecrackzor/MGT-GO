@@ -1,0 +1,1796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chart</title>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/locale/en-US/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            overflow: hidden;
+        }
+        
+        h1 {
+            color: #4CAF50;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        #chart-container {
+            width: 100%;
+            height: calc(100vh - 100px);
+            position: relative;
+        }
+        
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        #status {
+            color: #888;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .error {
+            color: #f44336;
+        }
+        
+        /* Crosshair Info Box Styles */
+        #crosshair-info-box {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            min-width: 200px;
+            min-height: 100px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #4CAF50;
+            border-radius: 4px;
+            padding: 6px;
+            color: #e0e0e0;
+            font-size: 12px;
+            z-index: 1000;
+            cursor: move;
+            resize: both;
+            overflow: auto;
+            display: none;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+        }
+        
+        #crosshair-info-box.dragging {
+            cursor: grabbing;
+        }
+        
+        #crosshair-info-box-header {
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 4px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid #333;
+            user-select: none;
+            font-size: 11px;
+        }
+        
+        #crosshair-info-box-content {
+            line-height: 1.3;
+            display: flex;
+            flex-direction: column;
+            flex-wrap: nowrap;
+            gap: 4px;
+        }
+        
+        .crosshair-data-row {
+            display: flex;
+            align-items: center;
+            margin: 0;
+            padding: 1px 0;
+            white-space: nowrap;
+        }
+        
+        .crosshair-data-label {
+            color: #aaa;
+            margin-right: 6px;
+            font-size: 11px;
+        }
+        
+        .crosshair-data-value {
+            color: #e0e0e0;
+            font-weight: 500;
+            font-size: 11px;
+        }
+        
+        .crosshair-color-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        
+        /* Vertical crosshair line */
+        .crosshair-line {
+            position: absolute;
+            top: 0;
+            width: 1px;
+            height: 100%;
+            background: rgba(128, 128, 128, 0.5);
+            pointer-events: none;
+            z-index: 100;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1 id="chart-title">Loading Chart...</h1>
+    <div id="chart-container">
+        <canvas id="chart"></canvas>
+        <div class="crosshair-line" id="crosshair-line"></div>
+        <div id="crosshair-info-box">
+            <div id="crosshair-info-box-header">Crosshair Info</div>
+            <div id="crosshair-info-box-content"></div>
+        </div>
+    </div>
+    <div id="status">Initializing...</div>
+    
+    <!-- Immediate non-module script to test if ANY script executes -->
+    <script>
+        (function() {
+            try {
+                fetch('/api/frontend-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: 'info', message: '[Chart] NON-MODULE SCRIPT EXECUTED - chart.html loaded' })
+                }).catch(function() {});
+            } catch(e) {
+                // Ignore
+            }
+        })();
+    </script>
+    
+    <script>
+        // Set Chart.js global defaults for dark theme BEFORE any chart is created
+        if (typeof Chart !== 'undefined') {
+            // Global color defaults for dark theme
+            Chart.defaults.color = '#e0e0e0';  // Default text color (affects legend, labels, etc.)
+            Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.1)';  // Grid lines
+            Chart.defaults.plugins.legend.labels.color = '#e0e0e0';  // Legend text specifically
+            Chart.defaults.plugins.tooltip.titleColor = '#e0e0e0';
+            Chart.defaults.plugins.tooltip.bodyColor = '#e0e0e0';
+        }
+        
+        // Simple frontend logging function - sends logs to backend via HTTP endpoint
+        async function logToBackend(level, message) {
+            try {
+                await fetch('/api/frontend-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level, message })
+                });
+            } catch (err) {
+                // Silently fail - we don't want logging failures to break the app
+            }
+        }
+        
+        // Wrap everything in an async IIFE since we're not using modules
+        (async function() {
+            try {
+                // IMMEDIATE TEST LOG
+                try {
+                    fetch('/api/frontend-log', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ level: 'info', message: '[Chart] MAIN SCRIPT STARTED - chart.html loaded' })
+                    }).catch(() => {});
+                } catch (e) {
+                    // Ignore
+                }
+            
+            // Get ticker and date from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const ticker = urlParams.get('ticker') || 'SPX';
+            const dateFromURL = urlParams.get('date'); // Optional date parameter
+            
+            // Log ticker immediately
+            try {
+                fetch('/api/frontend-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: 'info', message: `[Chart] Ticker from URL: ${ticker}` })
+                }).catch(() => {});
+            } catch (e) {
+                // Ignore
+            }
+            
+            document.getElementById('chart-title').textContent = `${ticker} Chart`;
+            await logToBackend('info', `[Chart] Title set to: ${ticker} Chart`);
+            
+            // Initialize chart
+            const chartElement = document.getElementById('chart');
+            if (!chartElement) {
+                await logToBackend('error', '[Chart] CRITICAL: Canvas element not found!');
+                throw new Error('Canvas element not found');
+            }
+            const ctx = chartElement.getContext('2d');
+            const statusEl = document.getElementById('status');
+            await logToBackend('info', '[Chart] Canvas element found, context obtained');
+            
+            // Verify Hammer.js is loaded (required for panning)
+            const hammerJsLoaded = typeof Hammer !== 'undefined' || typeof window.Hammer !== 'undefined';
+            await logToBackend('info', `[Chart] Hammer.js check: ${hammerJsLoaded ? 'LOADED' : 'NOT FOUND'} (typeof Hammer=${typeof Hammer}, typeof window.Hammer=${typeof window.Hammer})`);
+            console.log('[Chart] Hammer.js check:', hammerJsLoaded ? 'LOADED' : 'NOT FOUND', { Hammer: typeof Hammer, windowHammer: typeof window.Hammer });
+            if (!hammerJsLoaded) {
+                await logToBackend('error', '[Chart] CRITICAL: Hammer.js is not loaded - panning will not work!');
+                console.error('[Chart] CRITICAL: Hammer.js is not loaded - panning will not work!');
+            }
+            
+            await logToBackend('info', '[Chart] About to check for ChartZoom plugin...');
+            
+            // Register zoom plugin (chartjs-plugin-zoom)
+            // The plugin is loaded via CDN, so ChartZoom should be available globally
+            await logToBackend('info', `[Chart] Checking for ChartZoom plugin... window.ChartZoom=${typeof window.ChartZoom}, ChartZoom=${typeof ChartZoom}`);
+            console.log('[Chart] Checking for ChartZoom plugin:', { windowChartZoom: typeof window.ChartZoom, ChartZoom: typeof ChartZoom });
+            
+            let pluginRegistered = false;
+            if (typeof window.ChartZoom !== 'undefined') {
+                Chart.register(window.ChartZoom);
+                pluginRegistered = true;
+                await logToBackend('info', '[Chart] ChartZoom plugin registered from window.ChartZoom');
+                console.log('[Chart] ChartZoom plugin registered from window.ChartZoom');
+            } else if (typeof ChartZoom !== 'undefined') {
+                Chart.register(ChartZoom);
+                pluginRegistered = true;
+                await logToBackend('info', '[Chart] ChartZoom plugin registered from ChartZoom');
+                console.log('[Chart] ChartZoom plugin registered from ChartZoom');
+            } else {
+                await logToBackend('warn', '[Chart] ChartZoom plugin not found - zoom functionality may not work');
+                console.warn('[Chart] ChartZoom plugin not found - zoom functionality may not work');
+            }
+            
+            // Verify plugin is in Chart registry
+            if (pluginRegistered && Chart.registry) {
+                const zoomPlugin = Chart.registry.getPlugin('zoom');
+                const pluginInRegistry = zoomPlugin !== undefined;
+                await logToBackend('info', `[Chart] Plugin in registry: ${pluginInRegistry}`);
+                console.log('[Chart] Plugin in registry:', pluginInRegistry, zoomPlugin);
+            }
+            
+            // Chart.js configuration matching Python version style
+            // Initialize with a dummy dataset so axes render immediately
+            await logToBackend('info', '[Chart] About to create Chart.js instance...');
+            await logToBackend('info', `[Chart] Chart object available: ${typeof Chart !== 'undefined'}`);
+            
+            // Get the locale object - it should be available globally after loading the locale script
+            let dateFnsLocale = null;
+            try {
+                // Try different ways the locale might be exposed
+                if (typeof dateFns !== 'undefined' && dateFns.locale && dateFns.locale.enUS) {
+                    dateFnsLocale = dateFns.locale.enUS;
+                } else if (typeof enUS !== 'undefined') {
+                    dateFnsLocale = enUS;
+                } else if (typeof window !== 'undefined' && window.dateFns && window.dateFns.locale && window.dateFns.locale.enUS) {
+                    dateFnsLocale = window.dateFns.locale.enUS;
+                }
+                if (dateFnsLocale) {
+                    await logToBackend('info', `[Chart] Found date-fns locale: ${dateFnsLocale.code || 'enUS'}`);
+                } else {
+                    await logToBackend('warn', '[Chart] Could not find date-fns locale, will try without explicit locale');
+                }
+            } catch (e) {
+                await logToBackend('warn', `[Chart] Error checking for date-fns locale: ${e.message || e}`);
+            }
+            
+            // Declare variables needed by chart event handlers BEFORE chart creation
+            let isPanning = false; // Track when chart is being panned
+            let userHasZoomed = false;
+            let savedZoomState = null;
+            let initialZoomSet = false; // Track if initial zoom has been set (first load)
+            
+            // Log pan configuration before creating chart
+            const panConfig = {
+                enabled: true,
+                mode: 'xy',
+                modifierKey: null,
+                threshold: 10
+            };
+            await logToBackend('info', `[Chart] Pan configuration: ${JSON.stringify(panConfig)}`);
+            console.log('[Chart] Pan configuration:', panConfig);
+            
+            const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Loading...',
+                    data: [],
+                    borderColor: 'transparent',
+                    backgroundColor: 'transparent',
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'x', // Compatible with panning - focuses on x-axis interactions
+                    axis: 'x' // Follow mouse cursor on x-axis
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            color: '#e0e0e0',
+                            usePointStyle: true,
+                            padding: 15,
+                            font: {
+                                size: 12
+                            },
+                            // Custom filter to prevent duplicate legend items
+                            filter: function(legendItem, chartData) {
+                                // Only show legend item if this is the first occurrence of this label
+                                const labels = chartData.datasets.map(ds => ds.label);
+                                const firstIndex = labels.indexOf(legendItem.text);
+                                return firstIndex === legendItem.datasetIndex;
+                            },
+                            // Custom generateLabels to ensure unique entries
+                            generateLabels: function(chart) {
+                                const datasets = chart.data.datasets;
+                                const seenLabels = new Set();
+                                const labels = [];
+                                
+                                datasets.forEach((dataset, i) => {
+                                    if (dataset.label && !seenLabels.has(dataset.label)) {
+                                        seenLabels.add(dataset.label);
+                                        const meta = chart.getDatasetMeta(i);
+                                        labels.push({
+                                            text: dataset.label,
+                                            fillStyle: dataset.backgroundColor,
+                                            strokeStyle: dataset.borderColor,
+                                            lineWidth: dataset.borderWidth || 2,
+                                            hidden: meta.hidden,
+                                            datasetIndex: i,
+                                            pointStyle: 'circle',
+                                            fontColor: '#e0e0e0' // Ensure legend text is visible on dark background
+                                        });
+                                    }
+                                });
+                                
+                                return labels;
+                            }
+                        },
+                        // Custom onClick to handle toggling correctly
+                        onClick: function(e, legendItem, legend) {
+                            const chart = legend.chart;
+                            const label = legendItem.text;
+                            
+                            // Toggle all datasets with this label
+                            chart.data.datasets.forEach((dataset, i) => {
+                                if (dataset.label === label) {
+                                    const meta = chart.getDatasetMeta(i);
+                                    meta.hidden = !meta.hidden;
+                                }
+                            });
+                            
+                            chart.update();
+                        }
+                    },
+                    tooltip: {
+                        enabled: false // Disable default tooltip - we'll use custom crosshair info box
+                    },
+                    // Enable zoom and pan using chartjs-plugin-zoom
+                    zoom: {
+                        zoom: {
+                            wheel: {
+                                enabled: true,
+                                speed: 0.1
+                            },
+                            pinch: {
+                                enabled: true
+                            },
+                            drag: {
+                                enabled: false // Disable drag-to-zoom to avoid conflicts with panning
+                            },
+                            mode: 'xy'
+                        },
+                        pan: {
+                            enabled: true,
+                            mode: 'xy',
+                            modifierKey: null, // Pan with mouse drag (no modifier key needed)
+                            threshold: 10 // Minimum distance in pixels to trigger pan
+                        },
+                        limits: {
+                            x: { min: 'original', max: 'original' },
+                            y: { min: 'original', max: 'original' }
+                        },
+                        // Track zoom/pan events to preserve state during updates
+                        onZoom: function({ chart }) {
+                            try {
+                                userHasZoomed = true;
+                                if (typeof saveZoomState === 'function') {
+                                    savedZoomState = saveZoomState();
+                                }
+                                const xScale = chart && chart.scales ? chart.scales.x : null;
+                                const yScale = chart && chart.scales ? chart.scales.y : null;
+                                const zoomInfo = {
+                                    xMin: xScale ? xScale.min : 'N/A',
+                                    xMax: xScale ? xScale.max : 'N/A',
+                                    yMin: yScale ? yScale.min : 'N/A',
+                                    yMax: yScale ? yScale.max : 'N/A'
+                                };
+                                if (typeof logToBackend === 'function') {
+                                    logToBackend('info', `[Chart] Zoom event: ${JSON.stringify(zoomInfo)}`).catch(() => {});
+                                }
+                                console.log('[Chart] Zoom event:', zoomInfo);
+                            } catch (e) {
+                                console.error('[Chart] Error in onZoom:', e);
+                            }
+                        },
+                        onPanStart: function({ chart }) {
+                            try {
+                                isPanning = true;
+                                if (typeof logToBackend === 'function') {
+                                    logToBackend('info', '[Chart] Pan START event fired').catch(() => {});
+                                }
+                                console.log('[Chart] Pan START event fired');
+                            } catch (e) {
+                                console.error('[Chart] Error in onPanStart:', e);
+                            }
+                        },
+                        onPan: function({ chart }) {
+                            try {
+                                userHasZoomed = true;
+                                if (typeof saveZoomState === 'function') {
+                                    savedZoomState = saveZoomState();
+                                }
+                                // Throttle pan logging to avoid spam (log every 10th call)
+                                if (!window.panLogCounter) window.panLogCounter = 0;
+                                window.panLogCounter++;
+                                if (window.panLogCounter % 10 === 0) {
+                                    const xScale = chart && chart.scales ? chart.scales.x : null;
+                                    const yScale = chart && chart.scales ? chart.scales.y : null;
+                                    const panInfo = {
+                                        xMin: xScale ? xScale.min : 'N/A',
+                                        xMax: xScale ? xScale.max : 'N/A',
+                                        yMin: yScale ? yScale.min : 'N/A',
+                                        yMax: yScale ? yScale.max : 'N/A'
+                                    };
+                                    if (typeof logToBackend === 'function') {
+                                        logToBackend('info', `[Chart] Pan event (throttled): ${JSON.stringify(panInfo)}`).catch(() => {});
+                                    }
+                                    console.log('[Chart] Pan event (throttled):', panInfo);
+                                }
+                            } catch (e) {
+                                console.error('[Chart] Error in onPan:', e);
+                            }
+                        },
+                        onPanComplete: function({ chart }) {
+                            try {
+                                isPanning = false;
+                                if (typeof logToBackend === 'function') {
+                                    logToBackend('info', '[Chart] Pan COMPLETE event fired').catch(() => {});
+                                }
+                                console.log('[Chart] Pan COMPLETE event fired');
+                                window.panLogCounter = 0; // Reset counter
+                            } catch (e) {
+                                console.error('[Chart] Error in onPanComplete:', e);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        display: true, // Always show x-axis
+                        time: {
+                            displayFormats: {
+                                hour: 'h:mm a',
+                                minute: 'h:mm a'
+                            },
+                            tooltipFormat: 'h:mm:ss a',
+                            unit: 'minute',
+                            stepSize: 30
+                        },
+                        // Ensure times are displayed in user's local timezone (Chart.js does this automatically)
+                        // Timestamps from backend are Unix timestamps, which JavaScript converts to local time
+                        adapters: {
+                            date: dateFnsLocale ? {
+                                locale: dateFnsLocale
+                            } : {}
+                        },
+                        title: {
+                            display: true,
+                            text: 'Time (Local)',
+                            color: '#e0e0e0'
+                        },
+                        ticks: {
+                            color: '#888',
+                            maxRotation: 45,
+                            minRotation: 45
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    y: {
+                        beginAtZero: false,
+                        display: true, // Always show y-axis
+                        title: {
+                            display: true,
+                            text: 'Value',
+                            color: '#e0e0e0'
+                        },
+                        ticks: {
+                            color: '#888'
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    }
+                },
+                onHover: (event, activeElements) => {
+                    // Change cursor to pointer when hovering over chart
+                    event.native.target.style.cursor = activeElements.length > 0 ? 'pointer' : 'default';
+                }
+            }
+        });
+        
+        await logToBackend('info', '[Chart] Chart.js instance created successfully');
+        
+        // Crosshair Info Box Setup
+        let crosshairLine = null;
+        let crosshairInfoBox = null;
+        let crosshairInfoContent = null;
+        let crosshairInfoHeader = null;
+        
+        try {
+            crosshairLine = document.getElementById('crosshair-line');
+            crosshairInfoBox = document.getElementById('crosshair-info-box');
+            crosshairInfoContent = document.getElementById('crosshair-info-box-content');
+            crosshairInfoHeader = document.getElementById('crosshair-info-box-header');
+        } catch (e) {
+            console.error('[Chart] Error getting crosshair elements:', e);
+        }
+        
+        let isDraggingInfoBox = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let infoBoxStartX = 0;
+        let infoBoxStartY = 0;
+        let isMouseOverChart = false; // Track if mouse is over the chart
+        // isPanning is now declared before chart creation
+        
+        // Restore saved dimensions and position from localStorage
+        if (crosshairInfoBox) {
+            try {
+                // Check if localStorage is available
+                if (typeof localStorage === 'undefined' || localStorage === null) {
+                    console.warn('[Chart] localStorage is not available, skipping tooltip restore');
+                } else {
+                    const savedWidth = localStorage.getItem('chartTooltipWidth');
+                    const savedHeight = localStorage.getItem('chartTooltipHeight');
+                    const savedLeft = localStorage.getItem('chartTooltipLeft');
+                    const savedTop = localStorage.getItem('chartTooltipTop');
+                    
+                    if (savedWidth && savedHeight) {
+                        const width = parseInt(savedWidth, 10);
+                        const height = parseInt(savedHeight, 10);
+                        // Ensure dimensions are not too small
+                        if (!isNaN(width) && !isNaN(height) && width >= 200 && height >= 100) {
+                            crosshairInfoBox.style.width = width + 'px';
+                            crosshairInfoBox.style.height = height + 'px';
+                            if (typeof logToBackend === 'function') {
+                                logToBackend('info', `[Chart] Restored tooltip dimensions: ${width}x${height}`).catch(() => {});
+                            }
+                        }
+                    }
+                    
+                    if (savedLeft && savedTop) {
+                        const left = parseInt(savedLeft, 10);
+                        const top = parseInt(savedTop, 10);
+                        // Check if position is reasonable (within viewport bounds)
+                        const maxWidth = (typeof window !== 'undefined' && window.innerWidth) ? window.innerWidth + 100 : 2000;
+                        const maxHeight = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight + 100 : 2000;
+                        if (!isNaN(left) && !isNaN(top) && 
+                            left >= -100 && left <= maxWidth && 
+                            top >= -100 && top <= maxHeight) {
+                            crosshairInfoBox.style.left = left + 'px';
+                            crosshairInfoBox.style.top = top + 'px';
+                            crosshairInfoBox.style.right = 'auto';
+                            crosshairInfoBox.style.bottom = 'auto';
+                            if (typeof logToBackend === 'function') {
+                                logToBackend('info', `[Chart] Restored tooltip position: ${left}, ${top}`).catch(() => {});
+                            }
+                        } else {
+                            // Reset to default if position is off-screen
+                            crosshairInfoBox.style.right = '20px';
+                            crosshairInfoBox.style.top = '20px';
+                            crosshairInfoBox.style.left = 'auto';
+                            crosshairInfoBox.style.bottom = 'auto';
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[Chart] Error restoring tooltip dimensions/position:', e);
+            }
+        }
+        
+        // Track resize events and save to localStorage
+        let resizeTimeout = null;
+        if (typeof ResizeObserver !== 'undefined' && crosshairInfoBox) {
+            try {
+                const resizeObserver = new ResizeObserver((entries) => {
+                    try {
+                        for (const entry of entries) {
+                            if (entry && entry.contentRect) {
+                                const { width, height } = entry.contentRect;
+                                // Debounce saves to avoid too many localStorage writes
+                                if (resizeTimeout !== null) {
+                                    clearTimeout(resizeTimeout);
+                                }
+                                resizeTimeout = setTimeout(() => {
+                                    try {
+                                        if (typeof localStorage !== 'undefined' && localStorage !== null) {
+                                            if (!isNaN(width) && !isNaN(height) && width > 0 && height > 0) {
+                                                localStorage.setItem('chartTooltipWidth', Math.round(width).toString());
+                                                localStorage.setItem('chartTooltipHeight', Math.round(height).toString());
+                                                console.log('[Chart] Saved tooltip dimensions:', Math.round(width), 'x', Math.round(height));
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.error('[Chart] Error saving tooltip dimensions:', e);
+                                    }
+                                }, 300); // Save 300ms after resize ends
+                            }
+                        }
+                    } catch (e) {
+                        console.error('[Chart] Error in ResizeObserver callback:', e);
+                    }
+                });
+                if (crosshairInfoBox) {
+                    resizeObserver.observe(crosshairInfoBox);
+                }
+            } catch (e) {
+                console.error('[Chart] Error creating ResizeObserver:', e);
+            }
+        }
+        
+        // Make info box draggable
+        if (crosshairInfoHeader && crosshairInfoBox) {
+            crosshairInfoHeader.addEventListener('mousedown', (e) => {
+                try {
+                    isDraggingInfoBox = true;
+                    dragStartX = e.clientX;
+                    dragStartY = e.clientY;
+                    const rect = crosshairInfoBox.getBoundingClientRect();
+                    infoBoxStartX = rect.left;
+                    infoBoxStartY = rect.top;
+                    crosshairInfoBox.classList.add('dragging');
+                    e.preventDefault();
+                } catch (err) {
+                    console.error('[Chart] Error in mousedown handler for tooltip:', err);
+                }
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                try {
+                    if (isDraggingInfoBox && crosshairInfoBox) {
+                        const deltaX = e.clientX - dragStartX;
+                        const deltaY = e.clientY - dragStartY;
+                        crosshairInfoBox.style.left = (infoBoxStartX + deltaX) + 'px';
+                        crosshairInfoBox.style.top = (infoBoxStartY + deltaY) + 'px';
+                        crosshairInfoBox.style.right = 'auto';
+                        crosshairInfoBox.style.bottom = 'auto';
+                    }
+                } catch (err) {
+                    console.error('[Chart] Error in mousemove handler for tooltip:', err);
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                try {
+                    if (isDraggingInfoBox && crosshairInfoBox) {
+                        isDraggingInfoBox = false;
+                        crosshairInfoBox.classList.remove('dragging');
+                        
+                        // Save position to localStorage
+                        try {
+                            if (typeof localStorage !== 'undefined' && localStorage !== null) {
+                                const rect = crosshairInfoBox.getBoundingClientRect();
+                                const left = Math.round(rect.left);
+                                const top = Math.round(rect.top);
+                                localStorage.setItem('chartTooltipLeft', left.toString());
+                                localStorage.setItem('chartTooltipTop', top.toString());
+                                console.log('[Chart] Saved tooltip position:', left, ',', top);
+                            }
+                        } catch (e) {
+                            console.error('[Chart] Error saving tooltip position:', e);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[Chart] Error saving tooltip position:', e);
+                }
+            });
+        }
+        
+        // Function to update crosshair info box with vertical slice data
+        function updateCrosshairInfoBox(mouseX, mouseY) {
+            if (!chart || !chart.data || !chart.data.datasets || chart.data.datasets.length === 0) {
+                return;
+            }
+            
+            const xScale = chart.scales.x;
+            if (!xScale) return;
+            
+            // Get chart canvas position
+            const canvasRect = chartCanvas.getBoundingClientRect();
+            const chartContainer = document.getElementById('chart-container');
+            const containerRect = chartContainer.getBoundingClientRect();
+            
+            // Mouse X is relative to canvas, convert to chart pixel coordinate
+            // Chart.js scales account for padding, so we need to use the scale's pixel position
+            const chartX = mouseX;
+            
+            // Convert chart X to timestamp using the scale
+            const timestamp = xScale.getValueForPixel(chartX);
+            if (!timestamp) return;
+            
+            const timestampTime = timestamp instanceof Date ? timestamp.getTime() : timestamp;
+            
+            // Show crosshair line at correct position
+            crosshairLine.style.display = 'block';
+            // Position relative to container (canvas position within container + mouse X offset)
+            const containerX = (canvasRect.left - containerRect.left) + mouseX;
+            crosshairLine.style.left = containerX + 'px';
+            
+            // Build vertical slice data (one value per dataset at this timestamp)
+            const verticalSlice = [];
+            const datasetMap = new Map(); // Track one value per dataset
+            
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+                if (!dataset.data || dataset.data.length === 0) return;
+                
+                // Find the value active at this timestamp (forward projection)
+                let bestPoint = null;
+                let bestDistance = Infinity;
+                
+                for (const point of dataset.data) {
+                    if (!point || (typeof point.x === 'number' && isNaN(point.x))) continue;
+                    
+                    const pointX = point.x instanceof Date ? point.x.getTime() : point.x;
+                    const distance = Math.abs(pointX - timestampTime);
+                    
+                    // For forward projection: prefer points where x <= timestamp (the segment that was active)
+                    // If multiple points at same distance, prefer the one with x >= timestamp (new segment starting)
+                    if (distance < bestDistance) {
+                        bestPoint = point;
+                        bestDistance = distance;
+                    } else if (Math.abs(distance - bestDistance) < 1) {
+                        // Very close distances - prefer forward projection
+                        const bestPointX = bestPoint.x instanceof Date ? bestPoint.x.getTime() : bestPoint.x;
+                        if (pointX >= timestampTime && bestPointX < timestampTime) {
+                            bestPoint = point;
+                            bestDistance = distance;
+                        } else if (pointX <= timestampTime && bestPointX > timestampTime) {
+                            // Keep existing if it's before timestamp (forward projection)
+                        } else if (Math.abs(pointX - timestampTime) < Math.abs(bestPointX - timestampTime)) {
+                            bestPoint = point;
+                            bestDistance = distance;
+                        }
+                    }
+                }
+                
+                if (bestPoint && bestPoint.y !== null && bestPoint.y !== undefined && 
+                    !(typeof bestPoint.y === 'number' && (isNaN(bestPoint.y) || !isFinite(bestPoint.y)))) {
+                    // Only add if we don't already have this dataset (deduplication)
+                    if (!datasetMap.has(datasetIndex)) {
+                        datasetMap.set(datasetIndex, {
+                            label: dataset.label || `Dataset ${datasetIndex}`,
+                            value: bestPoint.y,
+                            color: dataset.borderColor || '#888'
+                        });
+                    }
+                }
+            });
+            
+            // Format timestamp based on UseMarketTime setting
+            const timeStr = formatChartTime(timestamp);
+            
+            // Update header (add ET indicator if using market time)
+            const tzIndicator = globalChartSettings.UseMarketTime ? ' ET' : '';
+            crosshairInfoHeader.textContent = `Time: ${timeStr}${tzIndicator}`;
+            
+            // Build content HTML
+            let contentHTML = '';
+            datasetMap.forEach((data, datasetIndex) => {
+                contentHTML += `
+                    <div class="crosshair-data-row">
+                        <span class="crosshair-data-label">
+                            <span class="crosshair-color-indicator" style="background-color: ${data.color};"></span>
+                            ${data.label}:
+                        </span>
+                        <span class="crosshair-data-value">${typeof data.value === 'number' ? data.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : data.value}</span>
+                    </div>
+                `;
+            });
+            
+            crosshairInfoContent.innerHTML = contentHTML || '<div style="color: #888;">No data at this time</div>';
+            
+            // Show info box if it has content
+            if (datasetMap.size > 0) {
+                crosshairInfoBox.style.display = 'block';
+            }
+        }
+        
+        // Function to update crosshair info box with the LATEST data point
+        // Called when mouse leaves the chart or when new data arrives while mouse is off chart
+        function updateCrosshairToLatest() {
+            if (!chart || !chart.data || !chart.data.datasets || chart.data.datasets.length === 0) {
+                return;
+            }
+            
+            // Find the latest timestamp across all datasets
+            let latestTimestamp = null;
+            
+            chart.data.datasets.forEach((dataset) => {
+                if (!dataset.data || dataset.data.length === 0) return;
+                
+                const lastPoint = dataset.data[dataset.data.length - 1];
+                if (!lastPoint) return;
+                
+                const pointTime = lastPoint.x instanceof Date ? lastPoint.x.getTime() : lastPoint.x;
+                if (latestTimestamp === null || pointTime > latestTimestamp) {
+                    latestTimestamp = pointTime;
+                }
+            });
+            
+            if (latestTimestamp === null) return;
+            
+            // Build data for the latest timestamp
+            const datasetMap = new Map();
+            
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+                if (!dataset.data || dataset.data.length === 0) return;
+                
+                // Get the last data point
+                const lastPoint = dataset.data[dataset.data.length - 1];
+                if (!lastPoint || lastPoint.y === null || lastPoint.y === undefined) return;
+                if (typeof lastPoint.y === 'number' && (isNaN(lastPoint.y) || !isFinite(lastPoint.y))) return;
+                
+                datasetMap.set(datasetIndex, {
+                    label: dataset.label || `Dataset ${datasetIndex}`,
+                    value: lastPoint.y,
+                    color: dataset.borderColor || '#888'
+                });
+            });
+            
+            // Format timestamp based on UseMarketTime setting
+            const timeStr = formatChartTime(latestTimestamp);
+            
+            // Update header with "Latest" indicator (add ET if using market time)
+            const tzIndicator = globalChartSettings.UseMarketTime ? ' ET' : '';
+            crosshairInfoHeader.textContent = `Latest: ${timeStr}${tzIndicator}`;
+            
+            // Build content HTML
+            let contentHTML = '';
+            datasetMap.forEach((data, datasetIndex) => {
+                contentHTML += `
+                    <div class="crosshair-data-row">
+                        <span class="crosshair-data-label">
+                            <span class="crosshair-color-indicator" style="background-color: ${data.color};"></span>
+                            ${data.label}:
+                        </span>
+                        <span class="crosshair-data-value">${typeof data.value === 'number' ? data.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : data.value}</span>
+                    </div>
+                `;
+            });
+            
+            crosshairInfoContent.innerHTML = contentHTML || '<div style="color: #888;">No data available</div>';
+            
+            // Always show info box with latest data
+            if (datasetMap.size > 0) {
+                crosshairInfoBox.style.display = 'block';
+            }
+            
+            // Hide the crosshair line when showing latest (no specific position)
+            if (crosshairLine) {
+                crosshairLine.style.display = 'none';
+            }
+        }
+        
+        // Track mouse movement on chart
+        const chartCanvas = chartElement;
+        
+        // Track mouse drag events for debugging
+        let isMouseDown = false;
+        
+        // Add mouse event tracking for debugging
+        chartCanvas.addEventListener('mousedown', (e) => {
+            try {
+                isMouseDown = true;
+                const rect = chartCanvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                if (typeof logToBackend === 'function') {
+                    logToBackend('info', `[Chart] Mouse DOWN on canvas: x=${mouseX}, y=${mouseY}, button=${e.button}, buttons=${e.buttons}, isPanning=${isPanning}`).catch(() => {});
+                }
+                console.log('[Chart] Mouse DOWN on canvas:', { x: mouseX, y: mouseY, button: e.button, buttons: e.buttons, isPanning });
+            } catch (err) {
+                console.error('[Chart] Error in mousedown handler:', err);
+            }
+        }, { passive: true });
+        
+        chartCanvas.addEventListener('mouseup', (e) => {
+            try {
+                if (isMouseDown) {
+                    isMouseDown = false;
+                    const rect = chartCanvas.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    if (typeof logToBackend === 'function') {
+                        logToBackend('info', `[Chart] Mouse UP on canvas: x=${mouseX}, y=${mouseY}, button=${e.button}, isPanning=${isPanning}`).catch(() => {});
+                    }
+                    console.log('[Chart] Mouse UP on canvas:', { x: mouseX, y: mouseY, button: e.button, isPanning });
+                }
+            } catch (err) {
+                console.error('[Chart] Error in mouseup handler:', err);
+            }
+        }, { passive: true });
+        
+        chartCanvas.addEventListener('mouseenter', () => {
+            isMouseOverChart = true;
+        });
+        
+        chartCanvas.addEventListener('mouseleave', () => {
+            try {
+                isMouseOverChart = false;
+                if (isMouseDown) {
+                    isMouseDown = false;
+                    if (typeof logToBackend === 'function') {
+                        logToBackend('info', `[Chart] Mouse drag END (mouse left canvas)`).catch(() => {});
+                    }
+                    console.log('[Chart] Mouse drag END (mouse left canvas)');
+                }
+                // Update to show latest data when mouse leaves the chart
+                updateCrosshairToLatest();
+            } catch (err) {
+                console.error('[Chart] Error in mouseleave handler:', err);
+            }
+        });
+        
+        chartCanvas.addEventListener('mousemove', (e) => {
+            // Skip crosshair updates during panning to avoid interference
+            if (isPanning) {
+                return;
+            }
+            const rect = chartCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            updateCrosshairInfoBox(mouseX, mouseY);
+        }, { passive: true });
+        
+        // No tooltip plugin needed - we're using custom crosshair info box
+        
+        // Track zoom state to preserve during updates
+        // userHasZoomed, savedZoomState, and initialZoomSet are now declared before chart creation
+        
+        // No need to track chart updates for tooltip (we're using crosshair info box)
+        
+        // Helper function to save current zoom state
+        function saveZoomState() {
+            if (!chart || !userHasZoomed) return null;
+            const xScale = chart.scales.x;
+            const yScale = chart.scales.y;
+            if (!xScale || !yScale) return null;
+            
+            // Save current zoom state
+            const xMin = xScale.min;
+            const xMax = xScale.max;
+            const yMin = yScale.min;
+            const yMax = yScale.max;
+            
+            return {
+                x: { min: xMin, max: xMax },
+                y: { min: yMin, max: yMax }
+            };
+        }
+        
+        // No tooltip state saving needed - we're using custom crosshair info box
+        
+        // Helper function to restore zoom state
+        function restoreZoomState(zoomState) {
+            if (!chart || !zoomState) return;
+            
+            const xScale = chart.scales.x;
+            const yScale = chart.scales.y;
+            if (!xScale || !yScale) return;
+            
+            // Restore x-axis zoom by directly setting scale limits
+            if (zoomState.x && zoomState.x.min !== undefined && zoomState.x.max !== undefined) {
+                xScale.options.min = zoomState.x.min;
+                xScale.options.max = zoomState.x.max;
+                // Force update the scale
+                xScale.min = zoomState.x.min;
+                xScale.max = zoomState.x.max;
+            }
+            
+            // Restore y-axis zoom by directly setting scale limits
+            if (zoomState.y && zoomState.y.min !== undefined && zoomState.y.max !== undefined) {
+                yScale.options.min = zoomState.y.min;
+                yScale.options.max = zoomState.y.max;
+                // Force update the scale
+                yScale.min = zoomState.y.min;
+                yScale.max = zoomState.y.max;
+            }
+            
+            // Update chart to apply the restored zoom (without animation)
+            chart.update('none');
+        }
+        
+        // Default color scheme (fallback if settings not available)
+            const defaultColors = {
+            spot: '#4CAF50',
+            zero_gamma: '#FF9800',
+            major_pos_vol: '#2196F3',
+            major_neg_vol: '#F44336',
+            major_long_gamma: '#9C27B0',
+            major_short_gamma: '#00BCD4',
+            major_positive: '#8BC34A',
+            major_negative: '#FF5722',
+            major_pos_oi: '#3F51B5',
+            major_neg_oi: '#E91E63'
+        };
+        
+        // Load colors from settings (will be populated when settings are loaded)
+            let chartColors = { ...defaultColors };
+        
+        // Function to convert hex color to RGB
+            function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : null;
+        }
+        
+        // Function to convert hex to rgba string
+            function hexToRgba(hex, alpha = 0.1) {
+            const rgb = hexToRgb(hex);
+            if (!rgb) return `rgba(128, 128, 128, ${alpha})`;
+            return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+        }
+        
+        // Global settings storage for chart window
+        let globalChartSettings = {
+            UseMarketTime: false,
+            HiddenPlots: []
+        };
+        
+        // Function to load settings and update colors
+            async function loadChartColors() {
+            try {
+                // Fetch settings via API endpoint
+                const response = await fetch('/api/settings');
+                if (response.ok) {
+                    const settings = await response.json();
+                    // Store global settings for time formatting and plot visibility
+                    globalChartSettings.UseMarketTime = settings.UseMarketTime || false;
+                    globalChartSettings.HiddenPlots = settings.HiddenPlots || [];
+                    
+                    if (settings && settings.ChartColors) {
+                        chartColors = { ...defaultColors, ...settings.ChartColors };
+                        await logToBackend('info', `[Chart] Loaded colors from settings: ${JSON.stringify(chartColors)}`);
+                        await logToBackend('info', `[Chart] UseMarketTime: ${globalChartSettings.UseMarketTime}, HiddenPlots: ${JSON.stringify(globalChartSettings.HiddenPlots)}`);
+                        return;
+                    }
+                }
+                await logToBackend('info', '[Chart] Using default colors (settings not available or no ChartColors)');
+            } catch (error) {
+                await logToBackend('warn', `[Chart] Could not load colors from settings, using defaults: ${error.message || error}`);
+            }
+        }
+        
+        // Format time for display based on UseMarketTime setting
+        function formatChartTime(timestamp) {
+            const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+            const options = {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            };
+            if (globalChartSettings.UseMarketTime) {
+                options.timeZone = 'America/New_York';
+            }
+            return date.toLocaleTimeString('en-US', options);
+        }
+        
+        // Build datasetColors from chartColors
+            function getDatasetColors() {
+            const datasetColors = {};
+            Object.keys(defaultColors).forEach(key => {
+                const color = chartColors[key] || defaultColors[key];
+                const rgb = hexToRgb(color);
+                if (rgb) {
+                    datasetColors[key] = {
+                        border: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+                        fill: hexToRgba(color, 0.1)
+                    };
+                } else {
+                    datasetColors[key] = {
+                        border: 'rgb(128, 128, 128)',
+                        fill: 'rgba(128, 128, 128, 0.1)'
+                    };
+                }
+            });
+            return datasetColors;
+        }
+        
+            const datasetLabels = {
+            spot: 'Spot Price',
+            zero_gamma: 'Zero Gamma',
+            major_pos_vol: 'Positive Gamma',
+            major_neg_vol: 'Negative Gamma',
+            major_long_gamma: 'Long Gamma',
+            major_short_gamma: 'Short Gamma',
+            major_positive: 'Major Positive Strike',
+            major_negative: 'Major Negative Strike',
+            major_pos_oi: 'Major Positive OI',
+            major_neg_oi: 'Major Negative OI'
+        };
+        
+        // Transform data into horizontal segments (like Python's _plot_horizontal_segments)
+        // Each value is held constant until the next timestamp, with no vertical connections
+        // Uses null separators between segments (like Python uses NaN) to break connections
+            function createHorizontalSegments(timestamps, values) {
+            if (timestamps.length < 2 || values.length < 2) {
+                // Not enough data - return as-is
+                return timestamps.map((ts, idx) => ({
+                    x: ts,
+                    y: values[idx]
+                })).filter(point => point.y !== null && point.y !== undefined && 
+                    !(typeof point.y === 'number' && (isNaN(point.y) || !isFinite(point.y))));
+            }
+            
+            const segments = [];
+            
+            // Build segments like Python: for each pair, add both points at same y-value, then null separator
+            // This creates horizontal lines with no vertical connections
+            for (let i = 0; i < timestamps.length - 1; i++) {
+                const currentValue = values[i];
+                const nextTimestamp = timestamps[i + 1];
+                const currentTimestamp = timestamps[i];
+                
+                // Skip if current value is invalid
+                if (currentValue === null || currentValue === undefined || 
+                    (typeof currentValue === 'number' && (isNaN(currentValue) || !isFinite(currentValue)))) {
+                    continue;
+                }
+                
+                // Add segment start and end points (both at same Y value) - creates horizontal line
+                segments.push({
+                    x: currentTimestamp,
+                    y: currentValue
+                });
+                segments.push({
+                    x: nextTimestamp,
+                    y: currentValue
+                });
+                
+                // Add NaN separator (except after last segment) to break connection
+                // This prevents vertical lines between different y-values
+                // Using NaN instead of null because Chart.js can access .x on null objects
+                if (i < timestamps.length - 2) {
+                    segments.push({ x: NaN, y: NaN }); // Chart.js will skip this with spanGaps: false
+                }
+            }
+            
+            return segments;
+        }
+        
+        // Optimize data points if dataset is too large for performance
+        // Samples every Nth point if dataset exceeds maxPoints
+        // Note: 30000 points allows full trading day at 1-second resolution (~23,400 points)
+            async function optimizeDataPoints(data, maxPoints = 30000) {
+            if (!data.timestamp || data.timestamp.length <= maxPoints) {
+                return data;
+            }
+            
+            // Sample every Nth point to reduce dataset size
+            const step = Math.ceil(data.timestamp.length / maxPoints);
+            const sampled = {};
+            
+            for (const key in data) {
+                if (Array.isArray(data[key])) {
+                    sampled[key] = [];
+                    for (let i = 0; i < data[key].length; i += step) {
+                        sampled[key].push(data[key][i]);
+                    }
+                } else {
+                    sampled[key] = data[key];
+                }
+            }
+            
+            await logToBackend('info', `[Chart] Optimized data: ${data.timestamp.length} -> ${sampled.timestamp.length} points (step: ${step})`);
+            return sampled;
+        }
+        
+        // Function to get market date from backend
+        async function getMarketDate() {
+            // First check if date was passed via URL parameter (from date selector)
+            if (dateFromURL) {
+                await logToBackend('info', `[Chart] Using date from URL parameter: ${dateFromURL}`);
+                return dateFromURL;
+            }
+            
+            // Otherwise, get current market date from backend API
+            try {
+                const response = await fetch('/api/market-date');
+                if (response.ok) {
+                    const data = await response.json();
+                    await logToBackend('info', `[Chart] Using market date from API: ${data.date}`);
+                    return data.date || new Date().toISOString().split('T')[0];
+                }
+            } catch (error) {
+                await logToBackend('warn', `[Chart] Could not fetch market date, using current date: ${error.message || error}`);
+            }
+            // Fallback to current date
+            const fallbackDate = new Date().toISOString().split('T')[0];
+            await logToBackend('warn', `[Chart] Using fallback date: ${fallbackDate}`);
+            return fallbackDate;
+        }
+        
+        // Function to get market hours in local timezone
+            async function getMarketHoursLocal() {
+            try {
+                const response = await fetch('/api/market-hours-local');
+                if (response.ok) {
+                    const data = await response.json();
+                    await logToBackend('info', `[Chart] Fetched market hours from API (ET): ${data.open} - ${data.close}`);
+                    
+                    // Backend returns ET times, we need to convert to local time
+                    // Create a date for today, set ET time, then get local time equivalent
+                    const today = new Date();
+                    const [etOpenHour, etOpenMin] = data.open.split(':').map(Number);
+                    const [etCloseHour, etCloseMin] = data.close.split(':').map(Number);
+                    
+                    // Create Date objects in ET timezone, then convert to local
+                    // ET is UTC-5 (EST) or UTC-4 (EDT)
+                    // We'll create dates assuming EST (UTC-5) for simplicity
+                    // JavaScript will automatically convert to local timezone
+                    const etOpenDate = new Date(`2026-01-15T${String(etOpenHour).padStart(2, '0')}:${String(etOpenMin).padStart(2, '0')}:00-05:00`);
+                    const etCloseDate = new Date(`2026-01-15T${String(etCloseHour).padStart(2, '0')}:${String(etCloseMin).padStart(2, '0')}:00-05:00`);
+                    
+                    // Get local time equivalents
+                    const localOpenHour = etOpenDate.getHours();
+                    const localOpenMin = etOpenDate.getMinutes();
+                    const localCloseHour = etCloseDate.getHours();
+                    const localCloseMin = etCloseDate.getMinutes();
+                    
+                    const localOpen = `${String(localOpenHour).padStart(2, '0')}:${String(localOpenMin).padStart(2, '0')}`;
+                    const localClose = `${String(localCloseHour).padStart(2, '0')}:${String(localCloseMin).padStart(2, '0')}`;
+                    
+                    await logToBackend('info', `[Chart] Converted ET to local: ${data.open} ET -> ${localOpen} local, ${data.close} ET -> ${localClose} local`);
+                    
+                    return { open: localOpen, close: localClose };
+                }
+            } catch (error) {
+                await logToBackend('warn', `[Chart] Could not fetch market hours, using defaults: ${error.message || error}`);
+            }
+            // Fallback: Market hours are 9:30 AM - 4:00 PM ET
+            // Convert to local time (approximate - assumes EST, not EDT)
+            const etOpenDate = new Date('2026-01-15T09:30:00-05:00');
+            const etCloseDate = new Date('2026-01-15T16:00:00-05:00');
+            const localOpen = `${String(etOpenDate.getHours()).padStart(2, '0')}:${String(etOpenDate.getMinutes()).padStart(2, '0')}`;
+            const localClose = `${String(etCloseDate.getHours()).padStart(2, '0')}:${String(etCloseDate.getMinutes()).padStart(2, '0')}`;
+            await logToBackend('warn', `[Chart] Using fallback market hours: 09:30 ET -> ${localOpen} local, 16:00 ET -> ${localClose} local`);
+            return { open: localOpen, close: localClose };
+        }
+        
+        // Function to filter data to market hours (9:30 AM - 4:00 PM ET in local time)
+        // dateStr parameter is the requested market date (YYYY-MM-DD format) to ensure correct filtering
+            async function filterToMarketHours(labels, data, marketHoursLocal, dateStr) {
+            if (!marketHoursLocal || !labels || labels.length === 0) {
+                return { labels, data };
+            }
+            
+            // Parse market hours (HH:MM format)
+            const [openHour, openMin] = marketHoursLocal.open.split(':').map(Number);
+            const [closeHour, closeMin] = marketHoursLocal.close.split(':').map(Number);
+            
+            // IMPORTANT: Use the requested dateStr to determine chart date, NOT labels[0]
+            // This fixes the issue where old timestamps in the database would cause
+            // the filter to use the wrong date, filtering out valid data
+            let chartDate;
+            if (dateStr) {
+                // Parse dateStr (format: "YYYY-MM-DD") and create date at midnight in local timezone
+                chartDate = new Date(dateStr + 'T00:00:00');
+                if (isNaN(chartDate.getTime())) {
+                    await logToBackend('warn', `[Chart] filterToMarketHours: Failed to parse dateStr '${dateStr}', falling back to labels[0]`);
+                    chartDate = labels[0] ? new Date(labels[0]) : new Date();
+                }
+            } else {
+                // Fallback to labels[0] if no dateStr provided
+                chartDate = labels[0] ? new Date(labels[0]) : new Date();
+            }
+            chartDate.setHours(0, 0, 0, 0); // Ensure we're at midnight
+            
+            await logToBackend('info', `[Chart] filterToMarketHours: Using chart date ${chartDate.toLocaleDateString()} from ${dateStr ? 'dateStr parameter' : 'labels[0] fallback'}`);
+            
+            const marketOpen = new Date(chartDate);
+            marketOpen.setHours(openHour, openMin, 0, 0);
+            const marketClose = new Date(chartDate);
+            marketClose.setHours(closeHour, closeMin, 0, 0);
+            
+            // Filter labels and all data arrays
+            const filteredLabels = [];
+            const filteredData = {};
+            
+            for (const key in data) {
+                filteredData[key] = [];
+            }
+            
+            for (let i = 0; i < labels.length; i++) {
+                const labelTime = new Date(labels[i]);
+                // Check if time is within market hours
+                if (labelTime >= marketOpen && labelTime <= marketClose) {
+                    filteredLabels.push(labels[i]);
+                    for (const key in data) {
+                        if (Array.isArray(data[key]) && i < data[key].length) {
+                            filteredData[key].push(data[key][i]);
+                        }
+                    }
+                }
+            }
+            
+            await logToBackend('info', `[Chart] Filtered to market hours: ${filteredLabels.length} points (from ${labels.length})`);
+            return { labels: filteredLabels, data: filteredData };
+        }
+        
+        // Function to update chart with data
+            async function updateChart() {
+            try {
+                statusEl.textContent = 'Loading data...';
+                statusEl.className = '';
+                
+                // Get market date from backend
+                const dateStr = await getMarketDate();
+                const url = `/api/chart-data/${ticker}/${dateStr}`;
+                await logToBackend('info', `[Chart] Fetching data from: ${url} (market date: ${dateStr})`);
+                
+                const response = await fetch(url);
+                
+                await logToBackend('info', `[Chart] Response status: ${response.status} ${response.statusText}`);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    await logToBackend('error', `[Chart] HTTP error: ${response.status} - ${errorText}`);
+                    statusEl.textContent = `Error: HTTP ${response.status} - ${response.statusText}`;
+                    statusEl.className = 'error';
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                let data = await response.json();
+                await logToBackend('info', `[Chart] Received data: timestamp=${data?.timestamp?.length || 0}, spot=${data?.spot?.length || 0}, zero_gamma=${data?.zero_gamma?.length || 0}, major_pos_vol=${data?.major_pos_vol?.length || 0}, major_neg_vol=${data?.major_neg_vol?.length || 0}, dateStr=${data?.dateStr || 'N/A'}`);
+                
+                if (!data || !data.timestamp || data.timestamp.length === 0) {
+                    await logToBackend('warn', `[Chart] No data available: data=${!!data}, timestamp=${!!(data && data.timestamp)}, length=${data && data.timestamp ? data.timestamp.length : 0}`);
+                    statusEl.textContent = 'No data available';
+                    statusEl.className = '';
+                    
+                    // Still set x-axis to market hours even with no data
+                    const marketHoursLocal = await getMarketHoursLocal();
+                    await logToBackend('info', `[Chart] Market hours from API: ${marketHoursLocal.open} - ${marketHoursLocal.close}`);
+                    
+                    // Create date at midnight in local timezone
+                    // dateStr is in format "YYYY-MM-DD", so we append "T00:00:00" to create local midnight
+                    let chartDate = new Date(dateStr + 'T00:00:00');
+                    if (isNaN(chartDate.getTime())) {
+                        await logToBackend('warn', `[Chart] Failed to parse dateStr: ${dateStr}, using current date`);
+                        chartDate = new Date();
+                    }
+                    chartDate.setHours(0, 0, 0, 0);
+                    await logToBackend('info', `[Chart] Chart date (local midnight): ${chartDate.toISOString()} (local: ${chartDate.toLocaleString()})`);
+                    
+                    const [openHour, openMin] = marketHoursLocal.open.split(':').map(Number);
+                    const [closeHour, closeMin] = marketHoursLocal.close.split(':').map(Number);
+                    const xAxisMin = new Date(chartDate);
+                    xAxisMin.setHours(openHour, openMin, 0, 0);
+                    const xAxisMax = new Date(chartDate);
+                    xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                    
+                    await logToBackend('info', `[Chart] Setting x-axis for empty data: ${xAxisMin.toLocaleTimeString()} - ${xAxisMax.toLocaleTimeString()}`);
+                    await logToBackend('info', `[Chart] X-axis min ISO: ${xAxisMin.toISOString()}, max ISO: ${xAxisMax.toISOString()}`);
+                    await logToBackend('info', `[Chart] X-axis min local: ${xAxisMin.toLocaleString()}, max local: ${xAxisMax.toLocaleString()}`);
+                    
+                    // Clear datasets but keep chart structure visible
+                    chart.data.datasets = [];
+                    chart.data.labels = [];
+                    chart.options.scales.x.min = xAxisMin;
+                    chart.options.scales.x.max = xAxisMax;
+                    // Force chart to show axes even with no data
+                    chart.options.scales.x.display = true;
+                    chart.options.scales.y.display = true;
+                    
+                    // Add a dummy dataset to ensure chart renders (Chart.js needs at least one dataset to show axes properly)
+                    chart.data.datasets.push({
+                        label: 'No data',
+                        data: [],
+                        borderColor: 'transparent',
+                        backgroundColor: 'transparent',
+                        borderWidth: 0,
+                        pointRadius: 0
+                    });
+                    
+                    // Save zoom state before update
+                    const zoomStateBefore = saveZoomState();
+                    
+                    chart.update();
+                    
+                    // Restore zoom state after update if user had zoomed
+                    if (zoomStateBefore && userHasZoomed) {
+                        restoreZoomState(zoomStateBefore);
+                    }
+                    await logToBackend('info', `[Chart] Chart updated with empty data - axes should be visible`);
+                    await logToBackend('info', `[Chart] Chart canvas dimensions: ${chart.canvas.width}x${chart.canvas.height}`);
+                    await logToBackend('info', `[Chart] Chart container dimensions: ${document.getElementById('chart-container').offsetWidth}x${document.getElementById('chart-container').offsetHeight}`);
+                    return;
+                }
+                
+                // Convert timestamps to Date objects for Chart.js time scale (in local time)
+                const labels = data.timestamp.map(ts => {
+                    // Timestamp might be in seconds or milliseconds
+                    const timestamp = typeof ts === 'number' ? ts : parseFloat(ts);
+                    // If timestamp is less than 1e12, assume seconds, otherwise milliseconds
+                    return new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
+                });
+                
+                // Get market hours in local timezone for filtering
+                const marketHoursLocal = await getMarketHoursLocal();
+                await logToBackend('info', `[Chart] Market hours (local): ${marketHoursLocal.open} - ${marketHoursLocal.close}`);
+                
+                // Debug: Log first and last timestamp to diagnose timezone issues
+                if (labels.length > 0) {
+                    const firstTs = labels[0];
+                    const lastTs = labels[labels.length - 1];
+                    await logToBackend('info', `[Chart] Timestamp range: first=${firstTs.toISOString()} (${firstTs.toLocaleString()}), last=${lastTs.toISOString()} (${lastTs.toLocaleString()})`);
+                    await logToBackend('info', `[Chart] Raw timestamp values: first=${data.timestamp[0]}, last=${data.timestamp[data.timestamp.length - 1]}`);
+                }
+                
+                // Filter data to market hours (9:30 AM - 4:00 PM ET in local time)
+                // Pass dateStr to ensure filtering uses the requested date, not the first timestamp
+                const filtered = await filterToMarketHours(labels, data, marketHoursLocal, dateStr);
+                let filteredLabels = filtered.labels;
+                let filteredData = filtered.data;
+                
+                await logToBackend('info', `[Chart] After market hours filter: ${filteredLabels.length} points (from ${labels.length})`);
+                
+                // Optimize data if too many points (for performance)
+                const originalPointCount = filteredLabels.length;
+                const optimizedData = await optimizeDataPoints(filteredData, 30000);
+                
+                // Recreate labels from optimized timestamp data to ensure alignment
+                const optimizedLabels = optimizedData.timestamp.map(ts => {
+                    const timestamp = typeof ts === 'number' ? ts : parseFloat(ts);
+                    return new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
+                });
+                
+                await logToBackend('info', `[Chart] After optimization: ${optimizedLabels.length} points (from ${originalPointCount})`);
+                await logToBackend('info', `[Chart] Optimized data keys: ${Object.keys(optimizedData).join(', ')}`);
+                await logToBackend('info', `[Chart] Optimized data lengths: ${Object.keys(optimizedData).map(key => `${key}: ${optimizedData[key]?.length || 0}`).join(', ')}`);
+                
+                // Calculate market hours range for x-axis
+                // Always use the market date from the API, not the current date
+                // Parse dateStr (format: "YYYY-MM-DD") and create a date at midnight in local timezone
+                await logToBackend('info', `[Chart] Market hours from API: ${marketHoursLocal.open} - ${marketHoursLocal.close}`);
+                let chartDate = new Date(dateStr + 'T00:00:00');
+                // If dateStr parsing fails, fall back to first label's date, or current date as last resort
+                if (isNaN(chartDate.getTime())) {
+                    await logToBackend('warn', `[Chart] Failed to parse dateStr: ${dateStr}, using fallback`);
+                    if (optimizedLabels.length > 0 && optimizedLabels[0]) {
+                        chartDate = new Date(optimizedLabels[0]);
+                        chartDate.setHours(0, 0, 0, 0);
+                    } else {
+                        chartDate = new Date();
+                        chartDate.setHours(0, 0, 0, 0);
+                    }
+                } else {
+                    // Ensure we're using local midnight, not UTC
+                    chartDate.setHours(0, 0, 0, 0);
+                }
+                
+                await logToBackend('info', `[Chart] Chart date (local midnight): ${chartDate.toISOString()} (local: ${chartDate.toLocaleString()})`);
+                
+                const [openHour, openMin] = marketHoursLocal.open.split(':').map(Number);
+                const [closeHour, closeMin] = marketHoursLocal.close.split(':').map(Number);
+                const xAxisMin = new Date(chartDate);
+                xAxisMin.setHours(openHour, openMin, 0, 0);
+                const xAxisMax = new Date(chartDate);
+                xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                
+                await logToBackend('info', `[Chart] Setting x-axis range: ${xAxisMin.toLocaleTimeString()} - ${xAxisMax.toLocaleTimeString()} (market hours) for date ${dateStr}`);
+                await logToBackend('info', `[Chart] X-axis min ISO: ${xAxisMin.toISOString()}, max ISO: ${xAxisMax.toISOString()}`);
+                await logToBackend('info', `[Chart] X-axis min local: ${xAxisMin.toLocaleString()}, max local: ${xAxisMax.toLocaleString()}`);
+                
+                // Update chart x-axis limits to market hours only (even if no data after filtering)
+                // Only set initial zoom on first load, not on subsequent updates if user has zoomed
+                if (!initialZoomSet) {
+                    chart.options.scales.x.min = xAxisMin;
+                    chart.options.scales.x.max = xAxisMax;
+                    initialZoomSet = true;
+                }
+                // If user has zoomed, don't reset x-axis - preserve their zoom
+                
+                // Clear old datasets and labels before adding new ones (prevents memory accumulation)
+                chart.data.datasets = [];
+                chart.data.labels = optimizedLabels.length > 0 ? optimizedLabels : [];
+                
+                // If no data after filtering, still update the chart to show the x-axis range
+                if (optimizedLabels.length === 0) {
+                    await logToBackend('warn', `[Chart] No data after filtering/optimization for ${ticker} on ${dateStr}`);
+                    // Add a dummy dataset to ensure chart renders
+                    chart.data.datasets.push({
+                        label: 'No data',
+                        data: [],
+                        borderColor: 'transparent',
+                        backgroundColor: 'transparent',
+                        borderWidth: 0,
+                        pointRadius: 0
+                    });
+                    // Save zoom state before update
+                    const zoomStateBefore2 = saveZoomState();
+                    
+                    chart.update();
+                    
+                    // Restore zoom state after update if user had zoomed
+                    if (zoomStateBefore2 && userHasZoomed) {
+                        restoreZoomState(zoomStateBefore2);
+                    }
+                    await logToBackend('info', `[Chart] Chart updated with no data after filtering - axes should be visible`);
+                    return;
+                }
+                
+                // Update or create datasets for each endpoint
+                const endpoints = [
+                    'spot',
+                    'zero_gamma',
+                    'major_pos_vol',    // Positive gamma
+                    'major_neg_vol',    // Negative gamma
+                    'major_long_gamma', // Long gamma
+                    'major_short_gamma', // Short gamma
+                    'major_positive',   // Major positive strike
+                    'major_negative',   // Major negative strike
+                    'major_pos_oi',     // Major positive OI
+                    'major_neg_oi'      // Major negative OI
+                ];
+                
+                let datasetsAdded = 0;
+                for (const endpoint of endpoints) {
+                    if (optimizedData[endpoint] && Array.isArray(optimizedData[endpoint]) && optimizedData[endpoint].length > 0) {
+                        // Ensure data array length matches labels length
+                        let labelsToUse = optimizedLabels;
+                        if (optimizedData[endpoint].length !== optimizedLabels.length) {
+                            await logToBackend('warn', `[Chart] Data length mismatch for ${endpoint}: ${optimizedData[endpoint].length} values vs ${optimizedLabels.length} labels`);
+                            // Use the minimum length to avoid index errors
+                            const minLength = Math.min(optimizedData[endpoint].length, optimizedLabels.length);
+                            labelsToUse = optimizedLabels.slice(0, minLength);
+                            optimizedData[endpoint] = optimizedData[endpoint].slice(0, minLength);
+                        }
+                        
+                        const isSpot = endpoint === 'spot';
+                        
+                        let dataPoints;
+                        
+                        if (isSpot) {
+                            // Spot price: continuous line (normal behavior)
+                            dataPoints = optimizedData[endpoint]
+                                .map((value, idx) => {
+                                    // Skip NaN, null, undefined, or 0 values (should be filtered on backend, but double-check)
+                                    if (value === null || value === undefined || value === 0) {
+                                        return null;
+                                    }
+                                    if (typeof value === 'number' && (isNaN(value) || !isFinite(value))) {
+                                        return null;
+                                    }
+                                    return {
+                                        x: labelsToUse[idx],
+                                        y: value
+                                    };
+                                })
+                                .filter(point => point !== null);
+                        } else {
+                            // Non-spot: horizontal segments (hold value until change)
+                            dataPoints = createHorizontalSegments(labelsToUse, optimizedData[endpoint]);
+                        }
+                        
+                        if (dataPoints.length === 0) {
+                            await logToBackend('warn', `[Chart] No valid data points for ${endpoint} after filtering`);
+                            continue; // Skip this dataset
+                        }
+                        
+                        await logToBackend('info', `[Chart] Adding dataset ${endpoint} with ${dataPoints.length} data points`);
+                        
+                        // Create new dataset (we cleared datasets above, so always create new)
+                        const datasetColors = getDatasetColors();
+                        const colors = datasetColors[endpoint] || { border: 'rgb(128, 128, 128)', fill: 'rgba(128, 128, 128, 0.1)' };
+                        
+                        // Check if this plot should be hidden by default
+                        const isHiddenByDefault = globalChartSettings.HiddenPlots.includes(endpoint);
+                        
+                        const datasetConfig = {
+                            label: datasetLabels[endpoint],
+                            data: dataPoints,
+                            borderColor: colors.border,
+                            backgroundColor: colors.fill,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                            tension: 0.1,
+                            fill: false,
+                            spanGaps: false,
+                            hidden: isHiddenByDefault // Hide if in HiddenPlots
+                        };
+                        
+                        if (isSpot) {
+                            // Spot: continuous line
+                            // No special config needed - Chart.js will connect all points
+                        } else {
+                            // Non-spot: using null separators to break connections
+                            // No need for stepped: 'after' - null values with spanGaps: false break connections
+                        }
+                        
+                        chart.data.datasets.push(datasetConfig);
+                        datasetsAdded++;
+                    } else {
+                        await logToBackend('info', `[Chart] Skipping ${endpoint}: no data or empty array`);
+                    }
+                }
+                
+                await logToBackend('info', `[Chart] Added ${datasetsAdded} datasets, updating chart...`);
+                // Save zoom state before update
+                const zoomStateBefore3 = saveZoomState();
+                
+                chart.update('none'); // Update without animation for performance
+                
+                // Restore zoom state after update if user had zoomed
+                if (zoomStateBefore3 && userHasZoomed) {
+                    restoreZoomState(zoomStateBefore3);
+                }
+                
+                // Update crosshair to latest data if mouse is not over the chart
+                if (!isMouseOverChart) {
+                    updateCrosshairToLatest();
+                }
+                
+                await logToBackend('info', `[Chart] Chart updated with ${chart.data.datasets.length} datasets and ${chart.data.labels.length} labels`);
+                
+                const dataPoints = optimizedLabels.length;
+                const optimizationNote = originalPointCount > dataPoints ? ` (optimized from ${originalPointCount})` : '';
+                statusEl.textContent = `Loaded ${dataPoints} data points${optimizationNote}`;
+                statusEl.className = '';
+                
+            } catch (error) {
+                await logToBackend('error', `[Chart] Error updating chart: ${error.message || error}`);
+                await logToBackend('error', `[Chart] Error details: name=${error.name}, message=${error.message}, stack=${error.stack || 'N/A'}`);
+                statusEl.textContent = `Error: ${error.message || 'Failed to load data'}`;
+                statusEl.className = 'error';
+            }
+        }
+        
+            // Load colors from settings, then initialize chart
+            await logToBackend('info', '[Chart] About to load chart colors...');
+            loadChartColors().then(async () => {
+                await logToBackend('info', '[Chart] Colors loaded, initializing chart...');
+                await logToBackend('info', `[Chart] Canvas element: ${document.getElementById('chart') ? 'found' : 'NOT FOUND'}`);
+                await logToBackend('info', `[Chart] Chart object: ${chart ? 'created' : 'NOT CREATED'}`);
+                await logToBackend('info', `[Chart] Chart canvas visible: ${chart?.canvas?.offsetWidth || 0}x${chart?.canvas?.offsetHeight || 0}`);
+                await updateChart();
+                // Show latest data in crosshair info box on initial load
+                updateCrosshairToLatest();
+            }).catch(async (err) => {
+                await logToBackend('error', `[Chart] Error loading colors: ${err.message || err}`);
+                await updateChart(); // Still try to update even if colors fail
+                updateCrosshairToLatest();
+            });
+            
+            // Update every 1.5 seconds for more real-time updates (zoom is preserved)
+            const updateInterval = setInterval(updateChart, 1500);
+            
+            // Clear interval on window close
+            window.addEventListener('beforeunload', () => {
+                clearInterval(updateInterval);
+            });
+            
+            // Listen for settings updates from the main window to refresh colors
+            try {
+                const settingsChannel = new BroadcastChannel('market-terminal-settings');
+                settingsChannel.onmessage = async (event) => {
+                    if (event.data && event.data.type === 'settings-updated') {
+                        await logToBackend('info', '[Chart] Received settings update broadcast, refreshing colors...');
+                        
+                        // Update global settings
+                        if (event.data.settings) {
+                            globalChartSettings.UseMarketTime = event.data.settings.UseMarketTime || false;
+                            globalChartSettings.HiddenPlots = event.data.settings.HiddenPlots || [];
+                        }
+                        
+                        // Reload colors from the new settings
+                        await loadChartColors();
+                        
+                        // Apply new colors to existing datasets
+                        if (chart && chart.data && chart.data.datasets) {
+                            const datasetColors = getDatasetColors();
+                            const datasetLabelsReverse = {};
+                            Object.entries(datasetLabels).forEach(([key, label]) => {
+                                datasetLabelsReverse[label] = key;
+                            });
+                            
+                            chart.data.datasets.forEach((dataset, index) => {
+                                // Find the endpoint name for this dataset
+                                const endpoint = datasetLabelsReverse[dataset.label];
+                                if (endpoint && datasetColors[endpoint]) {
+                                    dataset.borderColor = datasetColors[endpoint].border;
+                                    dataset.backgroundColor = datasetColors[endpoint].fill;
+                                }
+                                
+                                // Update hidden state based on HiddenPlots
+                                if (endpoint) {
+                                    const isHidden = globalChartSettings.HiddenPlots.includes(endpoint);
+                                    // Get the chart meta to toggle visibility
+                                    const meta = chart.getDatasetMeta(index);
+                                    if (meta) {
+                                        meta.hidden = isHidden;
+                                    }
+                                }
+                            });
+                            
+                            chart.update('none');
+                            await logToBackend('info', '[Chart] Colors and visibility refreshed from settings update');
+                        }
+                    }
+                };
+                
+                // Clean up channel on window close
+                window.addEventListener('beforeunload', () => {
+                    settingsChannel.close();
+                });
+            } catch (e) {
+                console.warn('[Chart] Failed to set up settings broadcast listener:', e);
+            }
+            
+            } catch (error) {
+                // Log any errors that occur during initialization
+                try {
+                    fetch('/api/frontend-log', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ level: 'error', message: `[Chart] CRITICAL ERROR in async IIFE: ${error.message || error} - Stack: ${error.stack || 'N/A'}` })
+                    }).catch(() => {});
+                } catch (e) {
+                    // Ignore
+                }
+                console.error('[Chart] Error:', error);
+            }
+        })(); // End of async IIFE
+    </script>
+</body>
+</html>

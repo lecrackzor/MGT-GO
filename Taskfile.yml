@@ -1,0 +1,28 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Build the application
+    cmds:
+      - task: windows:build
+
+  windows:build:
+    desc: Build for Windows
+    cmds:
+      - go build -o bin/market-terminal.exe .
+
+  dev:
+    desc: Run the application in development mode (fast iteration)
+    cmds:
+      - go run .
+
+  tidy:
+    desc: Clean up and update Go module dependencies
+    cmds:
+      - go mod tidy
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - if exist bin rmdir /s /q bin
+      - go clean

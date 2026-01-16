@@ -1,0 +1,15 @@
+{
+  "name": "market-terminal",
+  "outputfilename": "market-terminal",
+  "frontend": {
+    "dir": "frontend",
+    "install": "",
+    "build": "",
+    "bridge": "src/bridge",
+    "serve": ""
+  },
+  "author": {
+    "name": "Market Terminal Gexbot",
+    "email": ""
+  }
+}

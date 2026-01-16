@@ -1,0 +1,53 @@
+# Binaries
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Ticker data directories
+Tickers */
+
+# Log files
+*.log
+logs/
+
+# Settings (may contain sensitive data like API keys)
+settings.yaml
+settings.yml
+*.yaml.bak
+*.yml.bak
+
+# Wails build output
+app.exe
+app
+dist/

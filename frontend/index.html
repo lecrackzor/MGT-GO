@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Terminal Gexbot</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <!-- Loading overlay - shown until first-run check completes -->
+    <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #1e1e1e; display: flex; justify-content: center; align-items: center; z-index: 9999;">
+        <div style="text-align: center;">
+            <h2 style="color: #4CAF50; margin-bottom: 1rem;">Market Terminal Gexbot</h2>
+            <p style="color: #e0e0e0;">Loading...</p>
+        </div>
+    </div>
+    
+    <div id="app" style="display: none;">
+        <header>
+            <h1>Market Terminal Gexbot</h1>
+            <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                <div id="market-status" style="padding: 0.5rem 1rem; background: rgba(255, 193, 7, 0.2); border-radius: 4px; font-size: 0.9rem;">
+                    Checking market status...
+                </div>
+                <script>
+                    // Log when market-status element is created
+                    console.log('[HTML] market-status element created with text: "Checking market status..."');
+                </script>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <label for="date-selector" style="font-size: 0.9rem; color: #e0e0e0;">Date:</label>
+                    <select id="date-selector" style="padding: 0.5rem; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; color: #e0e0e0; min-width: 150px; cursor: pointer;">
+                        <option>Loading dates...</option>
+                    </select>
+                    <button id="today-btn" style="padding: 0.5rem 1rem; background: #3a3a3a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#4a4a4a'" onmouseout="this.style.background='#3a3a3a'">Today</button>
+                </div>
+                <div id="status">Initializing...</div>
+                <button id="settings-btn" class="settings-btn" title="Settings">⚙️ Settings</button>
+            </div>
+        </header>
+        
+        <!-- Startup Wizard Modal -->
+        <div id="startup-wizard-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h2>Welcome to Market Terminal!</h2>
+                </div>
+                <div class="modal-body">
+                    <p>Let's get you set up. Please provide your API key and select your subscription tier(s).</p>
+                    
+                    <div class="setting-group">
+                        <label for="wizard-api-key">API Key:</label>
+                        <input type="password" id="wizard-api-key" placeholder="Enter your GEXBot API key">
+                        <small>Your API key will be saved securely</small>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>Subscription Tiers:</label>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="wizard-tier-classic" checked>
+                                <span>Classic - Basic GEX data</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="wizard-tier-state">
+                                <span>State - Advanced state data</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="wizard-tier-orderflow">
+                                <span>Orderflow - Order flow data</span>
+                            </label>
+                        </div>
+                        <small>Select which subscription tier(s) you have access to</small>
+                    </div>
+                    
+                    <div class="setting-group" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+                        <button id="wizard-complete" class="save-btn">Save & Continue</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <button class="modal-close" id="settings-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <!-- API Configuration Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">🔑 API Configuration</div>
+                        <div class="setting-group">
+                            <label for="api-key">API Key:</label>
+                            <input type="password" id="api-key" placeholder="Enter your API key">
+                            <small id="api-key-status">Checking API key status...</small>
+                        </div>
+                        
+                        <div class="setting-group">
+                            <label>Subscription Tiers:</label>
+                            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                                    <input type="checkbox" id="settings-tier-classic">
+                                    <span>Classic - Basic GEX data</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                                    <input type="checkbox" id="settings-tier-state">
+                                    <span>State - Advanced state data</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                                    <input type="checkbox" id="settings-tier-orderflow">
+                                    <span>Orderflow - Order flow data</span>
+                                </label>
+                            </div>
+                            <small>Select which subscription tier(s) you have access to</small>
+                        </div>
+                        
+                        <div class="setting-group">
+                            <label>Data Collection Mode:</label>
+                            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                                    <input type="radio" name="data-collection-mode" id="collect-all" value="all" checked>
+                                    <span>Collect all available data (recommended)</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                                    <input type="radio" name="data-collection-mode" id="collect-charts" value="charts">
+                                    <span>Collect chart data only (less storage)</span>
+                                </label>
+                            </div>
+                            <small>Choose whether to collect all endpoints available in your tier, or only what's needed for charts</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Data Storage Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">💾 Data Storage</div>
+                        <div class="setting-group">
+                            <label for="data-dir">Data Directory:</label>
+                            <input type="text" id="data-dir" placeholder="Tickers">
+                            <small>Directory where ticker data files are stored</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Ticker Selection & Polling Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">📊 Ticker Selection & Polling Preferences</div>
+                        <div class="setting-group">
+                            <div style="margin-bottom: 0.75rem; padding: 0.75rem; background: #1a1a1a; border-radius: 4px; border-left: 3px solid #4CAF50;">
+                                <div style="font-size: 0.85rem; color: #b0b0b0; line-height: 1.5;">
+                                    <strong style="color: #e0e0e0;">How it works:</strong><br>
+                                    • <strong>Checkbox</strong> - Enable/disable data collection for this ticker<br>
+                                    • <strong>Refresh (ms)</strong> - Custom polling interval. Set to <code style="background:#2a2a2a;padding:0 4px;border-radius:2px;">0</code> for automatic (uses Priority)<br>
+                                    • <strong>Priority</strong> - When Refresh is 0: High=1s, Medium=5s, Low=30s<br>
+                                    • <strong>☰ Drag handle</strong> - Reorder tickers in the main window
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: flex-end; margin-bottom: 0.5rem;">
+                                <button id="reset-polling-defaults" style="padding: 0.35rem 0.75rem; background: #3a3a3a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0; cursor: pointer; font-size: 0.8rem; transition: background 0.2s;" onmouseover="this.style.background='#4a4a4a'" onmouseout="this.style.background='#3a3a3a'">Reset All to Auto (0)</button>
+                            </div>
+                            <div id="ticker-selection" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 350px; overflow-y: auto; border: 1px solid #444; padding: 0.5rem; border-radius: 4px; background: #1a1a1a;">
+                                <!-- Ticker checkboxes will be inserted here -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Chart Colors Section -->
+                    <div class="settings-section" id="chart-colors-section">
+                        <div class="settings-section-header">🎨 Chart Colors</div>
+                        <div class="setting-group">
+                            <div id="chart-colors-grid">
+                                <!-- Color pickers will be inserted here -->
+                            </div>
+                            <small style="display: block; margin-top: 0.5rem;">Customize colors for each data series in charts</small>
+                            <button id="reset-colors" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #3a3a3a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#4a4a4a'" onmouseout="this.style.background='#3a3a3a'">Reset to Defaults</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Default Chart Plots Section -->
+                    <div class="settings-section" id="default-plots-section">
+                        <div class="settings-section-header">📈 Default Chart Plots</div>
+                        <div class="setting-group">
+                            <div id="hidden-plots-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-spot" data-plot="spot" checked>
+                                    <span>Spot Price</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-zero_gamma" data-plot="zero_gamma" checked>
+                                    <span>Zero Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_pos_vol" data-plot="major_pos_vol" checked>
+                                    <span>Positive Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_neg_vol" data-plot="major_neg_vol" checked>
+                                    <span>Negative Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_long_gamma" data-plot="major_long_gamma" checked>
+                                    <span>Long Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_short_gamma" data-plot="major_short_gamma" checked>
+                                    <span>Short Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_positive" data-plot="major_positive" checked>
+                                    <span>Major Positive Strike</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_negative" data-plot="major_negative" checked>
+                                    <span>Major Negative Strike</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_pos_oi" data-plot="major_pos_oi" checked>
+                                    <span>Major Positive OI</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-major_neg_oi" data-plot="major_neg_oi" checked>
+                                    <span>Major Negative OI</span>
+                                </label>
+                            </div>
+                            <small style="display: block; margin-top: 0.5rem;">Select which plots are visible by default when opening charts. <strong>Note:</strong> When "Collect chart data only" is selected, disabled plots will not be collected from the API.</small>
+                        </div>
+                    </div>
+                    
+                    <!-- General Settings Section -->
+                    <div class="settings-section" id="general-settings-section">
+                        <div class="settings-section-header">⚙️ General Settings</div>
+                        <div class="setting-group">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                <input type="checkbox" id="use-market-time">
+                                <span>Display times in Market Time (ET)</span>
+                            </label>
+                            <small style="display: block; margin-left: 1.5rem; color: #888;">Show all times in Eastern Time instead of your local timezone</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                <input type="checkbox" id="enable-logging" checked>
+                                <span>Enable file logging</span>
+                            </label>
+                            <small style="display: block; margin-left: 1.5rem; color: #888;">Write debug logs to files (requires restart)</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                <input type="checkbox" id="hide-console" checked>
+                                <span>Hide console window</span>
+                            </label>
+                            <small style="display: block; margin-left: 1.5rem; color: #888;">Hide the terminal/console window on startup (requires restart)</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Save Button -->
+                    <div class="setting-group" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #3a3a3a;">
+                        <button id="save-settings" class="save-btn">💾 Save Settings</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <main>
+            <div id="ticker-table-container" style="max-height: calc(100vh - 120px); overflow-y: auto;">
+                <table id="ticker-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>Ticker</th>
+                            <th>Spot</th>
+                            <th>Zero Gamma</th>
+                            <th>Pos Gamma</th>
+                            <th>Neg Gamma</th>
+                            <th>Last Update</th>
+                            <th>Chart</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ticker-table-body">
+                        <!-- Ticker rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Simple logging setup - uses HTTP endpoint -->
+    <script>
+        // This runs IMMEDIATELY, before any module scripts
+        (function() {
+            try {
+                console.log('===== HTML SCRIPT BLOCK EXECUTING =====');
+                console.log('[HTML] This script runs BEFORE main.js module loads');
+                console.log('[HTML] Timestamp:', new Date().toISOString());
+            } catch(e) {
+                alert('CRITICAL: HTML script block failed: ' + e);
+            }
+            
+            // Initialize window._app for compatibility
+            window._app = null;
+            window._appReady = false;
+            
+            // Simple test: Call HTTP endpoint to verify frontend is executing
+            fetch('/api/frontend-test')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('[HTML] Frontend test endpoint response:', data);
+                })
+                .catch(err => {
+                    console.error('[HTML] Frontend test endpoint failed:', err);
+                });
+            
+            // Test the new logging endpoint
+            fetch('/api/frontend-log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ level: 'INFO', message: '[HTML] Frontend JavaScript executing - HTML script block' })
+            }).catch(() => {}); // Ignore errors
+        })();
+    </script>
+    
+    <!-- Try to use real Wails runtime if available, otherwise use shim -->
+    <script>
+        // Check if Wails has injected its runtime
+        if (window._wails && window._wails.runtime) {
+            console.log('[HTML] Wails runtime detected - using real runtime');
+            // Map @wailsio/runtime to the real runtime
+            window.__wailsRuntimeAvailable = true;
+        } else {
+            console.log('[HTML] Wails runtime not detected - will use shim');
+            window.__wailsRuntimeAvailable = false;
+        }
+    </script>
+    
+    <!-- Import map to map @wailsio/runtime to our shim -->
+    <script type="importmap">
+    {
+        "imports": {
+            "@wailsio/runtime": "/wails-runtime-shim.js"
+        }
+    }
+    </script>
+    <script type="module" src="main.js" onerror="console.error('CRITICAL: Failed to load main.js module:', event)"></script>
+    <script>
+        // Add error handler for unhandled errors (non-module script)
+        window.addEventListener('error', (event) => {
+            console.error('===== GLOBAL ERROR =====');
+            console.error('Error:', event.error);
+            console.error('Message:', event.message);
+            console.error('Filename:', event.filename);
+            console.error('Line:', event.lineno);
+            console.error('Col:', event.colno);
+            const statusEl = document.getElementById('status');
+            if (statusEl) {
+                statusEl.textContent = 'JavaScript Error: ' + (event.error?.message || event.message || 'Unknown error');
+                statusEl.style.color = '#f44336';
+            }
+        });
+        
+        // Add unhandled promise rejection handler
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('===== UNHANDLED PROMISE REJECTION =====');
+            console.error('Reason:', event.reason);
+            console.error('Promise:', event.promise);
+            const statusEl = document.getElementById('status');
+            if (statusEl) {
+                statusEl.textContent = 'Promise Error: ' + (event.reason?.message || String(event.reason) || 'Unknown error');
+                statusEl.style.color = '#f44336';
+            }
+        });
+        
+        // Log when DOM is ready
+        console.log('[HTML] Script loaded, waiting for DOMContentLoaded...');
+    </script>
+</body>
+</html>

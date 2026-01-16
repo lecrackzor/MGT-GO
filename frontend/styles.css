@@ -1,0 +1,446 @@
+/* Market Terminal Gexbot Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+header {
+    background-color: #2a2a2a;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+#market-status {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    color: #4CAF50;
+}
+
+#status {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#ticker-table-container {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+#ticker-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: #1a1a1a;
+}
+
+#ticker-table thead {
+    background-color: #2a2a2a;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+#ticker-table th {
+    padding: 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    color: #4CAF50;
+    border-bottom: 2px solid #3a3a3a;
+}
+
+#ticker-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+#ticker-table tbody tr:hover {
+    background-color: #2a2a2a;
+}
+
+#ticker-table tbody tr:nth-child(even) {
+    background-color: #1f1f1f;
+}
+
+.chart-btn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color 0.2s;
+}
+
+.chart-btn:hover {
+    background-color: #45a049;
+}
+
+.chart-btn:active {
+    background-color: #3d8b40;
+}
+
+#chart-container {
+    flex: 1;
+    padding: 1rem;
+    min-height: 400px;
+}
+
+#main-chart {
+    width: 100%;
+    height: 100%;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3a3a3a;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #4a4a4a;
+}
+
+/* Settings button */
+.settings-btn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.2s;
+}
+
+.settings-btn:hover {
+    background-color: #45a049;
+}
+
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+    background-color: #2a2a2a;
+    margin: 5% auto;
+    padding: 0;
+    border: 1px solid #3a3a3a;
+    width: 90%;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #4CAF50;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    font-size: 2rem;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    line-height: 30px;
+}
+
+.modal-close:hover {
+    color: #f44336;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.setting-group {
+    margin-bottom: 1.5rem;
+}
+
+.setting-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #e0e0e0;
+}
+
+.setting-group input[type="text"],
+.setting-group input[type="password"] {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: #1a1a1a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+.setting-group input[type="text"]:focus,
+.setting-group input[type="password"]:focus {
+    outline: none;
+    border-color: #4CAF50;
+}
+
+.setting-group small {
+    display: block;
+    margin-top: 0.25rem;
+    color: #888;
+    font-size: 0.85rem;
+}
+
+#ticker-selection {
+    background-color: #1a1a1a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+#ticker-selection label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    cursor: pointer;
+    color: #e0e0e0;
+    font-weight: normal;
+}
+
+#ticker-selection label:hover {
+    background-color: #2a2a2a;
+    border-radius: 2px;
+}
+
+#ticker-selection input[type="checkbox"] {
+    width: auto;
+    cursor: pointer;
+}
+
+.save-btn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.save-btn:hover {
+    background-color: #45a049;
+}
+
+.save-btn:active {
+    background-color: #3d8b40;
+}
+
+.save-btn:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+/* Settings section headers */
+.settings-section {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.settings-section-header {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #4CAF50;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Ticker tier sections */
+.ticker-tier-section {
+    margin-bottom: 1.5rem;
+}
+
+.ticker-tier-section h4 {
+    color: #4CAF50;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+/* Chart colors grid */
+#chart-colors-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+#chart-colors-grid > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+#chart-colors-grid label {
+    font-size: 0.85rem;
+    color: #aaa;
+    margin-bottom: 0;
+}
+
+#chart-colors-grid input[type="color"] {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+}
+
+#chart-colors-grid input[type="color"]:hover {
+    border-color: #4CAF50;
+}
+
+/* Polling preferences inputs */
+#ticker-selection input[type="number"],
+#ticker-selection select {
+    padding: 0.25rem;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 0.85rem;
+}
+
+#ticker-selection input[type="number"]:focus,
+#ticker-selection select:focus {
+    outline: none;
+    border-color: #4CAF50;
+}
+
+/* Better ticker row styling */
+#ticker-selection > div[style*="display: flex"] {
+    background: #1f1f1f;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.25rem;
+    transition: background 0.2s;
+}
+
+#ticker-selection > div[style*="display: flex"]:hover {
+    background: #2a2a2a;
+}
+
+/* Drag handle styling */
+.drag-handle {
+    cursor: grab;
+    color: #666;
+    font-size: 0.9rem;
+    padding: 0 0.25rem;
+    user-select: none;
+    opacity: 0.6;
+    transition: opacity 0.2s, color 0.2s;
+}
+
+.drag-handle:hover {
+    opacity: 1;
+    color: #4CAF50;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Dragging state */
+.ticker-config-row.dragging,
+#ticker-table tbody tr.dragging {
+    opacity: 0.5;
+    background: #333 !important;
+}
+
+.ticker-config-row.drag-over,
+#ticker-table tbody tr.drag-over {
+    border-top: 2px solid #4CAF50 !important;
+}
+
+/* Main table drag handle */
+#ticker-table .drag-handle {
+    cursor: grab;
+    color: #666;
+    padding: 0.25rem;
+    user-select: none;
+}
