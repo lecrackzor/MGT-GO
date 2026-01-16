@@ -1,5 +1,9 @@
 # Market Terminal Gexbot - Go/Wails Version
 
+<div align="center">
+  <img src="MGT.png" alt="Market Terminal Gexbot Screenshot">
+</div>
+
 > **⚠️ IMPORTANT**: Please read the [DISCLAIMER.md](DISCLAIMER.md) before using this software. This software is not affiliated with Gexbot, is provided "as is" without warranty, and is not financial advice.
 
 ## Prerequisites
