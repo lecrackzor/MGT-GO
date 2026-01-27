@@ -169,6 +169,9 @@ func NewApp() *App {
 	)
 	perTickerScheduler.UpdateTickers(enabledTickers)
 	app.perTickerScheduler = perTickerScheduler
+	
+	// Set per-ticker scheduler reference in coordinator for date rollover handling
+	coordinator.SetPerTickerScheduler(perTickerScheduler)
 
 	return app
 }
@@ -279,6 +282,12 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 				utils.Logf("Health check system started")
 			}
 			
+			// Start date rollover monitor
+			if a.coordinator != nil {
+				a.coordinator.StartDateRolloverMonitor()
+				utils.Logf("Date rollover monitor started")
+			}
+			
 			// Check API key
 			apiKey := settings.APITKey
 			if apiKey == "" {
@@ -301,13 +310,25 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	windowWidth := 900
 	windowHeight := 900
 	currentSettings := a.settingsManager.GetSettings()
-	if currentSettings.WindowWidth > 0 {
-		windowWidth = currentSettings.WindowWidth
+	if currentSettings != nil {
+		// Use saved dimensions if they're valid (>= minimum size)
+		// If saved dimensions are 0 or invalid, use defaults
+		if currentSettings.WindowWidth >= 600 {
+			windowWidth = currentSettings.WindowWidth
+			utils.Logf("Using saved window width: %d", windowWidth)
+		} else {
+			utils.Logf("Saved window width (%d) is invalid, using default: %d", currentSettings.WindowWidth, windowWidth)
+		}
+		if currentSettings.WindowHeight >= 400 {
+			windowHeight = currentSettings.WindowHeight
+			utils.Logf("Using saved window height: %d", windowHeight)
+		} else {
+			utils.Logf("Saved window height (%d) is invalid, using default: %d", currentSettings.WindowHeight, windowHeight)
+		}
+		utils.Logf("Window dimensions: %dx%d (saved: %dx%d)", windowWidth, windowHeight, currentSettings.WindowWidth, currentSettings.WindowHeight)
+	} else {
+		utils.Logf("Window dimensions: Using defaults %dx%d (settings not loaded)", windowWidth, windowHeight)
 	}
-	if currentSettings.WindowHeight > 0 {
-		windowHeight = currentSettings.WindowHeight
-	}
-	utils.Logf("Window dimensions: %dx%d (saved: %dx%d)", windowWidth, windowHeight, currentSettings.WindowWidth, currentSettings.WindowHeight)
 	
 	mainWindow := createWindowFromApp(a.appRef, application.WebviewWindowOptions{
 		Title:    "Market Terminal Gexbot",
@@ -362,6 +383,12 @@ func (a *App) ServiceShutdown() error {
 	// Stop health check system
 	if a.healthCheck != nil {
 		a.healthCheck.Stop()
+	}
+	
+	// Stop date rollover monitor
+	if a.coordinator != nil {
+		a.coordinator.StopDateRolloverMonitor()
+		a.debugPrint("Date rollover monitor stopped", "system")
 	}
 	
 	// Stop per-ticker scheduler

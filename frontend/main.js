@@ -230,7 +230,9 @@ function getDefaultSettings() {
             'major_negative': '#FF5722',
             'major_pos_oi': '#3F51B5',
             'major_neg_oi': '#E91E63'
-        }
+        },
+        ChartZoomFilterPercent: 1.0,
+        AutoFollowBufferPercent: 1.0
     };
 }
 
@@ -801,6 +803,33 @@ function getWindowDimensions() {
     return { width, height, source: 'inner+chrome' };
 }
 
+// Function to save window dimensions (reusable)
+async function saveWindowDimensionsNow() {
+    const dims = getWindowDimensions();
+    
+    // Only save if dimensions are valid
+    if (dims.width >= 600 && dims.height >= 400) {
+        if (App && typeof App.SaveWindowSize === 'function') {
+            try {
+                await App.SaveWindowSize(dims.width, dims.height);
+                lastSavedWidth = dims.width;
+                lastSavedHeight = dims.height;
+                console.log('[WindowSize] Saved window size:', dims.width, 'x', dims.height, `(${dims.source})`);
+                await logToBackend('info', `[WindowSize] Saved window size: ${dims.width}x${dims.height} (${dims.source})`);
+                return true;
+            } catch (e) {
+                console.warn('[WindowSize] Failed to save window size:', e);
+                await logToBackend('error', `[WindowSize] Failed to save: ${e.message}`);
+                return false;
+            }
+        } else {
+            console.warn('[WindowSize] App.SaveWindowSize not available');
+            return false;
+        }
+    }
+    return false;
+}
+
 window.addEventListener('resize', () => {
     // Debounce - save 1 second after user stops resizing
     if (resizeTimeout) {
@@ -814,22 +843,25 @@ window.addEventListener('resize', () => {
         
         // Only save if dimensions are valid and changed
         if (dims.width >= 600 && dims.height >= 400 && (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight)) {
-            if (App && typeof App.SaveWindowSize === 'function') {
-                try {
-                    await App.SaveWindowSize(dims.width, dims.height);
-                    lastSavedWidth = dims.width;
-                    lastSavedHeight = dims.height;
-                    console.log('[Resize] Saved window size:', dims.width, 'x', dims.height);
-                    await logToBackend('info', `[Resize] Saved window size: ${dims.width}x${dims.height} (${dims.source})`);
-                } catch (e) {
-                    console.warn('[Resize] Failed to save window size:', e);
-                    await logToBackend('error', `[Resize] Failed to save: ${e.message}`);
-                }
-            } else {
-                console.warn('[Resize] App.SaveWindowSize not available');
-            }
+            await saveWindowDimensionsNow();
         }
     }, 1000);
+});
+
+// Save window dimensions when window is about to close
+window.addEventListener('beforeunload', async (e) => {
+    // Save dimensions synchronously if possible, or use sendBeacon for async
+    const dims = getWindowDimensions();
+    if (dims.width >= 600 && dims.height >= 400 && App && typeof App.SaveWindowSize === 'function') {
+        try {
+            // Try to save synchronously (may not work in all browsers, but worth trying)
+            // For Wails, the backend should handle this
+            await App.SaveWindowSize(dims.width, dims.height);
+            console.log('[BeforeUnload] Saved window size:', dims.width, 'x', dims.height);
+        } catch (e) {
+            console.warn('[BeforeUnload] Failed to save window size:', e);
+        }
+    }
 });
 
 // Connect to backend
@@ -1297,6 +1329,20 @@ function loadGeneralSettings(settings) {
             hideConsoleCheckbox.checked = settings.HideConsole !== false;
             console.log('[General Settings] HideConsole:', hideConsoleCheckbox.checked);
         }
+        
+        // ChartZoomFilterPercent
+        const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
+        if (chartZoomFilterInput) {
+            chartZoomFilterInput.value = settings.ChartZoomFilterPercent || 1.0;
+            console.log('[General Settings] ChartZoomFilterPercent:', chartZoomFilterInput.value);
+        }
+        
+        // AutoFollowBufferPercent
+        const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
+        if (autoFollowBufferInput) {
+            autoFollowBufferInput.value = settings.AutoFollowBufferPercent || 1.0;
+            console.log('[General Settings] AutoFollowBufferPercent:', autoFollowBufferInput.value);
+        }
     } catch (error) {
         console.error('[General Settings] Error loading:', error);
     }
@@ -1342,10 +1388,32 @@ function saveGeneralSettings(settings) {
         settings.HideConsole = hideConsoleCheckbox.checked;
     }
     
+    const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
+    if (chartZoomFilterInput) {
+        const value = parseFloat(chartZoomFilterInput.value);
+        if (!isNaN(value) && value >= 0.01 && value <= 100) {
+            settings.ChartZoomFilterPercent = value;
+        } else {
+            settings.ChartZoomFilterPercent = 1.0; // Default if invalid
+        }
+    }
+    
+    const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
+    if (autoFollowBufferInput) {
+        const value = parseFloat(autoFollowBufferInput.value);
+        if (!isNaN(value) && value >= 0 && value <= 50) {
+            settings.AutoFollowBufferPercent = value;
+        } else {
+            settings.AutoFollowBufferPercent = 1.0; // Default if invalid
+        }
+    }
+    
     console.log('[General Settings] Saved:', {
         UseMarketTime: settings.UseMarketTime,
         EnableLogging: settings.EnableLogging,
-        HideConsole: settings.HideConsole
+        HideConsole: settings.HideConsole,
+        ChartZoomFilterPercent: settings.ChartZoomFilterPercent,
+        AutoFollowBufferPercent: settings.AutoFollowBufferPercent
     });
 }
 
@@ -1968,30 +2036,28 @@ function startWindowSizeMonitor() {
         
         // Only save if size changed and is valid
         if (dims.width >= 600 && dims.height >= 400 && (dims.width !== monitoredWidth || dims.height !== monitoredHeight)) {
-            if (App && typeof App.SaveWindowSize === 'function') {
-                try {
-                    await App.SaveWindowSize(dims.width, dims.height);
-                    monitoredWidth = dims.width;
-                    monitoredHeight = dims.height;
-                    console.log('[WindowMonitor] Saved window size:', dims.width, 'x', dims.height, `(${dims.source})`);
-                } catch (e) {
-                    console.warn('[WindowMonitor] Failed to save:', e);
-                }
+            if (await saveWindowDimensionsNow()) {
+                monitoredWidth = dims.width;
+                monitoredHeight = dims.height;
             }
         }
     }, 5000);
     
-    // Also save initial size after a delay
+    // Also save initial size after a delay (but only if it's different from what we've already saved)
     setTimeout(async () => {
         const dims = getWindowDimensions();
-        if (dims.width >= 600 && dims.height >= 400 && App && typeof App.SaveWindowSize === 'function') {
-            try {
-                await App.SaveWindowSize(dims.width, dims.height);
+        if (dims.width >= 600 && dims.height >= 400) {
+            // Only save if different from what we've already saved (avoid overwriting with same value)
+            if (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight) {
+                if (await saveWindowDimensionsNow()) {
+                    monitoredWidth = dims.width;
+                    monitoredHeight = dims.height;
+                }
+            } else {
+                // Update monitored values even if we don't save (to avoid unnecessary saves)
                 monitoredWidth = dims.width;
                 monitoredHeight = dims.height;
-                console.log('[WindowMonitor] Initial window size saved:', dims.width, 'x', dims.height, `(${dims.source})`);
-            } catch (e) {
-                console.warn('[WindowMonitor] Failed to save initial size:', e);
+                console.log('[WindowMonitor] Initial window size matches saved size:', dims.width, 'x', dims.height);
             }
         }
     }, 2000);

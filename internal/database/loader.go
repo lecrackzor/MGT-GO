@@ -3,6 +3,7 @@ package database
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -257,6 +258,18 @@ func (dl *DataLoader) LoadTickerData(ticker string, date time.Time) (map[string]
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
 	dl.debugPrint(fmt.Sprintf("LoadTickerData: Got database connection for %s", ticker), "loader")
+
+	// Force WAL checkpoint to ensure we see latest committed data
+	// This ensures read connections see data that was just written and checkpointed
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	conn, err := db.Conn(ctx)
+	if err == nil {
+		// Passive checkpoint - safe for read-only, ensures we see latest WAL data
+		// PASSIVE mode doesn't block writers and makes WAL data visible to this connection
+		_, _ = conn.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+		conn.Close()
+	}
+	cancel()
 
 	// Only load columns needed for main window (explicitly exclude profiles_blob)
 	requiredColumns := []string{

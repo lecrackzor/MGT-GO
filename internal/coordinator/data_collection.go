@@ -9,6 +9,7 @@ import (
 	"market-terminal/internal/api"
 	"market-terminal/internal/database"
 	"market-terminal/internal/scheduler"
+	"market-terminal/internal/utils"
 )
 
 // DataCollectionCoordinator coordinates data collection operations
@@ -25,6 +26,10 @@ type DataCollectionCoordinator struct {
 	tickersInProgress   map[string]bool
 	inProgressLock      sync.RWMutex
 	healthCheck         *HealthCheck // Optional health check reference
+	perTickerScheduler  *scheduler.PerTickerScheduler // Reference to trigger immediate polling
+	currentMarketDate   time.Time // Track current market date for rollover detection
+	dateMonitorStopChan chan struct{} // Channel to stop date monitor
+	dateMonitorWg       sync.WaitGroup // Wait group for date monitor goroutine
 }
 
 // NewDataCollectionCoordinator creates a new data collection coordinator
@@ -39,16 +44,19 @@ func NewDataCollectionCoordinator(
 	debugPrint func(string, string),
 ) *DataCollectionCoordinator {
 	return &DataCollectionCoordinator{
-		querySystem:       querySystem,
-		dataWriter:        dataWriter,
-		scheduler:         scheduler,
-		queryPlanner:      queryPlanner,
-		writeQueue:        writeQueue,
-		getShuttingDown:   getShuttingDown,
-		getOpenCharts:     getOpenCharts,
-		debugPrint:        debugPrint,
-		tickersInProgress: make(map[string]bool),
-		healthCheck:       nil, // Will be set by app.go after health check is created
+		querySystem:        querySystem,
+		dataWriter:         dataWriter,
+		scheduler:          scheduler,
+		queryPlanner:       queryPlanner,
+		writeQueue:         writeQueue,
+		getShuttingDown:    getShuttingDown,
+		getOpenCharts:      getOpenCharts,
+		debugPrint:         debugPrint,
+		tickersInProgress:  make(map[string]bool),
+		healthCheck:        nil, // Will be set by app.go after health check is created
+		perTickerScheduler: nil,  // Will be set by app.go after scheduler is created
+		currentMarketDate: utils.GetMarketDate(),
+		dateMonitorStopChan: nil, // Will be created when monitor starts
 	}
 }
 
@@ -57,6 +65,125 @@ func (dcc *DataCollectionCoordinator) SetHealthCheck(healthCheck *HealthCheck) {
 	dcc.mu.Lock()
 	defer dcc.mu.Unlock()
 	dcc.healthCheck = healthCheck
+}
+
+// SetPerTickerScheduler sets the per-ticker scheduler reference (called by app.go)
+func (dcc *DataCollectionCoordinator) SetPerTickerScheduler(perTickerScheduler *scheduler.PerTickerScheduler) {
+	dcc.mu.Lock()
+	defer dcc.mu.Unlock()
+	dcc.perTickerScheduler = perTickerScheduler
+}
+
+// StartDateRolloverMonitor starts a goroutine that monitors for date rollover
+// When date rollover is detected (at 8:30 AM ET or on first open after market open),
+// it flushes all pending writes and triggers immediate polling for all tickers
+func (dcc *DataCollectionCoordinator) StartDateRolloverMonitor() {
+	dcc.mu.Lock()
+	defer dcc.mu.Unlock()
+	
+	if dcc.dateMonitorStopChan != nil {
+		dcc.debugPrint("Date rollover monitor already running", "coordinator")
+		return
+	}
+	
+	dcc.dateMonitorStopChan = make(chan struct{})
+	dcc.dateMonitorWg.Add(1)
+	
+	go dcc.dateRolloverMonitor()
+	dcc.debugPrint("Date rollover monitor started", "coordinator")
+	log.Printf("DataCollectionCoordinator: Date rollover monitor started (current market date: %s)", 
+		dcc.currentMarketDate.Format("2006-01-02"))
+}
+
+// StopDateRolloverMonitor stops the date rollover monitor
+func (dcc *DataCollectionCoordinator) StopDateRolloverMonitor() {
+	dcc.mu.Lock()
+	stopChan := dcc.dateMonitorStopChan
+	dcc.dateMonitorStopChan = nil
+	dcc.mu.Unlock()
+	
+	if stopChan != nil {
+		close(stopChan)
+		dcc.dateMonitorWg.Wait()
+		dcc.debugPrint("Date rollover monitor stopped", "coordinator")
+	}
+}
+
+// dateRolloverMonitor monitors for date rollover and handles it
+func (dcc *DataCollectionCoordinator) dateRolloverMonitor() {
+	defer dcc.dateMonitorWg.Done()
+	
+	// Check every 30 seconds for date rollover
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	dcc.debugPrint("Date rollover monitor: Starting monitoring loop", "coordinator")
+	
+	for {
+		select {
+		case <-dcc.dateMonitorStopChan:
+			dcc.debugPrint("Date rollover monitor: Stop signal received", "coordinator")
+			return
+		case <-ticker.C:
+			dcc.checkDateRollover()
+		}
+	}
+}
+
+// checkDateRollover checks if the market date has changed and handles rollover
+func (dcc *DataCollectionCoordinator) checkDateRollover() {
+	dcc.mu.Lock()
+	oldDate := dcc.currentMarketDate
+	dcc.mu.Unlock()
+	
+	// Get current market date
+	newDate := utils.GetMarketDate()
+	
+	// Extract just the date part (ignore time) for comparison
+	oldDateOnly := time.Date(oldDate.Year(), oldDate.Month(), oldDate.Day(), 0, 0, 0, 0, oldDate.Location())
+	newDateOnly := time.Date(newDate.Year(), newDate.Month(), newDate.Day(), 0, 0, 0, 0, newDate.Location())
+	
+	// Check if date has changed
+	if !oldDateOnly.Equal(newDateOnly) {
+		dcc.debugPrint(fmt.Sprintf("Date rollover detected: %s -> %s", 
+			oldDateOnly.Format("2006-01-02"), newDateOnly.Format("2006-01-02")), "coordinator")
+		log.Printf("DataCollectionCoordinator: ===== DATE ROLLOVER DETECTED: %s -> %s =====", 
+			oldDateOnly.Format("2006-01-02"), newDateOnly.Format("2006-01-02"))
+		
+		// Update tracked date
+		dcc.mu.Lock()
+		dcc.currentMarketDate = newDate
+		dcc.mu.Unlock()
+		
+		// Flush all pending writes for the old date
+		dcc.debugPrint("Date rollover: Flushing all pending writes for old date", "coordinator")
+		if err := dcc.dataWriter.FlushAllTickers(); err != nil {
+			dcc.debugPrint(fmt.Sprintf("Date rollover: Error flushing all tickers: %v", err), "error")
+			log.Printf("DataCollectionCoordinator: ERROR - Failed to flush all tickers on date rollover: %v", err)
+		} else {
+			dcc.debugPrint("Date rollover: Successfully flushed all tickers", "coordinator")
+			log.Printf("DataCollectionCoordinator: Successfully flushed all tickers on date rollover")
+		}
+		
+		// Trigger immediate polling for all enabled tickers
+		dcc.mu.RLock()
+		perTickerScheduler := dcc.perTickerScheduler
+		dcc.mu.RUnlock()
+		
+		if perTickerScheduler != nil {
+			dcc.debugPrint("Date rollover: Triggering immediate polling for all tickers", "coordinator")
+			log.Printf("DataCollectionCoordinator: Triggering immediate polling for all tickers on date rollover")
+			perTickerScheduler.TriggerImmediatePolling()
+		} else {
+			dcc.debugPrint("Date rollover: WARNING - perTickerScheduler is nil, cannot trigger polling", "error")
+			log.Printf("DataCollectionCoordinator: WARNING - perTickerScheduler is nil, cannot trigger polling on date rollover")
+		}
+		
+		dcc.debugPrint(fmt.Sprintf("Date rollover: Completed handling rollover to %s", 
+			newDateOnly.Format("2006-01-02")), "coordinator")
+		log.Printf("DataCollectionCoordinator: Date rollover handling completed for %s", 
+			newDateOnly.Format("2006-01-02"))
+	}
 }
 
 // UpdateEnabledTickers updates the query planner's enabled tickers list

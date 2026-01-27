@@ -251,6 +251,23 @@
                             </label>
                             <small style="display: block; margin-left: 1.5rem; color: #888;">Hide the terminal/console window on startup (requires restart)</small>
                         </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="chart-zoom-filter">Chart Y-Axis Zoom Filter (%):</label>
+                            <input type="number" id="chart-zoom-filter" min="0.01" max="100" step="0.01" value="1.0" style="width: 100px;">
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">
+                                Default zoom level for Y-axis viewport. Shows ±(percentage) of current spot price. 
+                                Example: 1% with spot=5000 shows range 4950-5050. All data points are still plotted;
+                                this only controls the initial visible range. You can zoom/pan to see other points.
+                            </small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="auto-follow-buffer">Auto-Follow Buffer (%):</label>
+                            <input type="number" id="auto-follow-buffer" min="0" max="50" step="0.5" value="1.0" style="width: 100px;">
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">
+                                Buffer space on the right side of the chart when auto-follow is enabled. 
+                                Example: 10% means the chart will show 10% extra time range beyond the latest data point.
+                            </small>
+                        </div>
                     </div>
                     
                     <!-- Save Button -->

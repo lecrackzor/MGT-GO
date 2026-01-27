@@ -36,11 +36,13 @@
             width: 100%;
             height: calc(100vh - 100px);
             position: relative;
+            overflow: visible; /* Ensure wheel events work */
         }
         
         canvas {
             width: 100% !important;
             height: 100% !important;
+            touch-action: none; /* Prevent default touch behaviors that might interfere with zoom */
         }
         
         #status {
@@ -136,11 +138,70 @@
             z-index: 100;
             display: none;
         }
+        
+        /* Auto-follow button styles */
+        #auto-follow-btn {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            padding: 4px 8px;
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 3px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 10px;
+            z-index: 1000;
+            transition: background 0.2s, border-color 0.2s;
+            user-select: none;
+            line-height: 1.2;
+        }
+        
+        #auto-follow-btn:hover {
+            background: #4a4a4a;
+            border-color: #5a5a5a;
+        }
+        
+        #auto-follow-btn.active {
+            background: #4CAF50;
+            border-color: #5CBF60;
+            color: #ffffff;
+        }
+        
+        #auto-follow-btn.active:hover {
+            background: #5CBF60;
+            border-color: #6CCF70;
+        }
+        
+        /* Reset button styles */
+        #reset-zoom-btn {
+            position: absolute;
+            bottom: 5px;
+            right: 120px; /* Position to the left of auto-follow button */
+            padding: 4px 8px;
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 3px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 10px;
+            z-index: 1000;
+            transition: background 0.2s, border-color 0.2s;
+            user-select: none;
+            line-height: 1.2;
+        }
+        
+        #reset-zoom-btn:hover {
+            background: #4a4a4a;
+            border-color: #5a5a5a;
+        }
     </style>
 </head>
 <body>
     <h1 id="chart-title">Loading Chart...</h1>
     <div id="chart-container">
+        <button id="reset-zoom-btn" title="Reset view to default zoom filter">Reset</button>
+        <button id="auto-follow-btn" title="Auto-follow new data while preserving zoom">Auto-Follow: OFF</button>
         <canvas id="chart"></canvas>
         <div class="crosshair-line" id="crosshair-line"></div>
         <div id="crosshair-info-box">
@@ -302,6 +363,7 @@
             let userHasZoomed = false;
             let savedZoomState = null;
             let initialZoomSet = false; // Track if initial zoom has been set (first load)
+            let autoFollowEnabled = true; // Track auto-follow state (default to ON)
             
             // Log pan configuration before creating chart
             const panConfig = {
@@ -401,7 +463,8 @@
                         zoom: {
                             wheel: {
                                 enabled: true,
-                                speed: 0.1
+                                speed: 0.1,
+                                modifierKey: null // Allow wheel zoom without modifier key
                             },
                             pinch: {
                                 enabled: true
@@ -409,7 +472,7 @@
                             drag: {
                                 enabled: false // Disable drag-to-zoom to avoid conflicts with panning
                             },
-                            mode: 'xy'
+                            mode: 'xy' // Enable zoom on both X and Y axes
                         },
                         pan: {
                             enabled: true,
@@ -418,8 +481,10 @@
                             threshold: 10 // Minimum distance in pixels to trigger pan
                         },
                         limits: {
-                            x: { min: 'original', max: 'original' },
-                            y: { min: 'original', max: 'original' }
+                            // Don't restrict pan/zoom limits - allow free navigation including before first data point
+                            // Only apply "no dead space" logic when auto-follow is actively shifting
+                            x: { min: undefined, max: undefined },
+                            y: { min: undefined, max: undefined }
                         },
                         // Track zoom/pan events to preserve state during updates
                         onZoom: function({ chart }) {
@@ -987,6 +1052,94 @@
             updateCrosshairInfoBox(mouseX, mouseY);
         }, { passive: true });
         
+        // Custom wheel handler for axis-specific zoom
+        // Use capture phase to run before plugin's handler
+        chartCanvas.addEventListener('wheel', (e) => {
+            if (!chart || !chart.scales) return;
+            
+            const rect = chartCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            const xScale = chart.scales.x;
+            const yScale = chart.scales.y;
+            
+            if (!xScale || !yScale) return;
+            
+            // Get axis bounding boxes
+            // X-axis is at the bottom, Y-axis is on left/right
+            // Chart.js scale positions are relative to the chart canvas
+            const xAxisTop = xScale.top;
+            const xAxisBottom = xScale.bottom;
+            const yAxisLeft = yScale.left;
+            const yAxisRight = yScale.right;
+            
+            // Check if mouse is over X-axis area (bottom of chart, typically ~30-50px height)
+            // X-axis area includes the axis line and labels
+            const xAxisHeight = xAxisBottom - xAxisTop;
+            const isOverXAxis = mouseY >= (xAxisTop - 5) && mouseY <= (xAxisBottom + 5); // Add small buffer
+            
+            // Check if mouse is over Y-axis area (left or right side, typically ~50-80px width)
+            // Y-axis area includes the axis line and labels
+            const yAxisWidth = yAxisRight - yAxisLeft;
+            const isOverYAxis = mouseX >= (yAxisLeft - 5) && mouseX <= (yAxisRight + 5); // Add small buffer
+            
+            // Determine zoom behavior
+            if (isOverXAxis && !isOverYAxis) {
+                // Over X-axis only - zoom X-axis only
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Calculate zoom factor matching plugin speed (0.1)
+                // deltaY > 0 = scroll down = zoom out, deltaY < 0 = scroll up = zoom in
+                const zoomSpeed = 0.1;
+                const zoomFactor = e.deltaY > 0 ? (1 + zoomSpeed) : (1 - zoomSpeed);
+                const currentRange = xScale.max - xScale.min;
+                const center = (xScale.max + xScale.min) / 2;
+                const newRange = currentRange * zoomFactor;
+                
+                // Apply zoom centered on current view
+                const newMin = center - newRange / 2;
+                const newMax = center + newRange / 2;
+                
+                // Use zoomScale to zoom only X-axis
+                if (typeof chart.zoomScale === 'function') {
+                    chart.zoomScale('x', { min: newMin, max: newMax }, 'none');
+                    userHasZoomed = true;
+                    if (typeof saveZoomState === 'function') {
+                        savedZoomState = saveZoomState();
+                    }
+                }
+            } else if (isOverYAxis && !isOverXAxis) {
+                // Over Y-axis only - zoom Y-axis only
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Calculate zoom factor matching plugin speed (0.1)
+                // deltaY > 0 = scroll down = zoom out, deltaY < 0 = scroll up = zoom in
+                const zoomSpeed = 0.1;
+                const zoomFactor = e.deltaY > 0 ? (1 + zoomSpeed) : (1 - zoomSpeed);
+                const currentRange = yScale.max - yScale.min;
+                const center = (yScale.max + yScale.min) / 2;
+                const newRange = currentRange * zoomFactor;
+                
+                // Apply zoom centered on current view
+                const newMin = center - newRange / 2;
+                const newMax = center + newRange / 2;
+                
+                // Use zoomScale to zoom only Y-axis
+                if (typeof chart.zoomScale === 'function') {
+                    chart.zoomScale('y', { min: newMin, max: newMax }, 'none');
+                    userHasZoomed = true;
+                    if (typeof saveZoomState === 'function') {
+                        savedZoomState = saveZoomState();
+                    }
+                }
+            }
+            // If over chart area (not over either axis), let plugin handle it (both axes zoom)
+            // Don't prevent default, let the zoom plugin handle it
+        }, { passive: false, capture: true });
+        
         // No tooltip plugin needed - we're using custom crosshair info box
         
         // Track zoom state to preserve during updates
@@ -1082,7 +1235,9 @@
         // Global settings storage for chart window
         let globalChartSettings = {
             UseMarketTime: false,
-            HiddenPlots: []
+            HiddenPlots: [],
+            ChartZoomFilterPercent: 1.0,
+            AutoFollowBufferPercent: 1.0
         };
         
         // Function to load settings and update colors
@@ -1092,9 +1247,11 @@
                 const response = await fetch('/api/settings');
                 if (response.ok) {
                     const settings = await response.json();
-                    // Store global settings for time formatting and plot visibility
+                    // Store global settings for time formatting, plot visibility, zoom filter, and auto-follow buffer
                     globalChartSettings.UseMarketTime = settings.UseMarketTime || false;
                     globalChartSettings.HiddenPlots = settings.HiddenPlots || [];
+                    globalChartSettings.ChartZoomFilterPercent = settings.ChartZoomFilterPercent || 1.0;
+                    globalChartSettings.AutoFollowBufferPercent = settings.AutoFollowBufferPercent || 1.0;
                     
                     if (settings && settings.ChartColors) {
                         chartColors = { ...defaultColors, ...settings.ChartColors };
@@ -1536,6 +1693,27 @@
                 if (!initialZoomSet) {
                     chart.options.scales.x.min = xAxisMin;
                     chart.options.scales.x.max = xAxisMax;
+                    
+                    // Apply Y-axis zoom filter based on day's high/low (if available)
+                    if (optimizedData.spot && Array.isArray(optimizedData.spot) && optimizedData.spot.length > 0) {
+                        // Find day's high and low from all valid spot prices
+                        const validSpots = optimizedData.spot.filter(s => 
+                            s !== null && s !== undefined && typeof s === 'number' && !isNaN(s) && isFinite(s)
+                        );
+                        if (validSpots.length > 0) {
+                            const dayHigh = Math.max(...validSpots);
+                            const dayLow = Math.min(...validSpots);
+                            const center = (dayHigh + dayLow) / 2;
+                            const zoomPercent = globalChartSettings.ChartZoomFilterPercent || 1.0;
+                            // Apply zoom percentage relative to center price (like original), but ensure we show day's range
+                            const buffer = center * (zoomPercent / 100);
+                            // Show day's range plus buffer on each side
+                            chart.options.scales.y.min = dayLow - buffer;
+                            chart.options.scales.y.max = dayHigh + buffer;
+                            await logToBackend('info', `[Chart] Applied zoom filter: dayHigh=${dayHigh}, dayLow=${dayLow}, center=${center}, zoom=${zoomPercent}%, buffer=${buffer}, range=${dayLow - buffer} to ${dayHigh + buffer}`);
+                        }
+                    }
+                    
                     initialZoomSet = true;
                 }
                 // If user has zoomed, don't reset x-axis - preserve their zoom
@@ -1671,8 +1849,92 @@
                 
                 chart.update('none'); // Update without animation for performance
                 
-                // Restore zoom state after update if user had zoomed
-                if (zoomStateBefore3 && userHasZoomed) {
+                // Handle auto-follow or restore zoom state after update
+                if (autoFollowEnabled && optimizedLabels.length > 0) {
+                    // Get the zoom range to preserve
+                    let preservedXRange;
+                    let preservedYRange;
+                    
+                    if (userHasZoomed && zoomStateBefore3) {
+                        // User has manually zoomed - use saved state
+                        preservedXRange = zoomStateBefore3.x.max - zoomStateBefore3.x.min;
+                        preservedYRange = zoomStateBefore3.y;
+                    } else {
+                        // User hasn't zoomed - use current visible range
+                        const xScale = chart.scales.x;
+                        const yScale = chart.scales.y;
+                        if (xScale && yScale) {
+                            preservedXRange = xScale.max - xScale.min;
+                            preservedYRange = {
+                                min: yScale.min,
+                                max: yScale.max
+                            };
+                        } else {
+                            // Fallback: use a default range (e.g., 1 hour)
+                            preservedXRange = 60 * 60 * 1000; // 1 hour in milliseconds
+                            preservedYRange = null;
+                        }
+                    }
+                    
+                    // Get latest time and check if it's currently visible
+                    const latestTime = optimizedLabels[optimizedLabels.length - 1];
+                    const xScale = chart.scales.x;
+                    const currentXMax = xScale ? xScale.max : null;
+                    
+                    // Only auto-follow if the latest data is off-screen (beyond current view)
+                    const shouldFollow = !currentXMax || latestTime > currentXMax;
+                    
+                    if (shouldFollow) {
+                        const firstTime = optimizedLabels[0];
+                        const bufferPercent = (globalChartSettings.AutoFollowBufferPercent || 1.0) / 100; // Get from settings, default 1%
+                        const bufferTime = preservedXRange * bufferPercent;
+                        
+                        // Set X-axis to show latest data with buffer
+                        const xMax = new Date(latestTime.getTime() + bufferTime);
+                        let xMin = new Date(xMax.getTime() - preservedXRange);
+                        
+                        // Don't show empty space before first data point - only when auto-following
+                        if (firstTime && firstTime < xMax) {
+                            // If calculated xMin is before the first data point, adjust to start from first point
+                            if (xMin < firstTime) {
+                                // Calculate how much range we have from first point to max
+                                const availableRange = xMax.getTime() - firstTime.getTime();
+                                // If we have enough range, use it; otherwise keep the preserved range but shift it
+                                if (availableRange >= preservedXRange * 0.5) {
+                                    // We have enough data - start from first point
+                                    xMin = firstTime;
+                                } else {
+                                    // Not enough data yet - keep preserved range but ensure we don't go before first point
+                                    xMin = new Date(Math.max(firstTime.getTime(), xMax.getTime() - preservedXRange));
+                                }
+                            }
+                        }
+                        
+                        // Apply auto-follow X-axis shift while preserving Y-axis zoom
+                        const yScale = chart.scales.y;
+                        if (xScale && yScale) {
+                            xScale.options.min = xMin;
+                            xScale.options.max = xMax;
+                            xScale.min = xMin;
+                            xScale.max = xMax;
+                            
+                            // Preserve Y-axis zoom
+                            if (preservedYRange && preservedYRange.min !== undefined && preservedYRange.max !== undefined) {
+                                yScale.options.min = preservedYRange.min;
+                                yScale.options.max = preservedYRange.max;
+                                yScale.min = preservedYRange.min;
+                                yScale.max = preservedYRange.max;
+                            }
+                            chart.update('none');
+                        }
+                    } else {
+                        // Latest data is still visible - just restore zoom state without shifting
+                        if (zoomStateBefore3 && userHasZoomed) {
+                            restoreZoomState(zoomStateBefore3);
+                        }
+                    }
+                } else if (zoomStateBefore3 && userHasZoomed) {
+                    // Normal zoom restoration (auto-follow disabled)
                     restoreZoomState(zoomStateBefore3);
                 }
                 
@@ -1696,6 +1958,101 @@
             }
         }
         
+            // Setup reset zoom button
+            const resetZoomBtn = document.getElementById('reset-zoom-btn');
+            if (resetZoomBtn) {
+                resetZoomBtn.addEventListener('click', async () => {
+                    try {
+                        // Get market hours for X-axis
+                        const marketHoursLocal = await getMarketHoursLocal();
+                        const dateStr = await getMarketDate();
+                        let chartDate = new Date(dateStr + 'T00:00:00');
+                        if (isNaN(chartDate.getTime())) {
+                            chartDate = new Date();
+                        }
+                        chartDate.setHours(0, 0, 0, 0);
+                        
+                        const [openHour, openMin] = marketHoursLocal.open.split(':').map(Number);
+                        const [closeHour, closeMin] = marketHoursLocal.close.split(':').map(Number);
+                        const xAxisMin = new Date(chartDate);
+                        xAxisMin.setHours(openHour, openMin, 0, 0);
+                        const xAxisMax = new Date(chartDate);
+                        xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                        
+                        // Reset X-axis to market hours
+                        const xScale = chart.scales.x;
+                        if (xScale) {
+                            xScale.options.min = xAxisMin;
+                            xScale.options.max = xAxisMax;
+                            xScale.min = xAxisMin;
+                            xScale.max = xAxisMax;
+                        }
+                        
+                        // Reset Y-axis to zoom filter (day's high/low)
+                        if (chart.data && chart.data.datasets && chart.data.datasets.length > 0) {
+                            // Find spot data from datasets - look for 'Spot Price' label
+                            let spotData = [];
+                            for (const dataset of chart.data.datasets) {
+                                if (dataset.label === 'Spot Price' && dataset.data && dataset.data.length > 0) {
+                                    // Extract all Y values from spot price dataset
+                                    dataset.data.forEach(point => {
+                                        if (point && point.y !== null && point.y !== undefined && 
+                                            typeof point.y === 'number' && !isNaN(point.y) && isFinite(point.y)) {
+                                            spotData.push(point.y);
+                                        }
+                                    });
+                                    break;
+                                }
+                            }
+                            
+                            if (spotData.length > 0) {
+                                const dayHigh = Math.max(...spotData);
+                                const dayLow = Math.min(...spotData);
+                                const center = (dayHigh + dayLow) / 2;
+                                const zoomPercent = globalChartSettings.ChartZoomFilterPercent || 1.0;
+                                const buffer = center * (zoomPercent / 100);
+                                
+                                const yScale = chart.scales.y;
+                                if (yScale) {
+                                    yScale.options.min = dayLow - buffer;
+                                    yScale.options.max = dayHigh + buffer;
+                                    yScale.min = dayLow - buffer;
+                                    yScale.max = dayHigh + buffer;
+                                    await logToBackend('info', `[Chart] Reset Y-axis: dayHigh=${dayHigh}, dayLow=${dayLow}, zoom=${zoomPercent}%, range=${dayLow - buffer} to ${dayHigh + buffer}`).catch(() => {});
+                                }
+                            } else {
+                                await logToBackend('warn', '[Chart] No spot data found for reset').catch(() => {});
+                            }
+                        }
+                        
+                        // Reset zoom state tracking
+                        userHasZoomed = false;
+                        savedZoomState = null;
+                        
+                        chart.update('none');
+                        await logToBackend('info', '[Chart] Reset zoom to default filter').catch(() => {});
+                    } catch (error) {
+                        console.error('[Chart] Error resetting zoom:', error);
+                        await logToBackend('error', `[Chart] Error resetting zoom: ${error.message || error}`).catch(() => {});
+                    }
+                });
+            }
+            
+            // Setup auto-follow button
+            const autoFollowBtn = document.getElementById('auto-follow-btn');
+            if (autoFollowBtn) {
+                // Set initial state (default ON)
+                autoFollowBtn.textContent = `Auto-Follow: ${autoFollowEnabled ? 'ON' : 'OFF'}`;
+                autoFollowBtn.classList.toggle('active', autoFollowEnabled);
+                
+                autoFollowBtn.addEventListener('click', () => {
+                    autoFollowEnabled = !autoFollowEnabled;
+                    autoFollowBtn.textContent = `Auto-Follow: ${autoFollowEnabled ? 'ON' : 'OFF'}`;
+                    autoFollowBtn.classList.toggle('active', autoFollowEnabled);
+                    logToBackend('info', `[Chart] Auto-follow ${autoFollowEnabled ? 'enabled' : 'disabled'}`).catch(() => {});
+                });
+            }
+            
             // Load colors from settings, then initialize chart
             await logToBackend('info', '[Chart] About to load chart colors...');
             loadChartColors().then(async () => {
@@ -1731,6 +2088,8 @@
                         if (event.data.settings) {
                             globalChartSettings.UseMarketTime = event.data.settings.UseMarketTime || false;
                             globalChartSettings.HiddenPlots = event.data.settings.HiddenPlots || [];
+                            globalChartSettings.ChartZoomFilterPercent = event.data.settings.ChartZoomFilterPercent || 1.0;
+                            globalChartSettings.AutoFollowBufferPercent = event.data.settings.AutoFollowBufferPercent || 1.0;
                         }
                         
                         // Reload colors from the new settings

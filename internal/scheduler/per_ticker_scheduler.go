@@ -101,6 +101,27 @@ func (pts *PerTickerScheduler) Stop() {
 	log.Printf("PerTickerScheduler: Stopped")
 }
 
+// TriggerImmediatePolling triggers immediate polling for all enabled tickers
+// This is useful when date rollover occurs and we need to start collecting data for the new date
+func (pts *PerTickerScheduler) TriggerImmediatePolling() {
+	pts.mu.RLock()
+	tickers := make([]string, len(pts.enabledTickers))
+	copy(tickers, pts.enabledTickers)
+	pts.mu.RUnlock()
+	
+	pts.debugPrint(fmt.Sprintf("TriggerImmediatePolling: Triggering immediate fetch for %d tickers", len(tickers)), "scheduler")
+	log.Printf("PerTickerScheduler: Triggering immediate polling for %d tickers after date rollover", len(tickers))
+	
+	for _, ticker := range tickers {
+		if pts.onTickerReady != nil {
+			pts.debugPrint(fmt.Sprintf("TriggerImmediatePolling: Triggering fetch for %s", ticker), "scheduler")
+			pts.onTickerReady(ticker)
+		}
+	}
+	
+	pts.debugPrint(fmt.Sprintf("TriggerImmediatePolling: Completed triggering for %d tickers", len(tickers)), "scheduler")
+}
+
 // UpdateTickers updates the list of enabled tickers
 // Spawns new goroutines for newly enabled tickers
 // Stops goroutines for disabled tickers

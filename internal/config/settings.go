@@ -59,6 +59,8 @@ type Settings struct {
 	TickerConfigs                  map[string]TickerConfig    `yaml:"ticker_configs"`
 	TickerOrder                    []string                    `yaml:"ticker_order,omitempty"` // User-defined ticker display order
 	ChartColors                    map[string]string           `yaml:"chart_colors"` // Color preferences for chart data series
+	ChartZoomFilterPercent         float64                    `yaml:"chart_zoom_filter_percent"` // Default Y-axis zoom filter as % of current spot price
+	AutoFollowBufferPercent        float64                    `yaml:"auto_follow_buffer_percent"` // Buffer percentage for auto-follow (default 10%)
 	WindowWidth                    int                         `yaml:"window_width,omitempty"`  // Last saved window width
 	WindowHeight                   int                         `yaml:"window_height,omitempty"` // Last saved window height
 }
@@ -329,6 +331,36 @@ func (sm *SettingsManager) SaveWindowDimensions(width, height int) error {
 	// Read existing file to preserve all other settings
 	existingData, err := os.ReadFile(sm.configFile)
 	if err != nil {
+		// If file doesn't exist, create it with current settings (including window dimensions)
+		if os.IsNotExist(err) {
+			log.Printf("Config file doesn't exist, creating with window dimensions: %dx%d", width, height)
+			// Use current in-memory settings or create new default settings
+			settingsToSave := sm.settings
+			if settingsToSave == nil {
+				settingsToSave = getDefaultSettings()
+			}
+			settingsToSave.WindowWidth = width
+			settingsToSave.WindowHeight = height
+			
+			// Ensure config directory exists
+			configDir := filepath.Dir(sm.configFile)
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				return fmt.Errorf("failed to create config directory: %w", err)
+			}
+			
+			// Write new config file
+			data, err := yaml.Marshal(settingsToSave)
+			if err != nil {
+				return fmt.Errorf("failed to marshal settings: %w", err)
+			}
+			
+			if err := os.WriteFile(sm.configFile, data, 0644); err != nil {
+				return fmt.Errorf("failed to write config file: %w", err)
+			}
+			
+			log.Printf("Window dimensions saved to new config file: %dx%d", width, height)
+			return nil
+		}
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
@@ -396,6 +428,8 @@ func getDefaultSettings() *Settings {
 		LegendBackgroundColor:         "000000",
 		PriceAxisLocation:              "left",
 		ChartTimezone:                  "market",
+		ChartZoomFilterPercent:         1.0, // Default 1% of current spot price
+		AutoFollowBufferPercent:        1.0, // Default 1% buffer on the right
 		Alerts:                         []interface{}{},
 		ProfileSettings: map[string]interface{}{
 			"center_x":           0.5,

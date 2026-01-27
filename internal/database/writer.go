@@ -181,50 +181,26 @@ func (dw *DataWriter) WriteDataEntry(ticker string, timestamp float64, data map[
 	dw.debugPrint(fmt.Sprintf("WriteDataEntry: Extracted %d scalars, %d profiles for %s", 
 		scalarCount, profileCount, ticker), "writer")
 
-	// Determine date from timestamp
+	// Determine date from API timestamp
 	// Convert to Eastern Time first, then use market date logic to handle weekends and rollover
 	timestampTime := time.Unix(int64(timestamp), 0).UTC()
 	timestampET := timestampTime.In(utils.GetMarketTimezone())
 	
-	// CRITICAL FIX: Use current market date for directory, not timestamp date
-	// This ensures data is always written to today's directory (after 8:30 AM ET rollover)
-	// The timestamp in the data still reflects when the data was collected
-	// GetMarketDate() already handles rollover logic (8:30 AM ET)
-	currentMarketDate := utils.GetMarketDate()
+	// Use the API timestamp's date with market date logic (handles weekends and 8:30 AM rollover)
+	// This ensures data is written to the directory corresponding to when the data was actually collected
+	entryDate := utils.GetMarketDateForDate(timestampET)
 	
 	// Extract just the date part (set to midnight) to avoid time component issues
-	// GetMarketDate() returns a time with full time component, but we only need the date
-	dateOnly := time.Date(currentMarketDate.Year(), currentMarketDate.Month(), currentMarketDate.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
-	
-	// Only apply weekend adjustment if needed
-	// DO NOT call GetMarketDateForDate() here - it would apply rollover logic again
-	// GetMarketDate() already handled the rollover, we just need weekend adjustment
-	var entryDate time.Time
-	if utils.IsWeekend(dateOnly) {
-		entryDate = utils.GetLastTradingDay(dateOnly)
-		dw.debugPrint(fmt.Sprintf("WriteDataEntry: Weekend detected, using last Friday: %s", 
-			entryDate.Format("2006-01-02")), "writer")
-	} else {
-		entryDate = dateOnly
-	}
+	dateOnly := time.Date(entryDate.Year(), entryDate.Month(), entryDate.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
+	entryDate = dateOnly
 	
 	// Debug logging for date calculation
-	currentET := utils.NowMarketTime()
-	dw.debugPrint(fmt.Sprintf("WriteDataEntry: Timestamp %d (UTC: %s, ET: %s) -> Current ET: %s -> GetMarketDate() returned: %s -> dateOnly: %s -> Final entryDate: %s", 
+	dw.debugPrint(fmt.Sprintf("WriteDataEntry: Timestamp %d (UTC: %s, ET: %s) -> GetMarketDateForDate() returned: %s -> Final entryDate: %s", 
 		int64(timestamp), 
 		timestampTime.Format("2006-01-02 15:04:05 MST"),
 		timestampET.Format("2006-01-02 15:04:05 MST"),
-		currentET.Format("2006-01-02 15:04:05 MST"),
-		currentMarketDate.Format("2006-01-02 15:04:05 MST"),
-		dateOnly.Format("2006-01-02 15:04:05 MST"),
+		entryDate.Format("2006-01-02 15:04:05 MST"),
 		entryDate.Format("2006-01-02 15:04:05 MST")), "writer")
-	
-	// Log if rollover adjustment occurred (before 8:30 AM ET)
-	rolloverTime := time.Date(currentET.Year(), currentET.Month(), currentET.Day(), 8, 30, 0, 0, utils.GetMarketTimezone())
-	if currentET.Before(rolloverTime) && !utils.IsWeekend(dateOnly) {
-		dw.debugPrint(fmt.Sprintf("WriteDataEntry: Before 8:30 AM ET rollover (current ET: %s), GetMarketDate() returned previous day: %s", 
-			currentET.Format("15:04:05"), entryDate.Format("2006-01-02")), "writer")
-	}
 
 	// Add to pending writes
 	if dw.pendingWrites[ticker] == nil {
@@ -346,6 +322,33 @@ func (dw *DataWriter) shouldFlush(ticker string, isActive bool) bool {
 	return false
 }
 
+// FlushAllTickers flushes all pending writes for all tickers
+func (dw *DataWriter) FlushAllTickers() error {
+	dw.mu.RLock()
+	tickers := make([]string, 0, len(dw.pendingWrites))
+	for ticker := range dw.pendingWrites {
+		tickers = append(tickers, ticker)
+	}
+	dw.mu.RUnlock()
+	
+	dw.debugPrint(fmt.Sprintf("FlushAllTickers: Flushing %d tickers", len(tickers)), "writer")
+	
+	var lastErr error
+	for _, ticker := range tickers {
+		if err := dw.FlushTicker(ticker); err != nil {
+			dw.debugPrint(fmt.Sprintf("FlushAllTickers: Failed to flush %s: %v", ticker, err), "error")
+			lastErr = err
+		}
+	}
+	
+	if lastErr != nil {
+		return fmt.Errorf("one or more tickers failed to flush: %w", lastErr)
+	}
+	
+	dw.debugPrint(fmt.Sprintf("FlushAllTickers: Successfully flushed all %d tickers", len(tickers)), "writer")
+	return nil
+}
+
 // FlushTicker flushes all pending writes for a ticker
 func (dw *DataWriter) FlushTicker(ticker string) error {
 	dw.debugPrint(fmt.Sprintf("FlushTicker: Starting flush for %s", ticker), "writer")
@@ -368,9 +371,12 @@ func (dw *DataWriter) FlushTicker(ticker string) error {
 	dw.mu.Unlock()
 
 	// Group by date
+	// CRITICAL: Preserve timezone when grouping - write.Date is in ET, keep it in ET
 	byDate := make(map[time.Time][]*PendingWrite)
 	for _, write := range pending {
-		date := time.Date(write.Date.Year(), write.Date.Month(), write.Date.Day(), 0, 0, 0, 0, time.UTC)
+		// Extract date components and recreate in the same timezone (ET) to preserve the date
+		// This prevents timezone conversion issues that can shift the date
+		date := time.Date(write.Date.Year(), write.Date.Month(), write.Date.Day(), 0, 0, 0, 0, write.Date.Location())
 		byDate[date] = append(byDate[date], write)
 	}
 
@@ -607,24 +613,28 @@ func (dw *DataWriter) getDBPath(ticker string, date time.Time) string {
 	// Since the date is at midnight, GetMarketDateForDate() would think it's before 8:30 AM
 	// and subtract a day, causing the wrong directory to be created
 	
+	// CRITICAL: Ensure date is in ET timezone before processing
+	// The date might be in UTC from FlushTicker grouping, so convert to ET first
+	dateET := date.In(utils.GetMarketTimezone())
+	
 	// Only handle weekend adjustment if needed
 	var marketDate time.Time
-	if utils.IsWeekend(date) {
-		marketDate = utils.GetLastTradingDay(date)
+	if utils.IsWeekend(dateET) {
+		marketDate = utils.GetLastTradingDay(dateET)
 		dw.debugPrint(fmt.Sprintf("getDBPath: Weekend detected for %s, using last Friday: %s", 
-			date.Format("2006-01-02"), marketDate.Format("2006-01-02")), "writer")
+			dateET.Format("2006-01-02"), marketDate.Format("2006-01-02")), "writer")
 	} else {
-		marketDate = date
+		marketDate = dateET
 	}
 
-	// Format date as MM.DD.YYYY
+	// Format date as MM.DD.YYYY (marketDate is now guaranteed to be in ET)
 	dateStr := marketDate.Format("01.02.2006")
 	// Directory format: "Tickers 01.14.2026" (not "Tickers\Tickers 01.14.2026")
 	dir := fmt.Sprintf("%s %s", dataDir, dateStr)
 	
 	// Log directory construction
-	dw.debugPrint(fmt.Sprintf("getDBPath: Constructing path for %s on %s (market date: %s): dataDir=%s, dateStr=%s, dir=%s", 
-		ticker, date.Format("2006-01-02"), marketDate.Format("2006-01-02"), dataDir, dateStr, dir), "writer")
+	dw.debugPrint(fmt.Sprintf("getDBPath: Constructing path for %s on %s (input date: %s, market date: %s): dataDir=%s, dateStr=%s, dir=%s", 
+		ticker, date.Format("2006-01-02"), dateET.Format("2006-01-02"), marketDate.Format("2006-01-02"), dataDir, dateStr, dir), "writer")
 	
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		dw.debugPrint(fmt.Sprintf("getDBPath: WARNING - Failed to create directory %s: %v", dir, err), "error")
