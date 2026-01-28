@@ -232,7 +232,8 @@ function getDefaultSettings() {
             'major_neg_oi': '#E91E63'
         },
         ChartZoomFilterPercent: 1.0,
-        AutoFollowBufferPercent: 1.0
+        AutoFollowBufferPercent: 1.0,
+        PriceAxisLocation: 'left'
     };
 }
 
@@ -1343,6 +1344,13 @@ function loadGeneralSettings(settings) {
             autoFollowBufferInput.value = settings.AutoFollowBufferPercent || 1.0;
             console.log('[General Settings] AutoFollowBufferPercent:', autoFollowBufferInput.value);
         }
+        // PriceAxisLocation
+        const priceAxisLocationSelect = document.getElementById('price-axis-location');
+        if (priceAxisLocationSelect) {
+            const loc = (settings.PriceAxisLocation || 'left').toLowerCase();
+            priceAxisLocationSelect.value = (loc === 'right') ? 'right' : 'left';
+            console.log('[General Settings] PriceAxisLocation:', priceAxisLocationSelect.value);
+        }
     } catch (error) {
         console.error('[General Settings] Error loading:', error);
     }
@@ -1407,13 +1415,17 @@ function saveGeneralSettings(settings) {
             settings.AutoFollowBufferPercent = 1.0; // Default if invalid
         }
     }
-    
+    const priceAxisLocationSelect = document.getElementById('price-axis-location');
+    if (priceAxisLocationSelect) {
+        settings.PriceAxisLocation = priceAxisLocationSelect.value === 'right' ? 'right' : 'left';
+    }
     console.log('[General Settings] Saved:', {
         UseMarketTime: settings.UseMarketTime,
         EnableLogging: settings.EnableLogging,
         HideConsole: settings.HideConsole,
         ChartZoomFilterPercent: settings.ChartZoomFilterPercent,
-        AutoFollowBufferPercent: settings.AutoFollowBufferPercent
+        AutoFollowBufferPercent: settings.AutoFollowBufferPercent,
+        PriceAxisLocation: settings.PriceAxisLocation
     });
 }
 

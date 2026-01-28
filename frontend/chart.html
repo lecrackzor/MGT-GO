@@ -88,6 +88,30 @@
             border-bottom: 1px solid #333;
             user-select: none;
             font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        
+        #crosshair-info-box.collapsed #crosshair-info-box-content {
+            display: none;
+        }
+        
+        #crosshair-info-box.collapsed {
+            min-height: auto;
+        }
+        
+        .crosshair-info-box-toggle {
+            cursor: pointer;
+            font-size: 10px;
+            color: #888;
+            padding: 2px 4px;
+            flex-shrink: 0;
+        }
+        
+        .crosshair-info-box-toggle:hover {
+            color: #4CAF50;
         }
         
         #crosshair-info-box-content {
@@ -205,7 +229,10 @@
         <canvas id="chart"></canvas>
         <div class="crosshair-line" id="crosshair-line"></div>
         <div id="crosshair-info-box">
-            <div id="crosshair-info-box-header">Crosshair Info</div>
+            <div id="crosshair-info-box-header">
+                <span id="crosshair-info-box-header-title">Crosshair Info</span>
+                <span class="crosshair-info-box-toggle" title="Collapse">▼</span>
+            </div>
             <div id="crosshair-info-box-content"></div>
         </div>
     </div>
@@ -375,8 +402,63 @@
             await logToBackend('info', `[Chart] Pan configuration: ${JSON.stringify(panConfig)}`);
             console.log('[Chart] Pan configuration:', panConfig);
             
+            const priceAxisMarkersPlugin = {
+                id: 'priceAxisMarkers',
+                afterDraw(chart) {
+                    const ctx = chart.ctx;
+                    const yScale = chart.scales.y;
+                    if (!yScale || !chart.chartArea) return;
+                    const position = (chart.options.scales && chart.options.scales.y && chart.options.scales.y.position) || 'left';
+                    const markerLength = 12;
+                    const isRight = position === 'right';
+                    const xStart = isRight ? chart.chartArea.right - markerLength : chart.chartArea.left;
+                    const xEnd = isRight ? chart.chartArea.right : chart.chartArea.left + markerLength;
+                    const valuePadding = 4;
+                    const datasets = chart.data.datasets || [];
+                    for (let i = 0; i < datasets.length; i++) {
+                        const meta = chart.getDatasetMeta(i);
+                        if (meta && meta.hidden) continue;
+                        const ds = datasets[i];
+                        const data = ds.data;
+                        if (!data || data.length === 0) continue;
+                        let lastPoint = null;
+                        for (let j = data.length - 1; j >= 0; j--) {
+                            const p = data[j];
+                            if (p != null && typeof p === 'object' && (p.y != null && p.y !== '' && !Number.isNaN(Number(p.y)))) {
+                                lastPoint = p;
+                                break;
+                            }
+                        }
+                        if (!lastPoint) continue;
+                        const yVal = Number(lastPoint.y);
+                        const yPixel = yScale.getPixelForValue(yVal);
+                        if (yPixel < chart.chartArea.top || yPixel > chart.chartArea.bottom) continue;
+                        ctx.save();
+                        ctx.strokeStyle = ds.borderColor || 'rgba(128,128,128,0.8)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(xStart, yPixel);
+                        ctx.lineTo(xEnd, yPixel);
+                        ctx.stroke();
+                        const valueText = typeof yVal === 'number' && (yVal % 1 !== 0 || yVal >= 1000) ? yVal.toFixed(2) : String(yVal);
+                        ctx.font = '10px sans-serif';
+                        ctx.fillStyle = ds.borderColor || 'rgba(200,200,200,0.9)';
+                        ctx.textBaseline = 'middle';
+                        if (isRight) {
+                            ctx.textAlign = 'right';
+                            ctx.fillText(valueText, xStart - valuePadding, yPixel);
+                        } else {
+                            ctx.textAlign = 'left';
+                            ctx.fillText(valueText, xEnd + valuePadding, yPixel);
+                        }
+                        ctx.restore();
+                    }
+                }
+            };
+            
             const chart = new Chart(ctx, {
             type: 'line',
+            plugins: [priceAxisMarkersPlugin],
             data: {
                 labels: [],
                 datasets: [{
@@ -625,12 +707,14 @@
         let crosshairInfoBox = null;
         let crosshairInfoContent = null;
         let crosshairInfoHeader = null;
+        let crosshairInfoBoxToggle = null;
         
         try {
             crosshairLine = document.getElementById('crosshair-line');
             crosshairInfoBox = document.getElementById('crosshair-info-box');
             crosshairInfoContent = document.getElementById('crosshair-info-box-content');
             crosshairInfoHeader = document.getElementById('crosshair-info-box-header');
+            crosshairInfoBoxToggle = document.querySelector('.crosshair-info-box-toggle');
         } catch (e) {
             console.error('[Chart] Error getting crosshair elements:', e);
         }
@@ -738,9 +822,25 @@
             }
         }
         
+        // Collapse/expand info box (toggle click must not start drag)
+        if (crosshairInfoBoxToggle && crosshairInfoBox) {
+            crosshairInfoBoxToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                try {
+                    const collapsed = crosshairInfoBox.classList.toggle('collapsed');
+                    crosshairInfoBoxToggle.textContent = collapsed ? '▲' : '▼';
+                    crosshairInfoBoxToggle.title = collapsed ? 'Expand' : 'Collapse';
+                } catch (err) {
+                    console.error('[Chart] Error in collapse toggle:', err);
+                }
+            });
+        }
+        
         // Make info box draggable
         if (crosshairInfoHeader && crosshairInfoBox) {
             crosshairInfoHeader.addEventListener('mousedown', (e) => {
+                if (e.target && e.target.classList && e.target.classList.contains('crosshair-info-box-toggle')) return;
                 try {
                     isDraggingInfoBox = true;
                     dragStartX = e.clientX;
@@ -881,7 +981,8 @@
             
             // Update header (add ET indicator if using market time)
             const tzIndicator = globalChartSettings.UseMarketTime ? ' ET' : '';
-            crosshairInfoHeader.textContent = `Time: ${timeStr}${tzIndicator}`;
+            const headerTitle = document.getElementById('crosshair-info-box-header-title');
+            if (headerTitle) headerTitle.textContent = `Time: ${timeStr}${tzIndicator}`;
             
             // Build content HTML
             let contentHTML = '';
@@ -952,7 +1053,8 @@
             
             // Update header with "Latest" indicator (add ET if using market time)
             const tzIndicator = globalChartSettings.UseMarketTime ? ' ET' : '';
-            crosshairInfoHeader.textContent = `Latest: ${timeStr}${tzIndicator}`;
+            const headerTitleLatest = document.getElementById('crosshair-info-box-header-title');
+            if (headerTitleLatest) headerTitleLatest.textContent = `Latest: ${timeStr}${tzIndicator}`;
             
             // Build content HTML
             let contentHTML = '';
@@ -1237,7 +1339,8 @@
             UseMarketTime: false,
             HiddenPlots: [],
             ChartZoomFilterPercent: 1.0,
-            AutoFollowBufferPercent: 1.0
+            AutoFollowBufferPercent: 1.0,
+            PriceAxisLocation: 'left'
         };
         
         // Function to load settings and update colors
@@ -1252,18 +1355,34 @@
                     globalChartSettings.HiddenPlots = settings.HiddenPlots || [];
                     globalChartSettings.ChartZoomFilterPercent = settings.ChartZoomFilterPercent || 1.0;
                     globalChartSettings.AutoFollowBufferPercent = settings.AutoFollowBufferPercent || 1.0;
-                    
+                    globalChartSettings.PriceAxisLocation = (settings.PriceAxisLocation || 'left').toLowerCase() === 'right' ? 'right' : 'left';
                     if (settings && settings.ChartColors) {
                         chartColors = { ...defaultColors, ...settings.ChartColors };
                         await logToBackend('info', `[Chart] Loaded colors from settings: ${JSON.stringify(chartColors)}`);
                         await logToBackend('info', `[Chart] UseMarketTime: ${globalChartSettings.UseMarketTime}, HiddenPlots: ${JSON.stringify(globalChartSettings.HiddenPlots)}`);
-                        return;
                     }
+                } else {
+                    await logToBackend('info', '[Chart] Using default colors (settings not available or no ChartColors)');
                 }
-                await logToBackend('info', '[Chart] Using default colors (settings not available or no ChartColors)');
             } catch (error) {
                 await logToBackend('warn', `[Chart] Could not load colors from settings, using defaults: ${error.message || error}`);
             }
+            if (typeof chart !== 'undefined' && chart && chart.options && chart.options.scales && chart.options.scales.y) {
+                applyPriceAxisSettings(chart);
+                chart.update('none');
+            }
+        }
+        
+        // Apply price axis position, label color (spot color), and tick count from globalChartSettings
+        function applyPriceAxisSettings(ch) {
+            if (!ch || !ch.options || !ch.options.scales || !ch.options.scales.y) return;
+            const yOpts = ch.options.scales.y;
+            yOpts.position = globalChartSettings.PriceAxisLocation === 'right' ? 'right' : 'left';
+            const spotColor = chartColors.spot || defaultColors.spot || '#4CAF50';
+            const axisColor = spotColor.startsWith('#') ? spotColor : '#' + spotColor;
+            yOpts.ticks = yOpts.ticks || {};
+            yOpts.ticks.color = axisColor;
+            yOpts.ticks.maxTicksLimit = 22;
         }
         
         // Format time for display based on UseMarketTime setting
@@ -1718,6 +1837,24 @@
                 }
                 // If user has zoomed, don't reset x-axis - preserve their zoom
                 
+                // Capture last known value per endpoint from current chart (for forward-fill when an endpoint is missing from this update)
+                const labelToEndpoint = {};
+                Object.entries(datasetLabels).forEach(([endpoint, label]) => { labelToEndpoint[label] = endpoint; });
+                const previousLastValueByEndpoint = {};
+                if (chart.data.datasets && chart.data.datasets.length > 0) {
+                    chart.data.datasets.forEach((ds) => {
+                        const endpoint = labelToEndpoint[ds.label];
+                        if (!endpoint || !ds.data || ds.data.length === 0) return;
+                        for (let k = ds.data.length - 1; k >= 0; k--) {
+                            const p = ds.data[k];
+                            if (p != null && typeof p === 'object' && p.y != null && p.y !== '' && !Number.isNaN(Number(p.y))) {
+                                previousLastValueByEndpoint[endpoint] = Number(p.y);
+                                break;
+                            }
+                        }
+                    });
+                }
+                
                 // Clear old datasets and labels before adding new ones (prevents memory accumulation)
                 chart.data.datasets = [];
                 chart.data.labels = optimizedLabels.length > 0 ? optimizedLabels : [];
@@ -1839,7 +1976,38 @@
                         chart.data.datasets.push(datasetConfig);
                         datasetsAdded++;
                     } else {
-                        await logToBackend('info', `[Chart] Skipping ${endpoint}: no data or empty array`);
+                        // No new data for this endpoint: forward previous value so the plot and Y-axis marker still show it
+                        const lastValue = previousLastValueByEndpoint[endpoint];
+                        if (lastValue != null && optimizedLabels.length > 0) {
+                            const isSpot = endpoint === 'spot';
+                            const values = optimizedLabels.map(() => lastValue);
+                            let dataPoints;
+                            if (isSpot) {
+                                dataPoints = optimizedLabels.map((t, idx) => ({ x: t, y: values[idx] }));
+                            } else {
+                                dataPoints = createHorizontalSegments(optimizedLabels, values);
+                            }
+                            const datasetColors = getDatasetColors();
+                            const colors = datasetColors[endpoint] || { border: 'rgb(128, 128, 128)', fill: 'rgba(128, 128, 128, 0.1)' };
+                            const isHiddenByDefault = globalChartSettings.HiddenPlots.includes(endpoint);
+                            chart.data.datasets.push({
+                                label: datasetLabels[endpoint],
+                                data: dataPoints,
+                                borderColor: colors.border,
+                                backgroundColor: colors.fill,
+                                borderWidth: 2,
+                                pointRadius: 0,
+                                pointHoverRadius: 4,
+                                tension: 0.1,
+                                fill: false,
+                                spanGaps: false,
+                                hidden: isHiddenByDefault
+                            });
+                            datasetsAdded++;
+                            await logToBackend('info', `[Chart] Forwarded ${endpoint} with previous value ${lastValue} (no new data)`);
+                        } else {
+                            await logToBackend('info', `[Chart] Skipping ${endpoint}: no data or empty array`);
+                        }
                     }
                 }
                 
@@ -2086,14 +2254,19 @@
                         
                         // Update global settings
                         if (event.data.settings) {
-                            globalChartSettings.UseMarketTime = event.data.settings.UseMarketTime || false;
-                            globalChartSettings.HiddenPlots = event.data.settings.HiddenPlots || [];
-                            globalChartSettings.ChartZoomFilterPercent = event.data.settings.ChartZoomFilterPercent || 1.0;
-                            globalChartSettings.AutoFollowBufferPercent = event.data.settings.AutoFollowBufferPercent || 1.0;
+                            const s = event.data.settings;
+                            globalChartSettings.UseMarketTime = s.UseMarketTime || false;
+                            globalChartSettings.HiddenPlots = s.HiddenPlots || [];
+                            globalChartSettings.ChartZoomFilterPercent = s.ChartZoomFilterPercent || 1.0;
+                            globalChartSettings.AutoFollowBufferPercent = s.AutoFollowBufferPercent || 1.0;
+                            globalChartSettings.PriceAxisLocation = (s.PriceAxisLocation || 'left').toLowerCase() === 'right' ? 'right' : 'left';
                         }
                         
                         // Reload colors from the new settings
                         await loadChartColors();
+                        if (chart && chart.options && chart.options.scales && chart.options.scales.y) {
+                            applyPriceAxisSettings(chart);
+                        }
                         
                         // Apply new colors to existing datasets
                         if (chart && chart.data && chart.data.datasets) {
