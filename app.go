@@ -35,11 +35,11 @@ type App struct {
 	apiClient          *api.Client
 	querySystem        *api.QuerySystem
 	scheduler          *scheduler.UnifiedAdaptiveScheduler
-	perTickerScheduler  *scheduler.PerTickerScheduler
+	perTickerScheduler *scheduler.PerTickerScheduler
 	queryPlanner       *coordinator.SmartQueryPlanner
 	writeQueue         *coordinator.PriorityWriteQueue
 	coordinator        *coordinator.DataCollectionCoordinator
-	chartTracker      *charts.ChartTracker
+	chartTracker       *charts.ChartTracker
 	healthCheck        *coordinator.HealthCheck
 	enabledTickers     []string
 	shuttingDown       bool
@@ -54,7 +54,7 @@ type App struct {
 func NewApp() *App {
 	// Initialize settings manager (uses default user config directory)
 	settingsManager := config.NewSettingsManager("")
-	
+
 	// Load settings
 	settings, err := settingsManager.LoadSettings()
 	if err != nil {
@@ -72,15 +72,15 @@ func NewApp() *App {
 
 	// Get enabled tickers from settings
 	enabledTickers := getEnabledTickers(settings)
-	
+
 	// MISSION CRITICAL: Log current time when App is created
 	nowSystem := time.Now()
 	nowMarket := utils.NowMarketTime()
-	log.Printf("[TIME] App created at - System: %s, Market (ET): %s", 
-		nowSystem.Format("2006-01-02 15:04:05 MST"), 
+	log.Printf("[TIME] App created at - System: %s, Market (ET): %s",
+		nowSystem.Format("2006-01-02 15:04:05 MST"),
 		nowMarket.Format("2006-01-02 15:04:05 MST"))
-	utils.Logf("[system] App created at - System: %s, Market (ET): %s", 
-		nowSystem.Format("2006-01-02 15:04:05 MST"), 
+	utils.Logf("[system] App created at - System: %s, Market (ET): %s",
+		nowSystem.Format("2006-01-02 15:04:05 MST"),
 		nowMarket.Format("2006-01-02 15:04:05 MST"))
 
 	// Initialize database components
@@ -119,7 +119,7 @@ func NewApp() *App {
 		chartTracker:    chartTracker,
 		enabledTickers:  enabledTickers,
 		debugPrint:      debugPrint,
-		chartWindows:     make(map[string]*application.WebviewWindow),
+		chartWindows:    make(map[string]*application.WebviewWindow),
 	}
 
 	// Initialize data collection coordinator (with reference to app)
@@ -154,7 +154,7 @@ func NewApp() *App {
 
 	// After-hours collection is NOT allowed - only poll during market hours
 	allowAfterHours := false
-	
+
 	// Initialize per-ticker scheduler (more idiomatic Go)
 	perTickerScheduler := scheduler.NewPerTickerScheduler(
 		adaptiveScheduler,
@@ -169,13 +169,12 @@ func NewApp() *App {
 	)
 	perTickerScheduler.UpdateTickers(enabledTickers)
 	app.perTickerScheduler = perTickerScheduler
-	
+
 	// Set per-ticker scheduler reference in coordinator for date rollover handling
 	coordinator.SetPerTickerScheduler(perTickerScheduler)
 
 	return app
 }
-
 
 // getEnabledTickers extracts enabled tickers from settings
 // Returns empty array if no tickers are enabled (doesn't crash)
@@ -187,7 +186,7 @@ func getEnabledTickers(settings *config.Settings) []string {
 			return enabled
 		}
 	}
-	
+
 	// Return empty array if no tickers enabled (don't use fallback - let user configure)
 	return []string{}
 }
@@ -195,35 +194,35 @@ func getEnabledTickers(settings *config.Settings) []string {
 // ServiceStartup is called when the app starts (implements ServiceStartup interface)
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
-	
+
 	// MISSION CRITICAL: Log current time immediately on startup
 	nowSystem := time.Now()
 	nowMarket := utils.NowMarketTime()
 	isMarketOpen := utils.IsMarketOpen()
 	marketOpenET, marketCloseET := utils.MarketOpenCloseTimes(nowMarket)
-	
+
 	log.Printf("=== SYSTEM TIME ON STARTUP ===")
-	log.Printf("[TIME] System local time: %s (%s)", 
+	log.Printf("[TIME] System local time: %s (%s)",
 		nowSystem.Format("2006-01-02 15:04:05 MST"), nowSystem.Location().String())
-	log.Printf("[TIME] Market time (ET): %s (%s)", 
+	log.Printf("[TIME] Market time (ET): %s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	log.Printf("[TIME] Time difference: %s", 
+	log.Printf("[TIME] Time difference: %s",
 		nowSystem.Sub(nowMarket.In(nowSystem.Location())).String())
 	log.Printf("[TIME] Market is open: %v", isMarketOpen)
-	log.Printf("[TIME] Market hours today: %s - %s ET", 
+	log.Printf("[TIME] Market hours today: %s - %s ET",
 		marketOpenET.Format("15:04:05"), marketCloseET.Format("15:04:05"))
-	
+
 	utils.Logf("[system] === SYSTEM TIME ON STARTUP ===")
-	utils.Logf("[system] System local time: %s (%s)", 
+	utils.Logf("[system] System local time: %s (%s)",
 		nowSystem.Format("2006-01-02 15:04:05 MST"), nowSystem.Location().String())
-	utils.Logf("[system] Market time (ET): %s (%s)", 
+	utils.Logf("[system] Market time (ET): %s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	utils.Logf("[system] Time difference: %s", 
+	utils.Logf("[system] Time difference: %s",
 		nowSystem.Sub(nowMarket.In(nowSystem.Location())).String())
 	utils.Logf("[system] Market is open: %v", isMarketOpen)
-	utils.Logf("[system] Market hours today: %s - %s ET", 
+	utils.Logf("[system] Market hours today: %s - %s ET",
 		marketOpenET.Format("15:04:05"), marketCloseET.Format("15:04:05"))
-	
+
 	utils.Logf("ServiceStartup called - window should be visible now")
 	a.debugPrint("Market Terminal Gexbot (Go/Wails) starting up...", "system")
 
@@ -233,7 +232,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	if dataDir == "" {
 		dataDir = "Tickers"
 	}
-	
+
 	// Get today's date (handle weekends like Python version)
 	today := time.Now()
 	weekday := today.Weekday()
@@ -242,10 +241,10 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	} else if weekday == time.Sunday {
 		today = today.AddDate(0, 0, -2) // Use Friday
 	}
-	
+
 	dateStr := today.Format("01.02.2006")
 	dataDirPath := fmt.Sprintf("%s %s", dataDir, dateStr)
-	
+
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(dataDirPath, 0755); err != nil {
 		utils.Logf("WARNING: Failed to create data directory %s: %v", dataDirPath, err)
@@ -264,30 +263,30 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 				utils.Logf("Per-ticker scheduler already running")
 				return
 			}
-			
+
 			a.perTickerScheduler.Start()
 			a.debugPrint("Per-ticker scheduler started", "system")
 			utils.Logf("Per-ticker scheduler started - data collection should begin")
-			
+
 			// Verify it's actually running
 			if a.perTickerScheduler.IsRunning() {
 				utils.Logf("✓ Per-ticker scheduler confirmed running with %d active tickers", a.perTickerScheduler.GetActiveTickerCount())
 			} else {
 				utils.Logf("✗ WARNING: Per-ticker scheduler Start() called but IsRunning() returns false")
 			}
-			
+
 			// Start health check system
 			if a.healthCheck != nil {
 				a.healthCheck.Start()
 				utils.Logf("Health check system started")
 			}
-			
+
 			// Start date rollover monitor
 			if a.coordinator != nil {
 				a.coordinator.StartDateRolloverMonitor()
 				utils.Logf("Date rollover monitor started")
 			}
-			
+
 			// Check API key
 			apiKey := settings.APITKey
 			if apiKey == "" {
@@ -305,7 +304,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 
 	// Create main window now that backend is fully initialized and Wails runtime is ready
 	utils.Logf("Creating main window - backend is ready, bindings will be available")
-	
+
 	// Use saved window dimensions or defaults
 	windowWidth := 900
 	windowHeight := 900
@@ -329,17 +328,17 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	} else {
 		utils.Logf("Window dimensions: Using defaults %dx%d (settings not loaded)", windowWidth, windowHeight)
 	}
-	
+
 	mainWindow := createWindowFromApp(a.appRef, application.WebviewWindowOptions{
-		Title:    "Market Terminal Gexbot",
-		Width:    windowWidth,
-		Height:   windowHeight,
-		MinWidth: 600,
-		MinHeight: 400,
-		URL:      "/index.html", // Use embedded filesystem
+		Title:            "Market Terminal Gexbot",
+		Width:            windowWidth,
+		Height:           windowHeight,
+		MinWidth:         600,
+		MinHeight:        400,
+		URL:              "/index.html", // Use embedded filesystem
 		BackgroundColour: application.NewRGB(30, 30, 30),
 	})
-	
+
 	if mainWindow == nil {
 		utils.Logf("ERROR: Main window creation failed")
 		a.debugPrint("Failed to create main window", "error")
@@ -384,13 +383,13 @@ func (a *App) ServiceShutdown() error {
 	if a.healthCheck != nil {
 		a.healthCheck.Stop()
 	}
-	
+
 	// Stop date rollover monitor
 	if a.coordinator != nil {
 		a.coordinator.StopDateRolloverMonitor()
 		a.debugPrint("Date rollover monitor stopped", "system")
 	}
-	
+
 	// Stop per-ticker scheduler
 	if a.perTickerScheduler != nil {
 		a.perTickerScheduler.Stop()
@@ -447,12 +446,12 @@ func (a *App) SaveWindowSize(width, height int) error {
 	if width < 600 || height < 400 {
 		return nil // Don't save invalid sizes
 	}
-	
+
 	if err := a.settingsManager.SaveWindowDimensions(width, height); err != nil {
 		a.debugPrint(fmt.Sprintf("Failed to save window size: %v", err), "error")
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -463,13 +462,13 @@ func (a *App) CheckFirstRun() bool {
 		log.Printf("CheckFirstRun: Could not get config path: %v", err)
 		return true // Assume first run if we can't get config path
 	}
-	
+
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Printf("CheckFirstRun: Config file does not exist: %s", configPath)
 		return true // Config file doesn't exist, first run
 	}
-	
+
 	// Config file exists, check if it has been configured
 	// Reload settings to get latest from file
 	settings, err := a.settingsManager.LoadSettings()
@@ -477,12 +476,12 @@ func (a *App) CheckFirstRun() bool {
 		log.Printf("CheckFirstRun: Failed to load settings: %v", err)
 		return true // Assume first run if we can't load
 	}
-	
+
 	apiKey := settings.APITKey
 	hasTiers := len(settings.APISubscriptionTiers) > 0
-	
+
 	log.Printf("CheckFirstRun: Config exists, API key length: %d, has tiers: %v", len(apiKey), hasTiers)
-	
+
 	// Show wizard if API key is missing, regardless of tiers
 	// This ensures users can always set their API key even if tiers were previously configured
 	return apiKey == ""
@@ -494,7 +493,7 @@ func (a *App) CheckFirstRun() bool {
 // initialTickers: List of initial tickers to enable
 func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTickers []string) error {
 	settings := a.settingsManager.GetSettings()
-	
+
 	// Update API key (prefer environment variable, but allow config for now)
 	if apiKey != "" {
 		settings.APITKey = apiKey
@@ -506,7 +505,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 		log.Printf("ERROR: CompleteSetup called with empty API key!")
 		return fmt.Errorf("API key cannot be empty")
 	}
-	
+
 	// Update subscription tiers
 	if len(subscriptionTiers) > 0 {
 		settings.APISubscriptionTiers = subscriptionTiers
@@ -514,19 +513,19 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 		// Default to classic if none selected
 		settings.APISubscriptionTiers = []string{"classic"}
 	}
-	
+
 	// Initialize ticker configs if needed
 	if settings.TickerConfigs == nil {
 		settings.TickerConfigs = make(map[string]config.TickerConfig)
 	}
-	
+
 	// Enable initial tickers
 	defaultTickers := []string{"SPX", "ES_SPX", "SPY", "QQQ", "NDX", "NQ_NDX", "IWM", "VIX"}
 	tickersToEnable := initialTickers
 	if len(tickersToEnable) == 0 {
 		tickersToEnable = defaultTickers
 	}
-	
+
 	for _, ticker := range tickersToEnable {
 		if _, exists := settings.TickerConfigs[ticker]; !exists {
 			refreshRate := 5000
@@ -544,14 +543,14 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 			settings.TickerConfigs[ticker] = tickerConfig
 		}
 	}
-	
+
 	// CRITICAL: Verify API key is in settings before saving
 	log.Printf("CompleteSetup: About to save - settings.APITKey length: %d, apiKey param length: %d", len(settings.APITKey), len(apiKey))
 	if settings.APITKey == "" {
 		log.Printf("ERROR: CompleteSetup: settings.APITKey is empty before save!")
 		return fmt.Errorf("API key is empty in settings before save")
 	}
-	
+
 	// Save settings - for first-time setup, we need to save the API key
 	// Use SaveSettingsWithOptions to save the API key during setup
 	log.Printf("CompleteSetup: Calling SaveSettingsWithOptions with saveAPIKey=true, API key length: %d", len(settings.APITKey))
@@ -559,10 +558,10 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 		log.Printf("ERROR: Failed to save settings: %v", err)
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
-	
+
 	log.Printf("CompleteSetup: Settings saved successfully to: %s", a.settingsManager.GetConfigPath())
 	log.Printf("CompleteSetup: API key saved (length: %d), subscription tiers: %v", len(apiKey), subscriptionTiers)
-	
+
 	// Verify the file was written correctly - read it back and check API key
 	configPath := a.settingsManager.GetConfigPath()
 	if verifyData, err := os.ReadFile(configPath); err == nil {
@@ -585,7 +584,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 		log.Printf("ERROR: CompleteSetup: Failed to read saved file for verification: %v", err)
 		return fmt.Errorf("failed to verify saved file exists: %w", err)
 	}
-	
+
 	// Reload settings to ensure consistency
 	reloadedSettings, err := a.settingsManager.LoadSettings()
 	if err != nil {
@@ -618,7 +617,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 		log.Printf("CompleteSetup: Settings reloaded - API key length: %d, tiers: %v", len(reloadedSettings.APITKey), reloadedSettings.APISubscriptionTiers)
 	}
 	a.settingsManager.SetSettings(reloadedSettings)
-	
+
 	// Update enabled tickers
 	a.enabledTickers = getEnabledTickers(settings)
 	if a.scheduler != nil {
@@ -627,7 +626,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 	if a.perTickerScheduler != nil {
 		a.perTickerScheduler.UpdateTickers(a.enabledTickers)
 	}
-	
+
 	// Update API client with new key
 	if a.apiClient != nil && apiKey != "" {
 		a.apiClient.SetAPIKey(apiKey)
@@ -635,7 +634,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 	if a.querySystem != nil && apiKey != "" {
 		a.querySystem.SetAPIKey(apiKey)
 	}
-	
+
 	a.debugPrint("First-time setup completed", "system")
 	return nil
 }
@@ -649,7 +648,7 @@ func (a *App) GetSettings() *config.Settings {
 // Note: API key is preserved from existing settings (not overwritten by frontend)
 func (a *App) SaveSettings(settings *config.Settings) error {
 	a.debugPrint(fmt.Sprintf("SaveSettings called - saving to: %s", a.settingsManager.GetConfigPath()), "app")
-	
+
 	// Debug: Log incoming ticker configs
 	a.debugPrint(fmt.Sprintf("SaveSettings: Received settings with %d ticker configs", len(settings.TickerConfigs)), "app")
 	for ticker, config := range settings.TickerConfigs {
@@ -657,25 +656,25 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 		if config.RefreshRateMs != nil {
 			refreshRateStr = fmt.Sprintf("%d", *config.RefreshRateMs)
 		}
-		a.debugPrint(fmt.Sprintf("SaveSettings: Ticker %s - CollectionEnabled=%v, Display=%v, Priority=%v, RefreshRateMs=%v", 
+		a.debugPrint(fmt.Sprintf("SaveSettings: Ticker %s - CollectionEnabled=%v, Display=%v, Priority=%v, RefreshRateMs=%v",
 			ticker, config.CollectionEnabled, config.Display, config.Priority, refreshRateStr), "app")
 	}
-	
+
 	// Preserve existing API key (frontend shouldn't send it for security)
 	currentSettings := a.settingsManager.GetSettings()
 	if settings.APITKey == "" && currentSettings.APITKey != "" {
 		settings.APITKey = currentSettings.APITKey
 		a.debugPrint(fmt.Sprintf("SaveSettings: Preserved existing API key (length: %d)", len(settings.APITKey)), "app")
 	}
-	
+
 	// Save settings (API key will NOT be saved to file - only in memory)
 	if err := a.settingsManager.SaveSettings(settings); err != nil {
 		a.debugPrint(fmt.Sprintf("ERROR: SaveSettings failed: %v", err), "error")
 		return err
 	}
-	
+
 	a.debugPrint("Settings saved successfully", "app")
-	
+
 	// Reload settings to ensure consistency
 	reloadedSettings, err := a.settingsManager.LoadSettings()
 	if err != nil {
@@ -687,13 +686,13 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 			a.debugPrint(fmt.Sprintf("SaveSettings: Restored API key in reloaded settings (length: %d)", len(reloadedSettings.APITKey)), "app")
 		}
 		a.settingsManager.SetSettings(reloadedSettings)
-		
+
 		// Update scheduler settings so it sees new priorities and refresh rates
 		if a.scheduler != nil {
 			a.scheduler.SetSettings(reloadedSettings)
 			a.debugPrint("Scheduler: Updated settings reference", "app")
 		}
-		
+
 		// Debug: Log reloaded ticker configs
 		a.debugPrint(fmt.Sprintf("SaveSettings: Reloaded settings has %d ticker configs", len(reloadedSettings.TickerConfigs)), "app")
 		for ticker, config := range reloadedSettings.TickerConfigs {
@@ -701,14 +700,14 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 			if config.RefreshRateMs != nil {
 				refreshRateStr = fmt.Sprintf("%d", *config.RefreshRateMs)
 			}
-			a.debugPrint(fmt.Sprintf("SaveSettings: Reloaded ticker %s - CollectionEnabled=%v, Display=%v, Priority=%v, RefreshRateMs=%v", 
+			a.debugPrint(fmt.Sprintf("SaveSettings: Reloaded ticker %s - CollectionEnabled=%v, Display=%v, Priority=%v, RefreshRateMs=%v",
 				ticker, config.CollectionEnabled, config.Display, config.Priority, refreshRateStr), "app")
 		}
-		
+
 		// Update enabled tickers - always check if they changed (not just length)
 		newEnabledTickers := getEnabledTickers(reloadedSettings)
 		a.debugPrint(fmt.Sprintf("SaveSettings: getEnabledTickers returned %d tickers: %v", len(newEnabledTickers), newEnabledTickers), "app")
-		
+
 		// Check if tickers actually changed (compare sets, not just length)
 		tickersChanged := false
 		if len(newEnabledTickers) != len(a.enabledTickers) {
@@ -726,7 +725,7 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 				}
 			}
 		}
-		
+
 		if tickersChanged {
 			a.debugPrint(fmt.Sprintf("Enabled tickers changed: %v -> %v", a.enabledTickers, newEnabledTickers), "app")
 			a.enabledTickers = newEnabledTickers
@@ -751,7 +750,7 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 			a.debugPrint(fmt.Sprintf("Enabled tickers unchanged: %v", newEnabledTickers), "app")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -762,17 +761,17 @@ func (a *App) GetEnabledTickers() []string {
 	// Always read from current settings, not cached value
 	// This ensures it reflects the latest state even if a.enabledTickers is stale
 	settings := a.settingsManager.GetSettings()
-	
+
 	// Debug logging
 	a.debugPrint(fmt.Sprintf("GetEnabledTickers: Settings has %d ticker configs", len(settings.TickerConfigs)), "app")
 	for ticker, config := range settings.TickerConfigs {
-		a.debugPrint(fmt.Sprintf("GetEnabledTickers: Ticker %s - CollectionEnabled=%v, Display=%v", 
+		a.debugPrint(fmt.Sprintf("GetEnabledTickers: Ticker %s - CollectionEnabled=%v, Display=%v",
 			ticker, config.CollectionEnabled, config.Display), "app")
 	}
-	
+
 	enabled := getEnabledTickers(settings)
 	a.debugPrint(fmt.Sprintf("GetEnabledTickers: Returning %d enabled tickers: %v", len(enabled), enabled), "app")
-	
+
 	return enabled
 }
 
@@ -785,9 +784,9 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 	// Log memory usage before loading data
 	var mBefore runtime.MemStats
 	runtime.ReadMemStats(&mBefore)
-	a.debugPrint(fmt.Sprintf("GetTickerData: Memory before loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB", 
+	a.debugPrint(fmt.Sprintf("GetTickerData: Memory before loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB",
 		ticker, mBefore.Alloc/1024/1024, mBefore.Sys/1024/1024, mBefore.HeapAlloc/1024/1024), "memory")
-	
+
 	// Parse date string in ET (not UTC)
 	date, err := utils.ParseDateInET(dateStr)
 	if err != nil {
@@ -796,7 +795,7 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 		// Extract just the date part at midnight ET
 		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
 	}
-	
+
 	// Load data using lightweight LoadTickerData (skips profiles_blob)
 	// This prevents massive memory usage from decompressing profiles
 	data, err := a.dataLoader.LoadTickerData(ticker, date)
@@ -805,13 +804,13 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 		a.debugPrint(fmt.Sprintf("GetTickerData: Error loading data for %s: %v", ticker, err), "error")
 		return nil, err
 	}
-	
+
 	// Convert to map[string]interface{} for JSON serialization
 	result := make(map[string]interface{})
 	for k, v := range data {
 		result[k] = v
 	}
-	
+
 	// If no data, return empty structure (not nil)
 	if len(result) == 0 {
 		// Return structure with empty arrays for expected fields
@@ -821,14 +820,14 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 		result["major_pos_vol"] = []interface{}{}
 		result["major_neg_vol"] = []interface{}{}
 	}
-	
+
 	// Log memory usage after loading data
 	var mAfter runtime.MemStats
 	runtime.ReadMemStats(&mAfter)
 	memDelta := int64(mAfter.Alloc) - int64(mBefore.Alloc)
-	a.debugPrint(fmt.Sprintf("GetTickerData: Memory after loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB, Delta=+%d MB", 
+	a.debugPrint(fmt.Sprintf("GetTickerData: Memory after loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB, Delta=+%d MB",
 		ticker, mAfter.Alloc/1024/1024, mAfter.Sys/1024/1024, mAfter.HeapAlloc/1024/1024, memDelta/1024/1024), "memory")
-	
+
 	return result, nil
 }
 
@@ -844,19 +843,19 @@ func (a *App) GetTickerDataRange(ticker string, dateStr string, startTime, endTi
 		// Extract just the date part at midnight ET
 		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
 	}
-	
+
 	// Load data (returns map[string][]interface{})
 	data, err := a.dataLoader.LoadTimeRange(ticker, date, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Convert to map[string]interface{} for JSON serialization
 	result := make(map[string]interface{})
 	for k, v := range data {
 		result[k] = v
 	}
-	
+
 	return result, nil
 }
 
@@ -868,44 +867,56 @@ func filterChartData(data map[string][]interface{}) map[string][]interface{} {
 	if !hasTimestamps || len(timestamps) == 0 {
 		return data
 	}
-	
+
 	filtered := make(map[string][]interface{})
-	
+
 	// Always include timestamps (no filtering)
 	filtered["timestamp"] = timestamps
-	
+
 	// Filter each field independently (replace NaN/zero with nil)
 	for key, values := range data {
 		if key == "timestamp" {
 			continue
 		}
-		
+
 		filtered[key] = make([]interface{}, len(timestamps))
 		for i := 0; i < len(timestamps) && i < len(values); i++ {
 			val := values[i]
-			
+
 			// Check for nil
 			if val == nil {
 				filtered[key][i] = nil
 				continue
 			}
-			
-			// Check for NaN, Inf, or 0
-			// Note: For spot price, 0 might be valid in rare cases, but we'll filter it for consistency
-			// For all other fields, 0 is invalid
+
+			// Check for NaN, Inf; allow 0 so charts can show data when DB has 0 (e.g. placeholder or pre-market)
 			if f, ok := val.(float64); ok {
-				if math.IsNaN(f) || math.IsInf(f, 0) || f == 0 {
-					filtered[key][i] = nil // Chart.js will skip nil values (spanGaps: false prevents connections)
+				if math.IsNaN(f) || math.IsInf(f, 0) {
+					filtered[key][i] = nil
 				} else {
 					filtered[key][i] = val
 				}
+			} else if i64, ok := val.(int64); ok {
+				filtered[key][i] = float64(i64)
+			} else if i32, ok := val.(int32); ok {
+				filtered[key][i] = float64(i32)
 			} else {
-				// Non-float value - keep as-is
 				filtered[key][i] = val
 			}
 		}
+		// Forward-fill nils so chart always receives numbers (avoids "No valid data points" when DB has NULLs)
+		var last interface{}
+		for i := range filtered[key] {
+			if filtered[key][i] != nil {
+				last = filtered[key][i]
+			} else if last != nil {
+				filtered[key][i] = last
+			} else {
+				filtered[key][i] = 0.0
+			}
+		}
 	}
-	
+
 	// Note: Filtering stats are logged in GetChartData, not here (no access to debugPrint)
 	return filtered
 }
@@ -918,9 +929,9 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 	// Log memory usage before loading data
 	var mBefore runtime.MemStats
 	runtime.ReadMemStats(&mBefore)
-	a.debugPrint(fmt.Sprintf("GetChartData: Memory before loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB", 
+	a.debugPrint(fmt.Sprintf("GetChartData: Memory before loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB",
 		ticker, mBefore.Alloc/1024/1024, mBefore.Sys/1024/1024, mBefore.HeapAlloc/1024/1024), "memory")
-	
+
 	// Parse date string in ET (not UTC)
 	date, err := utils.ParseDateInET(dateStr)
 	if err != nil {
@@ -931,13 +942,13 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
 		dateStr = date.Format("2006-01-02")
 	}
-	a.debugPrint(fmt.Sprintf("GetChartData: Parsed date for %s: %s (original: %s, ET: %s)", 
+	a.debugPrint(fmt.Sprintf("GetChartData: Parsed date for %s: %s (original: %s, ET: %s)",
 		ticker, date.Format("2006-01-02"), dateStr, date.Format("2006-01-02 15:04:05 MST")), "app")
-	
+
 	const maxRows = 30000 // Maximum rows to load (full trading day at 1s = ~23,400)
-	
+
 	a.debugPrint(fmt.Sprintf("GetChartData: Loading chart data for %s on %s (max %d rows, skipping profiles)", ticker, dateStr, maxRows), "app")
-	
+
 	// Load chart data (only required columns, no profiles_blob)
 	// This prevents massive memory usage from decompressing profiles
 	data, err := a.dataLoader.LoadChartData(ticker, date, maxRows)
@@ -945,37 +956,37 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 		a.debugPrint(fmt.Sprintf("GetChartData: Error loading data for %s: %v", ticker, err), "error")
 		return nil, err
 	}
-	
+
 	// Log data before filtering
 	beforeFilterCount := 0
 	if timestamps, ok := data["timestamp"]; ok {
 		beforeFilterCount = len(timestamps)
 	}
 	a.debugPrint(fmt.Sprintf("GetChartData: Data loaded for %s: %d timestamps before filtering", ticker, beforeFilterCount), "app")
-	
+
 	// Filter out NaN and 0 values to prevent vertical lines and reduce memory
 	filteredData := filterChartData(data)
-	
+
 	// Log data after filtering
 	afterFilterCount := 0
 	if timestamps, ok := filteredData["timestamp"]; ok {
 		afterFilterCount = len(timestamps)
 	}
 	a.debugPrint(fmt.Sprintf("GetChartData: Data filtered for %s: %d timestamps after filtering (removed %d)", ticker, afterFilterCount, beforeFilterCount-afterFilterCount), "app")
-	
+
 	// Only send required fields to frontend (reduces JSON size and memory)
 	requiredFields := []string{
 		"timestamp",
 		"spot",
 		"zero_gamma",
-		"major_pos_vol",    // Positive gamma
-		"major_neg_vol",    // Negative gamma
-		"major_long_gamma", // Long gamma
+		"major_pos_vol",     // Positive gamma
+		"major_neg_vol",     // Negative gamma
+		"major_long_gamma",  // Long gamma
 		"major_short_gamma", // Short gamma
-		"major_positive",   // Major positive strike
-		"major_negative",   // Major negative strike
-		"major_pos_oi",     // Major positive OI
-		"major_neg_oi",     // Major negative OI
+		"major_positive",    // Major positive strike
+		"major_negative",    // Major negative strike
+		"major_pos_oi",      // Major positive OI
+		"major_neg_oi",      // Major negative OI
 	}
 	result := make(map[string]interface{})
 	for _, field := range requiredFields {
@@ -985,7 +996,7 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 			result[field] = []interface{}{}
 		}
 	}
-	
+
 	// Log filtering results
 	originalCount := 0
 	if timestamps, ok := data["timestamp"]; ok {
@@ -995,14 +1006,14 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 	if timestamps, ok := result["timestamp"].([]interface{}); ok {
 		filteredCount = len(timestamps)
 	}
-	
+
 	if originalCount > 0 {
-		a.debugPrint(fmt.Sprintf("GetChartData: Filtered %s: %d -> %d points (removed %d invalid)", 
+		a.debugPrint(fmt.Sprintf("GetChartData: Filtered %s: %d -> %d points (removed %d invalid)",
 			ticker, originalCount, filteredCount, originalCount-filteredCount), "app")
 	} else {
 		a.debugPrint(fmt.Sprintf("GetChartData: No data found for %s on %s", ticker, dateStr), "app")
 	}
-	
+
 	// Return empty structure if no valid data
 	if len(result) == 0 || filteredCount == 0 {
 		result["timestamp"] = []interface{}{}
@@ -1011,14 +1022,14 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 		result["major_pos_vol"] = []interface{}{}
 		result["major_neg_vol"] = []interface{}{}
 	}
-	
+
 	// Log memory usage after loading data
 	var mAfter runtime.MemStats
 	runtime.ReadMemStats(&mAfter)
 	memDelta := int64(mAfter.Alloc) - int64(mBefore.Alloc)
-	a.debugPrint(fmt.Sprintf("GetChartData: Memory after loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB, Delta=+%d MB", 
+	a.debugPrint(fmt.Sprintf("GetChartData: Memory after loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB, Delta=+%d MB",
 		ticker, mAfter.Alloc/1024/1024, mAfter.Sys/1024/1024, mAfter.HeapAlloc/1024/1024, memDelta/1024/1024), "memory")
-	
+
 	return result, nil
 }
 
@@ -1038,48 +1049,48 @@ func (a *App) GetAvailableDates() []string {
 	if dataDir == "" {
 		dataDir = "Tickers"
 	}
-	
+
 	prefix := dataDir + " "
 	currentDir, err := os.Getwd()
 	if err != nil {
 		a.debugPrint(fmt.Sprintf("GetAvailableDates: Failed to get current directory: %v", err), "error")
 		return []string{}
 	}
-	
+
 	entries, err := os.ReadDir(currentDir)
 	if err != nil {
 		a.debugPrint(fmt.Sprintf("GetAvailableDates: Failed to read directory: %v", err), "error")
 		return []string{}
 	}
-	
+
 	var availableDates []time.Time
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		
+
 		name := entry.Name()
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		
+
 		// Extract date string (format: "MM.DD.YYYY")
 		dateStr := strings.TrimPrefix(name, prefix)
-		
+
 		// Parse date
 		date, err := time.Parse("01.02.2006", dateStr)
 		if err != nil {
 			// Skip invalid date formats
 			continue
 		}
-		
+
 		// Check if directory has any database files
 		dirPath := filepath.Join(currentDir, name)
 		files, err := os.ReadDir(dirPath)
 		if err != nil {
 			continue
 		}
-		
+
 		hasData := false
 		for _, file := range files {
 			if !file.IsDir() && strings.HasSuffix(file.Name(), ".db") {
@@ -1087,23 +1098,23 @@ func (a *App) GetAvailableDates() []string {
 				break
 			}
 		}
-		
+
 		if hasData {
 			availableDates = append(availableDates, date)
 		}
 	}
-	
+
 	// Sort newest first
 	sort.Slice(availableDates, func(i, j int) bool {
 		return availableDates[i].After(availableDates[j])
 	})
-	
+
 	// Convert to "YYYY-MM-DD" format strings
 	result := make([]string, len(availableDates))
 	for i, date := range availableDates {
 		result[i] = date.Format("2006-01-02")
 	}
-	
+
 	return result
 }
 
@@ -1114,15 +1125,15 @@ func (a *App) GetAvailableDates() []string {
 func (a *App) GetMarketHoursLocal() (string, string) {
 	// Get current market date
 	marketDate := utils.GetMarketDate()
-	
+
 	// Get market open/close times in Eastern Time
 	marketOpenET, marketCloseET := utils.MarketOpenCloseTimes(marketDate)
-	
+
 	// Return ET times formatted as "HH:MM"
 	// Frontend will convert to local timezone using JavaScript Date conversion
 	openStr := marketOpenET.Format("15:04")
 	closeStr := marketCloseET.Format("15:04")
-	
+
 	return openStr, closeStr
 }
 
@@ -1131,24 +1142,24 @@ func (a *App) IsMarketOpen() bool {
 	// MISSION CRITICAL: Log immediately when function is called
 	log.Printf("=== IsMarketOpen CALLED ===")
 	utils.Logf("[system] === IsMarketOpen CALLED ===")
-	
+
 	nowMarket := utils.NowMarketTime()
 	nowLocal := time.Now()
 	isOpen := utils.IsMarketOpen()
-	
+
 	// MISSION CRITICAL: Show current times - use multiple logging methods
-	log.Printf("[TIME] IsMarketOpen: Current market time (ET)=%s (%s)", 
+	log.Printf("[TIME] IsMarketOpen: Current market time (ET)=%s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	log.Printf("[TIME] IsMarketOpen: Current local time=%s (%s)", 
+	log.Printf("[TIME] IsMarketOpen: Current local time=%s (%s)",
 		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
 	log.Printf("[TIME] IsMarketOpen: Market is open=%v", isOpen)
-	
-	utils.Logf("[system] IsMarketOpen: Current market time (ET)=%s (%s)", 
+
+	utils.Logf("[system] IsMarketOpen: Current market time (ET)=%s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	utils.Logf("[system] IsMarketOpen: Current local time=%s (%s)", 
+	utils.Logf("[system] IsMarketOpen: Current local time=%s (%s)",
 		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
 	utils.Logf("[system] IsMarketOpen: Market is open=%v", isOpen)
-	
+
 	return isOpen
 }
 
@@ -1156,7 +1167,7 @@ func (a *App) IsMarketOpen() bool {
 func (a *App) GetNextMarketOpenTime() string {
 	now := utils.NowMarketTime()
 	today := now
-	
+
 	// Check if it's a weekend
 	weekday := today.Weekday()
 	if weekday == time.Saturday || weekday == time.Sunday {
@@ -1169,10 +1180,10 @@ func (a *App) GetNextMarketOpenTime() string {
 		nextOpen := time.Date(nextMonday.Year(), nextMonday.Month(), nextMonday.Day(), 9, 30, 0, 0, utils.GetMarketTimezone())
 		return nextOpen.Format(time.RFC3339)
 	}
-	
+
 	// Weekday: check if before or after market hours today
 	marketOpen, marketClose := utils.MarketOpenCloseTimes(today)
-	
+
 	if now.Before(marketOpen) {
 		// Before market open today: return today's open time
 		return marketOpen.Format(time.RFC3339)
@@ -1186,7 +1197,7 @@ func (a *App) GetNextMarketOpenTime() string {
 		nextOpen := time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), 9, 30, 0, 0, utils.GetMarketTimezone())
 		return nextOpen.Format(time.RFC3339)
 	}
-	
+
 	// Market is currently open: return current time (shouldn't happen, but handle it)
 	return marketOpen.Format(time.RFC3339)
 }
@@ -1198,35 +1209,35 @@ func (a *App) GetNextMarketOpenLocalTime() string {
 	// MISSION CRITICAL: Log immediately when function is called
 	log.Printf("=== GetNextMarketOpenLocalTime CALLED ===")
 	utils.Logf("[system] === GetNextMarketOpenLocalTime CALLED ===")
-	
+
 	nowMarket := utils.NowMarketTime() // Current time in ET
 	nowLocal := time.Now()             // Current time in server's local timezone
 	today := nowMarket
-	
+
 	// Get market open/close times for today
 	marketOpenET, marketCloseET := utils.MarketOpenCloseTimes(today)
-	
+
 	// MISSION CRITICAL: Show current times - use multiple logging methods
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current local time=%s (%s)", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current local time=%s (%s)",
 		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Time difference between ET and local=%s", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Time difference between ET and local=%s",
 		nowLocal.Sub(nowMarket.In(nowLocal.Location())).String())
-	
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)", 
+
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)",
 		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Current local time=%s (%s)", 
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Current local time=%s (%s)",
 		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Time difference between ET and local=%s", 
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Time difference between ET and local=%s",
 		nowLocal.Sub(nowMarket.In(nowLocal.Location())).String())
-	
+
 	var targetOpenET time.Time
-	
+
 	// Check if today is a weekend (Saturday=6, Sunday=0 in Go)
 	todayWeekday := today.Weekday()
 	utils.Logf("[system] GetNextMarketOpenLocalTime: Weekday=%v (0=Sunday, 6=Saturday)", todayWeekday)
-	
+
 	if todayWeekday == time.Saturday || todayWeekday == time.Sunday {
 		// It's a weekend, find next Monday
 		daysUntilMonday := int(time.Monday - todayWeekday)
@@ -1235,17 +1246,17 @@ func (a *App) GetNextMarketOpenLocalTime() string {
 		}
 		nextTradingDay := today.AddDate(0, 0, daysUntilMonday)
 		targetOpenET, _ = utils.MarketOpenCloseTimes(nextTradingDay)
-		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekend detected, next Monday ET=%s", 
+		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekend detected, next Monday ET=%s",
 			targetOpenET.Format("2006-01-02 15:04:05 MST"))
 	} else {
 		// It's a weekday, check if market has opened/closed today
-		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekday - market open ET=%s, close ET=%s", 
+		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekday - market open ET=%s, close ET=%s",
 			marketOpenET.Format("15:04:05"), marketCloseET.Format("15:04:05"))
-		
+
 		if nowMarket.Before(marketOpenET) {
 			// Market hasn't opened yet today
 			targetOpenET = marketOpenET
-			utils.Logf("[system] GetNextMarketOpenLocalTime: Before market open, using today's open ET=%s", 
+			utils.Logf("[system] GetNextMarketOpenLocalTime: Before market open, using today's open ET=%s",
 				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		} else if nowMarket.After(marketCloseET) || nowMarket.Equal(marketCloseET) {
 			// Market has closed, find next trading day
@@ -1255,52 +1266,52 @@ func (a *App) GetNextMarketOpenLocalTime() string {
 				nextDay = nextDay.AddDate(0, 0, 1)
 			}
 			targetOpenET, _ = utils.MarketOpenCloseTimes(nextDay)
-			utils.Logf("[system] GetNextMarketOpenLocalTime: After market close, next trading day ET=%s", 
+			utils.Logf("[system] GetNextMarketOpenLocalTime: After market close, next trading day ET=%s",
 				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		} else {
 			// Market is open (shouldn't reach here, but handle it)
 			// Return today's open time as fallback
 			targetOpenET = marketOpenET
-			utils.Logf("[system] GetNextMarketOpenLocalTime: Market is open, using today's open as fallback ET=%s", 
+			utils.Logf("[system] GetNextMarketOpenLocalTime: Market is open, using today's open as fallback ET=%s",
 				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		}
 	}
-	
+
 	// Convert target open time to server's local timezone for logging
 	targetOpenLocal := targetOpenET.In(time.Local)
-	
+
 	// CRITICAL: Format RFC3339 with explicit timezone offset
 	// RFC3339 format: "2006-01-02T15:04:05-05:00" (includes timezone offset)
 	// This ensures JavaScript Date.parse() correctly converts ET to browser's local timezone
 	result := targetOpenET.Format(time.RFC3339)
-	
+
 	// Verify the RFC3339 string is correct by parsing it back
 	parsedBack, err := time.Parse(time.RFC3339, result)
 	if err != nil {
 		log.Printf("[TIME] ERROR: Failed to parse RFC3339 back: %v", err)
 	} else {
 		parsedBackLocal := parsedBack.In(time.Local)
-		log.Printf("[TIME] GetNextMarketOpenLocalTime: RFC3339 verification - parsed back to local=%s", 
+		log.Printf("[TIME] GetNextMarketOpenLocalTime: RFC3339 verification - parsed back to local=%s",
 			parsedBackLocal.Format("2006-01-02 15:04:05 MST"))
 	}
-	
+
 	// MISSION CRITICAL: Show conversion - use multiple logging methods
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open ET=%s", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open ET=%s",
 		targetOpenET.Format("2006-01-02 15:04:05 MST"))
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)",
 		targetOpenLocal.Format("2006-01-02 15:04:05 MST"), targetOpenLocal.Location().String())
 	log.Printf("[TIME] GetNextMarketOpenLocalTime: Returning RFC3339 (ET)=%s", result)
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s", 
+	log.Printf("[TIME] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s",
 		targetOpenLocal.Format("2006-01-02 15:04:05 MST"))
-	
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open ET=%s", 
+
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open ET=%s",
 		targetOpenET.Format("2006-01-02 15:04:05 MST"))
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)", 
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)",
 		targetOpenLocal.Format("2006-01-02 15:04:05 MST"), targetOpenLocal.Location().String())
 	utils.Logf("[system] GetNextMarketOpenLocalTime: Returning RFC3339=%s", result)
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s", 
+	utils.Logf("[system] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s",
 		targetOpenLocal.Format("2006-01-02 15:04:05 MST"))
-	
+
 	return result
 }
 
@@ -1325,7 +1336,7 @@ func createWindowFromApp(appRef interface{}, options application.WebviewWindowOp
 func (a *App) LogFrontend(level string, message string) {
 	// Log to both stdout (terminal) and file logger
 	logMsg := fmt.Sprintf("[FRONTEND-%s] %s", level, message)
-	log.Println(logMsg)                    // Terminal/stdout
+	log.Println(logMsg)                            // Terminal/stdout
 	utils.Logf("[frontend-%s] %s", level, message) // File logger
 	a.debugPrint(message, "frontend")
 }
@@ -1365,7 +1376,7 @@ func (a *App) OpenChartWindow(ticker string, dateStr string) error {
 	if a.appRef == nil {
 		return fmt.Errorf("application not initialized")
 	}
-	
+
 	// Check if window already exists and close it before creating new one (prevents memory leaks)
 	a.chartWindowsLock.Lock()
 	if existingWindow, exists := a.chartWindows[ticker]; exists && existingWindow != nil {
@@ -1375,40 +1386,40 @@ func (a *App) OpenChartWindow(ticker string, dateStr string) error {
 		delete(a.chartWindows, ticker)
 	}
 	a.chartWindowsLock.Unlock()
-	
+
 	// Build URL with ticker and optional date parameter
 	url := fmt.Sprintf("/chart.html?ticker=%s", ticker)
 	if dateStr != "" {
 		url += fmt.Sprintf("&date=%s", dateStr)
 	}
-	
+
 	// Create new window using chart.html file with ticker and date parameters
 	// The chart.html file will be served by the asset server
 	window := createWindowFromApp(a.appRef, application.WebviewWindowOptions{
-		Title:    fmt.Sprintf("%s Chart", ticker),
-		Width:    1200,
-		Height:   800,
-		MinWidth: 600,
-		MinHeight: 400,
-		URL:      url,
+		Title:            fmt.Sprintf("%s Chart", ticker),
+		Width:            1200,
+		Height:           800,
+		MinWidth:         600,
+		MinHeight:        400,
+		URL:              url,
 		BackgroundColour: application.NewRGB(30, 30, 30),
 	})
-	
+
 	if window == nil {
 		return fmt.Errorf("failed to create chart window")
 	}
-	
+
 	// Store window reference
 	a.chartWindowsLock.Lock()
 	a.chartWindows[ticker] = window
 	a.chartWindowsLock.Unlock()
-	
+
 	// Register ticker as displayed
 	a.RegisterTickerDisplay(ticker)
-	
+
 	// Note: Window close handling will be done when window is actually closed
 	// We track windows in chartWindows map and clean up on next open if needed
-	
+
 	return nil
 }
 
@@ -1416,7 +1427,7 @@ func (a *App) OpenChartWindow(ticker string, dateStr string) error {
 // Returns a map with verification results
 func (a *App) VerifyDataCollection() map[string]interface{} {
 	result := make(map[string]interface{})
-	
+
 	// Check if scheduler is running
 	if a.perTickerScheduler != nil {
 		result["scheduler_running"] = a.perTickerScheduler.IsRunning()
@@ -1425,17 +1436,17 @@ func (a *App) VerifyDataCollection() map[string]interface{} {
 		result["scheduler_running"] = false
 		result["active_tickers"] = 0
 	}
-	
+
 	// Check enabled tickers
 	result["enabled_tickers"] = a.enabledTickers
 	result["enabled_ticker_count"] = len(a.enabledTickers)
-	
+
 	// Check API key
 	settings := a.settingsManager.GetSettings()
 	result["api_key_configured"] = settings.APITKey != ""
 	result["api_key_length"] = len(settings.APITKey)
 	result["subscription_tiers"] = settings.APISubscriptionTiers
-	
+
 	// Check if coordinator is processing
 	if a.coordinator != nil {
 		// We can't easily check if coordinator is processing without exposing internal state
@@ -1443,7 +1454,7 @@ func (a *App) VerifyDataCollection() map[string]interface{} {
 	} else {
 		result["coordinator_initialized"] = false
 	}
-	
+
 	// Check data directory
 	dataDir := settings.DataDirectory
 	if dataDir == "" {
@@ -1458,12 +1469,12 @@ func (a *App) VerifyDataCollection() map[string]interface{} {
 	}
 	dateStr := today.Format("01.02.2006")
 	dataDirPath := fmt.Sprintf("%s %s", dataDir, dateStr)
-	
+
 	// Check if data directory exists
 	if _, err := os.Stat(dataDirPath); err == nil {
 		result["data_directory_exists"] = true
 		result["data_directory"] = dataDirPath
-		
+
 		// Count database files
 		files, err := os.ReadDir(dataDirPath)
 		if err == nil {
@@ -1482,6 +1493,6 @@ func (a *App) VerifyDataCollection() map[string]interface{} {
 		result["data_directory"] = dataDirPath
 		result["database_files"] = 0
 	}
-	
+
 	return result
 }

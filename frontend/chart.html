@@ -414,7 +414,11 @@
                     const xStart = isRight ? chart.chartArea.right - markerLength : chart.chartArea.left;
                     const xEnd = isRight ? chart.chartArea.right : chart.chartArea.left + markerLength;
                     const valuePadding = 4;
+                    const overlapThreshold = 8;
+                    const horizontalGap = 6;
+                    ctx.font = '10px sans-serif';
                     const datasets = chart.data.datasets || [];
+                    const items = [];
                     for (let i = 0; i < datasets.length; i++) {
                         const meta = chart.getDatasetMeta(i);
                         if (meta && meta.hidden) continue;
@@ -433,23 +437,41 @@
                         const yVal = Number(lastPoint.y);
                         const yPixel = yScale.getPixelForValue(yVal);
                         if (yPixel < chart.chartArea.top || yPixel > chart.chartArea.bottom) continue;
+                        const valueText = typeof yVal === 'number' && (yVal % 1 !== 0 || yVal >= 1000) ? yVal.toFixed(2) : String(yVal);
+                        const textWidth = ctx.measureText(valueText).width;
+                        items.push({ yPixel, valueText, textWidth, borderColor: ds.borderColor || 'rgba(128,128,128,0.8)', datasetIndex: i });
+                    }
+                    items.sort((a, b) => a.yPixel - b.yPixel);
+                    let clusterWidth = 0;
+                    let prevYPixel = -9999;
+                    for (let k = 0; k < items.length; k++) {
+                        if (Math.abs(items[k].yPixel - prevYPixel) <= overlapThreshold) {
+                            clusterWidth += horizontalGap + items[k].textWidth;
+                        } else {
+                            clusterWidth = items[k].textWidth;
+                        }
+                        items[k].textXOffset = isRight ? -(clusterWidth - items[k].textWidth) : (clusterWidth - items[k].textWidth);
+                        prevYPixel = items[k].yPixel;
+                    }
+                    for (let k = 0; k < items.length; k++) {
+                        const item = items[k];
+                        const baseX = isRight ? xStart - valuePadding : xEnd + valuePadding;
+                        const textX = baseX + item.textXOffset;
                         ctx.save();
-                        ctx.strokeStyle = ds.borderColor || 'rgba(128,128,128,0.8)';
+                        ctx.strokeStyle = item.borderColor;
                         ctx.lineWidth = 2;
                         ctx.beginPath();
-                        ctx.moveTo(xStart, yPixel);
-                        ctx.lineTo(xEnd, yPixel);
+                        ctx.moveTo(xStart, item.yPixel);
+                        ctx.lineTo(xEnd, item.yPixel);
                         ctx.stroke();
-                        const valueText = typeof yVal === 'number' && (yVal % 1 !== 0 || yVal >= 1000) ? yVal.toFixed(2) : String(yVal);
-                        ctx.font = '10px sans-serif';
-                        ctx.fillStyle = ds.borderColor || 'rgba(200,200,200,0.9)';
+                        ctx.fillStyle = item.borderColor;
                         ctx.textBaseline = 'middle';
                         if (isRight) {
                             ctx.textAlign = 'right';
-                            ctx.fillText(valueText, xStart - valuePadding, yPixel);
+                            ctx.fillText(item.valueText, textX, item.yPixel);
                         } else {
                             ctx.textAlign = 'left';
-                            ctx.fillText(valueText, xEnd + valuePadding, yPixel);
+                            ctx.fillText(item.valueText, textX, item.yPixel);
                         }
                         ctx.restore();
                     }
@@ -1356,9 +1378,17 @@
                     globalChartSettings.ChartZoomFilterPercent = settings.ChartZoomFilterPercent || 1.0;
                     globalChartSettings.AutoFollowBufferPercent = settings.AutoFollowBufferPercent || 1.0;
                     globalChartSettings.PriceAxisLocation = (settings.PriceAxisLocation || 'left').toLowerCase() === 'right' ? 'right' : 'left';
-                    if (settings && settings.ChartColors) {
-                        chartColors = { ...defaultColors, ...settings.ChartColors };
-                        await logToBackend('info', `[Chart] Loaded colors from settings: ${JSON.stringify(chartColors)}`);
+                    if (settings && settings.ChartColors && typeof settings.ChartColors === 'object') {
+                        chartColors = { ...defaultColors };
+                        try {
+                            const cc = settings.ChartColors;
+                            for (const k of Object.keys(cc)) {
+                                if (Object.prototype.hasOwnProperty.call(cc, k) && typeof cc[k] === 'string') chartColors[k] = cc[k];
+                            }
+                        } catch (e) {
+                            await logToBackend('warn', `[Chart] ChartColors merge failed: ${e && e.message ? e.message : String(e)}`).catch(() => {});
+                        }
+                        await logToBackend('info', `[Chart] Loaded colors from settings (keys: ${Object.keys(chartColors).join(', ')})`);
                         await logToBackend('info', `[Chart] UseMarketTime: ${globalChartSettings.UseMarketTime}, HiddenPlots: ${JSON.stringify(globalChartSettings.HiddenPlots)}`);
                     }
                 } else {
@@ -1368,21 +1398,24 @@
                 await logToBackend('warn', `[Chart] Could not load colors from settings, using defaults: ${error.message || error}`);
             }
             if (typeof chart !== 'undefined' && chart && chart.options && chart.options.scales && chart.options.scales.y) {
-                applyPriceAxisSettings(chart);
-                chart.update('none');
+                try {
+                    applyPriceAxisSettings(chart);
+                    chart.update('none');
+                } catch (axisErr) {
+                    await logToBackend('warn', `[Chart] applyPriceAxisSettings failed: ${axisErr && axisErr.message ? axisErr.message : String(axisErr)}`).catch(() => {});
+                }
             }
         }
         
         // Apply price axis position, label color (spot color), and tick count from globalChartSettings
+        // Use fresh objects to avoid triggering Chart.js getters/setters that can cause stack overflow
         function applyPriceAxisSettings(ch) {
             if (!ch || !ch.options || !ch.options.scales || !ch.options.scales.y) return;
             const yOpts = ch.options.scales.y;
             yOpts.position = globalChartSettings.PriceAxisLocation === 'right' ? 'right' : 'left';
-            const spotColor = chartColors.spot || defaultColors.spot || '#4CAF50';
+            const spotColor = typeof chartColors.spot === 'string' ? chartColors.spot : (typeof defaultColors.spot === 'string' ? defaultColors.spot : '#4CAF50');
             const axisColor = spotColor.startsWith('#') ? spotColor : '#' + spotColor;
-            yOpts.ticks = yOpts.ticks || {};
-            yOpts.ticks.color = axisColor;
-            yOpts.ticks.maxTicksLimit = 22;
+            yOpts.ticks = { color: axisColor, maxTicksLimit: 22 };
         }
         
         // Format time for display based on UseMarketTime setting
@@ -1452,15 +1485,16 @@
             // Build segments like Python: for each pair, add both points at same y-value, then null separator
             // This creates horizontal lines with no vertical connections
             for (let i = 0; i < timestamps.length - 1; i++) {
-                const currentValue = values[i];
+                const raw = values[i];
+                if (raw === null || raw === undefined) continue;
+                let currentValue;
+                if (typeof raw === 'number') currentValue = raw;
+                else if (typeof raw === 'string') currentValue = Number(raw);
+                else if (raw && typeof raw === 'object' && !Array.isArray(raw) && (raw.value != null || raw.y != null)) currentValue = Number(raw.value != null ? raw.value : raw.y);
+                else currentValue = Number(raw);
+                if (typeof currentValue !== 'number' || isNaN(currentValue) || !isFinite(currentValue)) continue;
                 const nextTimestamp = timestamps[i + 1];
                 const currentTimestamp = timestamps[i];
-                
-                // Skip if current value is invalid
-                if (currentValue === null || currentValue === undefined || 
-                    (typeof currentValue === 'number' && (isNaN(currentValue) || !isFinite(currentValue)))) {
-                    continue;
-                }
                 
                 // Add segment start and end points (both at same Y value) - creates horizontal line
                 segments.push({
@@ -1616,6 +1650,10 @@
             marketOpen.setHours(openHour, openMin, 0, 0);
             const marketClose = new Date(chartDate);
             marketClose.setHours(closeHour, closeMin, 0, 0);
+            // When market close in local time is "next day" (e.g. 02:30 after midnight when open is 20:00), close is before open in wall-clock
+            if (marketClose.getTime() <= marketOpen.getTime()) {
+                marketClose.setDate(marketClose.getDate() + 1);
+            }
             
             // Filter labels and all data arrays
             const filteredLabels = [];
@@ -1693,6 +1731,9 @@
                     xAxisMin.setHours(openHour, openMin, 0, 0);
                     const xAxisMax = new Date(chartDate);
                     xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                    if (xAxisMax.getTime() <= xAxisMin.getTime()) {
+                        xAxisMax.setDate(xAxisMax.getDate() + 1);
+                    }
                     
                     await logToBackend('info', `[Chart] Setting x-axis for empty data: ${xAxisMin.toLocaleTimeString()} - ${xAxisMax.toLocaleTimeString()}`);
                     await logToBackend('info', `[Chart] X-axis min ISO: ${xAxisMin.toISOString()}, max ISO: ${xAxisMax.toISOString()}`);
@@ -1802,6 +1843,9 @@
                 xAxisMin.setHours(openHour, openMin, 0, 0);
                 const xAxisMax = new Date(chartDate);
                 xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                if (xAxisMax.getTime() <= xAxisMin.getTime()) {
+                    xAxisMax.setDate(xAxisMax.getDate() + 1);
+                }
                 
                 await logToBackend('info', `[Chart] Setting x-axis range: ${xAxisMin.toLocaleTimeString()} - ${xAxisMax.toLocaleTimeString()} (market hours) for date ${dateStr}`);
                 await logToBackend('info', `[Chart] X-axis min ISO: ${xAxisMin.toISOString()}, max ISO: ${xAxisMax.toISOString()}`);
@@ -1916,22 +1960,28 @@
                         let dataPoints;
                         
                         if (isSpot) {
-                            // Spot price: continuous line (normal behavior)
-                            dataPoints = optimizedData[endpoint]
+                            // Spot price: continuous line (allow 0; coerce from number, string, or object with value)
+                            const rawSpot = optimizedData[endpoint];
+                            dataPoints = rawSpot
                                 .map((value, idx) => {
-                                    // Skip NaN, null, undefined, or 0 values (should be filtered on backend, but double-check)
-                                    if (value === null || value === undefined || value === 0) {
-                                        return null;
-                                    }
-                                    if (typeof value === 'number' && (isNaN(value) || !isFinite(value))) {
-                                        return null;
-                                    }
+                                    if (value === null || value === undefined) return null;
+                                    let num;
+                                    if (typeof value === 'number') num = value;
+                                    else if (typeof value === 'string') num = Number(value);
+                                    else if (value && typeof value === 'object' && typeof value.value === 'number') num = value.value;
+                                    else if (value && typeof value === 'object' && !Array.isArray(value)) num = Number(value.value != null ? value.value : value.y != null ? value.y : value);
+                                    else num = Number(value);
+                                    if (typeof num !== 'number' || isNaN(num) || !isFinite(num)) return null;
                                     return {
                                         x: labelsToUse[idx],
-                                        y: value
+                                        y: num
                                     };
                                 })
                                 .filter(point => point !== null);
+                            if (dataPoints.length === 0 && rawSpot.length > 0) {
+                                const first = rawSpot[0];
+                                logToBackend('warn', `[Chart] spot first value type=${typeof first}, value=${first === null || first === undefined ? 'null' : (typeof first === 'object' ? JSON.stringify(first).slice(0, 80) : String(first))}`).catch(() => {});
+                            }
                         } else {
                             // Non-spot: horizontal segments (hold value until change)
                             dataPoints = createHorizontalSegments(labelsToUse, optimizedData[endpoint]);
@@ -2146,6 +2196,9 @@
                         xAxisMin.setHours(openHour, openMin, 0, 0);
                         const xAxisMax = new Date(chartDate);
                         xAxisMax.setHours(closeHour, closeMin, 0, 0);
+                        if (xAxisMax.getTime() <= xAxisMin.getTime()) {
+                            xAxisMax.setDate(xAxisMax.getDate() + 1);
+                        }
                         
                         // Reset X-axis to market hours
                         const xScale = chart.scales.x;

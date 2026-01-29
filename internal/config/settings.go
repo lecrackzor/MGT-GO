@@ -17,52 +17,52 @@ type Settings struct {
 
 	// API Key is loaded from environment variable GEXBOT_API_KEY first, then from config file
 	// Note: omitempty is removed so API key is always written when present
-	APITKey                        string                      `yaml:"api_key"`
-	APISubscriptionTiers           []string                    `yaml:"api_subscription_tiers"`
-	CollectAllEndpoints            bool                        `yaml:"collect_all_endpoints"` // true = collect all available data, false = chart data only
-	ActiveTickerRefreshRateMs      int                         `yaml:"active_ticker_refresh_rate_ms"`
-	DataCollectionRefreshRateMs    int                         `yaml:"data_collection_refresh_rate_ms"`
-	DataDirectory                  string                      `yaml:"data_directory"`
-	TrimDataStartTime              string                      `yaml:"trim_data_start_time"`
-	TrimDataEndTime                string                      `yaml:"trim_data_end_time"`
-	EnableDebug                    bool                        `yaml:"enable_debug"`
-	EnableLogging                  bool                        `yaml:"enable_logging"`
-	HideConsole                    bool                        `yaml:"hide_console"`
-	UseMarketTime                  bool                        `yaml:"use_market_time"` // Display times in ET instead of local time
-	HiddenPlots                    []string                    `yaml:"hidden_plots"`    // Plots hidden by default on charts
-	ShowCrosshair                  bool                        `yaml:"show_crosshair"`
-	ShowDialogWarnings             bool                        `yaml:"show_dialog_warnings"`
-	CrosshairColor                 string                      `yaml:"crosshair_color"`
-	CrosshairTextSize              int                         `yaml:"crosshair_text_size"`
-	CrosshairTextPlacement         string                      `yaml:"crosshair_text_placement"`
-	CrosshairBackgroundOpacity     int                         `yaml:"crosshair_background_opacity"`
-	CrosshairAxisMarkersEnabled    bool                        `yaml:"crosshair_axis_markers_enabled"`
-	CrosshairAxisMarkerSide        string                      `yaml:"crosshair_axis_marker_side"`
-	AlertDisplayTimeoutMs         int                         `yaml:"alert_display_timeout_ms"`
-	PriceColor                     string                      `yaml:"price_color"`
+	APITKey                            string                  `yaml:"api_key"`
+	APISubscriptionTiers               []string                `yaml:"api_subscription_tiers"`
+	CollectAllEndpoints                bool                    `yaml:"collect_all_endpoints"` // true = collect all available data, false = chart data only
+	ActiveTickerRefreshRateMs          int                     `yaml:"active_ticker_refresh_rate_ms"`
+	DataCollectionRefreshRateMs        int                     `yaml:"data_collection_refresh_rate_ms"`
+	DataDirectory                      string                  `yaml:"data_directory"`
+	TrimDataStartTime                  string                  `yaml:"trim_data_start_time"`
+	TrimDataEndTime                    string                  `yaml:"trim_data_end_time"`
+	EnableDebug                        bool                    `yaml:"enable_debug"`
+	EnableLogging                      bool                    `yaml:"enable_logging"`
+	HideConsole                        bool                    `yaml:"hide_console"`
+	UseMarketTime                      bool                    `yaml:"use_market_time"` // Display times in ET instead of local time
+	HiddenPlots                        []string                `yaml:"hidden_plots"`    // Plots hidden by default on charts
+	ShowCrosshair                      bool                    `yaml:"show_crosshair"`
+	ShowDialogWarnings                 bool                    `yaml:"show_dialog_warnings"`
+	CrosshairColor                     string                  `yaml:"crosshair_color"`
+	CrosshairTextSize                  int                     `yaml:"crosshair_text_size"`
+	CrosshairTextPlacement             string                  `yaml:"crosshair_text_placement"`
+	CrosshairBackgroundOpacity         int                     `yaml:"crosshair_background_opacity"`
+	CrosshairAxisMarkersEnabled        bool                    `yaml:"crosshair_axis_markers_enabled"`
+	CrosshairAxisMarkerSide            string                  `yaml:"crosshair_axis_marker_side"`
+	AlertDisplayTimeoutMs              int                     `yaml:"alert_display_timeout_ms"`
+	PriceColor                         string                  `yaml:"price_color"`
 	PriceFilterThresholdFuturesPercent float64                 `yaml:"price_filter_threshold_futures_percent"`
-	PriceFilterThresholdStocksPercent   float64                `yaml:"price_filter_threshold_stocks_percent"`
-	LegendOpacity                 int                         `yaml:"legend_opacity"`
-	LegendFontColor                string                      `yaml:"legend_font_color"`
-	LegendFontSize                 int                         `yaml:"legend_font_size"`
-	LegendBackgroundTransparent    bool                        `yaml:"legend_background_transparent"`
-	LegendBackgroundColor          string                      `yaml:"legend_background_color"`
-	PriceAxisLocation              string                      `yaml:"price_axis_location"`
-	ChartTimezone                  string                      `yaml:"chart_timezone"`
-	Alerts                         []interface{}               `yaml:"alerts"`
-	ProfileSettings                map[string]interface{}     `yaml:"profile_settings"`
-	Classic                        map[string]interface{}     `yaml:"classic"`
-	State                          map[string]interface{}     `yaml:"state"`
-	Orderflow                      map[string]interface{}     `yaml:"orderflow"`
-	Charts                         []interface{}               `yaml:"charts"`
-	Tickers                        []interface{}               `yaml:"tickers"`
-	TickerConfigs                  map[string]TickerConfig    `yaml:"ticker_configs"`
-	TickerOrder                    []string                    `yaml:"ticker_order,omitempty"` // User-defined ticker display order
-	ChartColors                    map[string]string           `yaml:"chart_colors"` // Color preferences for chart data series
-	ChartZoomFilterPercent         float64                    `yaml:"chart_zoom_filter_percent"` // Default Y-axis zoom filter as % of current spot price
-	AutoFollowBufferPercent        float64                    `yaml:"auto_follow_buffer_percent"` // Buffer percentage for auto-follow (default 10%)
-	WindowWidth                    int                         `yaml:"window_width,omitempty"`  // Last saved window width
-	WindowHeight                   int                         `yaml:"window_height,omitempty"` // Last saved window height
+	PriceFilterThresholdStocksPercent  float64                 `yaml:"price_filter_threshold_stocks_percent"`
+	LegendOpacity                      int                     `yaml:"legend_opacity"`
+	LegendFontColor                    string                  `yaml:"legend_font_color"`
+	LegendFontSize                     int                     `yaml:"legend_font_size"`
+	LegendBackgroundTransparent        bool                    `yaml:"legend_background_transparent"`
+	LegendBackgroundColor              string                  `yaml:"legend_background_color"`
+	PriceAxisLocation                  string                  `yaml:"price_axis_location"`
+	ChartTimezone                      string                  `yaml:"chart_timezone"`
+	Alerts                             []interface{}           `yaml:"alerts"`
+	ProfileSettings                    map[string]interface{}  `yaml:"profile_settings"`
+	Classic                            map[string]interface{}  `yaml:"classic"`
+	State                              map[string]interface{}  `yaml:"state"`
+	Orderflow                          map[string]interface{}  `yaml:"orderflow"`
+	Charts                             []interface{}           `yaml:"charts"`
+	Tickers                            []interface{}           `yaml:"tickers"`
+	TickerConfigs                      map[string]TickerConfig `yaml:"ticker_configs"`
+	TickerOrder                        []string                `yaml:"ticker_order,omitempty"`     // User-defined ticker display order
+	ChartColors                        map[string]string       `yaml:"chart_colors"`               // Color preferences for chart data series
+	ChartZoomFilterPercent             float64                 `yaml:"chart_zoom_filter_percent"`  // Default Y-axis zoom filter as % of current spot price
+	AutoFollowBufferPercent            float64                 `yaml:"auto_follow_buffer_percent"` // Buffer percentage for auto-follow (default 10%)
+	WindowWidth                        int                     `yaml:"window_width,omitempty"`     // Last saved window width
+	WindowHeight                       int                     `yaml:"window_height,omitempty"`    // Last saved window height
 }
 
 // SettingsManager manages loading and saving settings
@@ -81,7 +81,7 @@ func GetConfigDir() (string, error) {
 	return filepath.Join(configDir, ConfigDirName), nil
 }
 
-// GetConfigPath returns the full path to the config file
+// GetConfigPath returns the full path to the config file (canonical: UserConfigDir/market-terminal/config.yaml)
 func GetConfigPath() (string, error) {
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -90,16 +90,33 @@ func GetConfigPath() (string, error) {
 	return filepath.Join(configDir, ConfigFileName), nil
 }
 
-// NewSettingsManager creates a new settings manager
-// If configFile is empty, uses default user config directory
+// getCanonicalConfigPath returns the single canonical config path. Never uses current directory
+// to avoid duplicate configs when the app is run from different folders.
+func getCanonicalConfigPath() string {
+	path, err := GetConfigPath()
+	if err == nil {
+		return path
+	}
+	// Fallback: same directory as executable, then market-terminal/config.yaml
+	exe, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exe)
+		return filepath.Join(exeDir, ConfigDirName, ConfigFileName)
+	}
+	// Last resort: temp dir (avoid cwd so we never create config.yaml in random folders)
+	dir := os.TempDir()
+	return filepath.Join(dir, ConfigDirName, ConfigFileName)
+}
+
+// NewSettingsManager creates a new settings manager.
+// If configFile is empty, uses the canonical path only (never current directory) to prevent duplicate configs.
 func NewSettingsManager(configFile string) *SettingsManager {
 	if configFile == "" {
-		// Use default config path
-		if path, err := GetConfigPath(); err == nil {
-			configFile = path
-		} else {
-			// Fallback to current directory
-			configFile = ConfigFileName
+		configFile = getCanonicalConfigPath()
+	} else {
+		// Resolve to absolute path so we always use one canonical location
+		if abs, err := filepath.Abs(configFile); err == nil {
+			configFile = abs
 		}
 	}
 
@@ -109,11 +126,73 @@ func NewSettingsManager(configFile string) *SettingsManager {
 	}
 }
 
+// knownAlternateConfigPaths returns paths where a duplicate config might exist (cwd, exe dir)
+func knownAlternateConfigPaths() []string {
+	var out []string
+	if cwd, err := os.Getwd(); err == nil {
+		out = append(out, filepath.Join(cwd, ConfigFileName))
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		out = append(out, filepath.Join(exeDir, ConfigFileName))
+		out = append(out, filepath.Join(exeDir, ConfigDirName, ConfigFileName))
+	}
+	return out
+}
+
+// detectAndMigrateDuplicateConfig checks for config in alternate locations; if canonical doesn't exist
+// but a duplicate does, copies duplicate into canonical and logs. Ensures only one config is used.
+func (sm *SettingsManager) detectAndMigrateDuplicateConfig() {
+	canonicalAbs, err := filepath.Abs(sm.configFile)
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(canonicalAbs); err == nil {
+		// Canonical exists; just warn if duplicates exist
+		for _, alt := range knownAlternateConfigPaths() {
+			altAbs, _ := filepath.Abs(alt)
+			if altAbs != canonicalAbs {
+				if _, err := os.Stat(alt); err == nil {
+					log.Printf("Config: duplicate config file found at %s; app uses canonical config at %s. Consider removing the duplicate to avoid confusion.", alt, canonicalAbs)
+				}
+			}
+		}
+		return
+	}
+	// Canonical doesn't exist; migrate from first duplicate found
+	for _, alt := range knownAlternateConfigPaths() {
+		altAbs, _ := filepath.Abs(alt)
+		if altAbs == canonicalAbs {
+			continue
+		}
+		if _, err := os.Stat(alt); err != nil {
+			continue
+		}
+		data, err := os.ReadFile(alt)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Dir(canonicalAbs)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			continue
+		}
+		if err := os.WriteFile(canonicalAbs, data, 0644); err != nil {
+			continue
+		}
+		log.Printf("Config: migrated config from duplicate at %s to canonical %s. You can remove the duplicate.", alt, canonicalAbs)
+		sm.configFile = canonicalAbs
+		return
+	}
+}
+
 // LoadSettings loads settings from file
 // API key is loaded from environment variable GEXBOT_API_KEY first, then from config file
 func (sm *SettingsManager) LoadSettings() (*Settings, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+
+	// Protect against duplicate configs: use only canonical path and migrate if duplicate found
+	sm.detectAndMigrateDuplicateConfig()
 
 	// Check if config file exists
 	if _, err := os.Stat(sm.configFile); os.IsNotExist(err) {
@@ -195,9 +274,9 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 
 	// Create a copy for saving
 	saveSettings := *settings
-	
+
 	log.Printf("SaveSettingsWithOptions: Input settings API key length: %d, saveAPIKey: %v", len(settings.APITKey), saveAPIKey)
-	
+
 	if !saveAPIKey {
 		// For normal saves, preserve existing API key from file if it exists
 		// This prevents wiping the API key when user changes other settings
@@ -230,7 +309,7 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 			log.Printf("SaveSettingsWithOptions: Saving API key to file (length: %d)", len(saveSettings.APITKey))
 		}
 	}
-	
+
 	log.Printf("SaveSettingsWithOptions: Final saveSettings API key length: %d", len(saveSettings.APITKey))
 
 	// Marshal to YAML
@@ -238,7 +317,7 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
-	
+
 	// Verify API key is in the marshaled data
 	if saveSettings.APITKey != "" {
 		// Check if API key appears in YAML string with a non-empty value
@@ -246,7 +325,7 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 		// Check for both "api_key:" and that it's not just "api_key: \"\""
 		hasApiKeyField := strings.Contains(dataStr, "api_key:")
 		hasEmptyApiKey := strings.Contains(dataStr, "api_key: \"\"") || strings.Contains(dataStr, "api_key: ''")
-		
+
 		if !hasApiKeyField || (hasApiKeyField && hasEmptyApiKey && saveAPIKey) {
 			log.Printf("WARNING: API key not found or empty in marshaled YAML data! Forcing inclusion.")
 			// Force include API key by creating a map and marshaling
@@ -299,13 +378,13 @@ func (sm *SettingsManager) GetConfigPath() string {
 func (sm *SettingsManager) SetSettings(settings *Settings) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	// Preserve API key if new settings don't have one
 	if settings.APITKey == "" && sm.settings != nil && sm.settings.APITKey != "" {
 		settings.APITKey = sm.settings.APITKey
 		log.Printf("SetSettings: Preserved existing API key (length: %d)", len(settings.APITKey))
 	}
-	
+
 	sm.settings = settings
 }
 
@@ -341,23 +420,23 @@ func (sm *SettingsManager) SaveWindowDimensions(width, height int) error {
 			}
 			settingsToSave.WindowWidth = width
 			settingsToSave.WindowHeight = height
-			
+
 			// Ensure config directory exists
 			configDir := filepath.Dir(sm.configFile)
 			if err := os.MkdirAll(configDir, 0755); err != nil {
 				return fmt.Errorf("failed to create config directory: %w", err)
 			}
-			
+
 			// Write new config file
 			data, err := yaml.Marshal(settingsToSave)
 			if err != nil {
 				return fmt.Errorf("failed to marshal settings: %w", err)
 			}
-			
+
 			if err := os.WriteFile(sm.configFile, data, 0644); err != nil {
 				return fmt.Errorf("failed to write config file: %w", err)
 			}
-			
+
 			log.Printf("Window dimensions saved to new config file: %dx%d", width, height)
 			return nil
 		}
@@ -396,91 +475,91 @@ func GetDefaultSettings() *Settings {
 // getDefaultSettings returns default settings
 func getDefaultSettings() *Settings {
 	return &Settings{
-		APITKey:                        "", // Loaded from environment variable
-		APISubscriptionTiers:           []string{"classic"},
-		CollectAllEndpoints:            true, // Default to collecting all available data
-		ActiveTickerRefreshRateMs:      5000,
-		DataCollectionRefreshRateMs:    30000,
-		DataDirectory:                  "Tickers",
-		TrimDataStartTime:              "09:33",
-		TrimDataEndTime:                "16:00",
-		EnableDebug:                    false,
-		EnableLogging:                  true,
-		HideConsole:                    true,
-		UseMarketTime:                  false, // Default to local time
-		HiddenPlots:                    []string{}, // No plots hidden by default
-		ShowCrosshair:                  true,
-		ShowDialogWarnings:             true,
-		CrosshairColor:                 "808080",
-		CrosshairTextSize:              12,
-		CrosshairTextPlacement:         "top_center",
-		CrosshairBackgroundOpacity:     180,
-		CrosshairAxisMarkersEnabled:     true,
-		CrosshairAxisMarkerSide:        "right",
-		AlertDisplayTimeoutMs:          60000,
-		PriceColor:                     "ffffff",
+		APITKey:                            "", // Loaded from environment variable
+		APISubscriptionTiers:               []string{"classic"},
+		CollectAllEndpoints:                true, // Default to collecting all available data
+		ActiveTickerRefreshRateMs:          5000,
+		DataCollectionRefreshRateMs:        30000,
+		DataDirectory:                      "Tickers",
+		TrimDataStartTime:                  "09:33",
+		TrimDataEndTime:                    "16:00",
+		EnableDebug:                        false,
+		EnableLogging:                      true,
+		HideConsole:                        true,
+		UseMarketTime:                      false,      // Default to local time
+		HiddenPlots:                        []string{}, // No plots hidden by default
+		ShowCrosshair:                      true,
+		ShowDialogWarnings:                 true,
+		CrosshairColor:                     "808080",
+		CrosshairTextSize:                  12,
+		CrosshairTextPlacement:             "top_center",
+		CrosshairBackgroundOpacity:         180,
+		CrosshairAxisMarkersEnabled:        true,
+		CrosshairAxisMarkerSide:            "right",
+		AlertDisplayTimeoutMs:              60000,
+		PriceColor:                         "ffffff",
 		PriceFilterThresholdFuturesPercent: 3.0,
-		PriceFilterThresholdStocksPercent:   7.0,
-		LegendOpacity:                  100,
-		LegendFontColor:                "ffffff",
-		LegendFontSize:                 12,
-		LegendBackgroundTransparent:    true,
-		LegendBackgroundColor:         "000000",
-		PriceAxisLocation:              "left",
-		ChartTimezone:                  "market",
-		ChartZoomFilterPercent:         1.0, // Default 1% of current spot price
-		AutoFollowBufferPercent:        1.0, // Default 1% buffer on the right
-		Alerts:                         []interface{}{},
+		PriceFilterThresholdStocksPercent:  7.0,
+		LegendOpacity:                      100,
+		LegendFontColor:                    "ffffff",
+		LegendFontSize:                     12,
+		LegendBackgroundTransparent:        true,
+		LegendBackgroundColor:              "000000",
+		PriceAxisLocation:                  "left",
+		ChartTimezone:                      "market",
+		ChartZoomFilterPercent:             1.0, // Default 1% of current spot price
+		AutoFollowBufferPercent:            1.0, // Default 1% buffer on the right
+		Alerts:                             []interface{}{},
 		ProfileSettings: map[string]interface{}{
-			"center_x":           0.5,
-			"bar_width_percent": 30.0,
-			"bar_direction":     "both",
-			"show_priors":       true,
+			"center_x":             0.5,
+			"bar_width_percent":    30.0,
+			"bar_direction":        "both",
+			"show_priors":          true,
 			"show_reference_lines": true,
 		},
 		Classic: map[string]interface{}{
 			"colors": map[string]interface{}{
-				"zero_gamma":                        "fcb103",
-				"pos_gamma":                         "00ff00",
-				"neg_gamma":                         "ff0000",
-				"major_pos_oi":                      "00942a",
-				"major_neg_oi":                      "b10000",
-				"classic_zero_majors_zero_gamma":    "fcb103",
-				"classic_one_majors_zero_gamma":     "fcb103",
-				"classic_full_majors_zero_gamma":    "fcb103",
+				"zero_gamma":                     "fcb103",
+				"pos_gamma":                      "00ff00",
+				"neg_gamma":                      "ff0000",
+				"major_pos_oi":                   "00942a",
+				"major_neg_oi":                   "b10000",
+				"classic_zero_majors_zero_gamma": "fcb103",
+				"classic_one_majors_zero_gamma":  "fcb103",
+				"classic_full_majors_zero_gamma": "fcb103",
 			},
 			"symbols": map[string]interface{}{},
 		},
 		State: map[string]interface{}{
 			"colors": map[string]interface{}{
-				"long_gamma":                        "00ffff",
-				"short_gamma":                       "ae4ad5",
-				"major_positive":                    "00ff00",
-				"major_negative":                    "ff0000",
-				"state_zero_majors_mpos_vol":        "00ff80",
-				"state_zero_majors_mneg_vol":        "ff0080",
-				"state_one_majors_mpos_vol":         "00ffa0",
-				"state_one_majors_mneg_vol":         "00ffa0",
-				"state_full_majors_mpos_vol":        "00ffc0",
-				"state_full_majors_mneg_vol":        "ff00c0",
+				"long_gamma":                 "00ffff",
+				"short_gamma":                "ae4ad5",
+				"major_positive":             "00ff00",
+				"major_negative":             "ff0000",
+				"state_zero_majors_mpos_vol": "00ff80",
+				"state_zero_majors_mneg_vol": "ff0080",
+				"state_one_majors_mpos_vol":  "00ffa0",
+				"state_one_majors_mneg_vol":  "00ffa0",
+				"state_full_majors_mpos_vol": "00ffc0",
+				"state_full_majors_mneg_vol": "ff00c0",
 			},
 			"symbols": map[string]interface{}{},
 		},
 		Orderflow: map[string]interface{}{
 			"colors": map[string]interface{}{
-				"delta":                             "00ffff",
-				"volume":                            "808080",
-				"orderflow_zero_majors_delta":      "00ff80",
-				"orderflow_zero_majors_volume":     "808080",
-				"orderflow_one_majors_delta":       "00ffa0",
-				"orderflow_one_majors_volume":      "808080",
-				"orderflow_full_majors_delta":      "00ffc0",
-				"orderflow_full_majors_volume":     "808080",
+				"delta":                        "00ffff",
+				"volume":                       "808080",
+				"orderflow_zero_majors_delta":  "00ff80",
+				"orderflow_zero_majors_volume": "808080",
+				"orderflow_one_majors_delta":   "00ffa0",
+				"orderflow_one_majors_volume":  "808080",
+				"orderflow_full_majors_delta":  "00ffc0",
+				"orderflow_full_majors_volume": "808080",
 			},
 			"symbols": map[string]interface{}{},
 		},
-		Charts:      []interface{}{},
-		Tickers:     []interface{}{},
+		Charts:        []interface{}{},
+		Tickers:       []interface{}{},
 		TickerConfigs: make(map[string]TickerConfig),
 		ChartColors: map[string]string{
 			"spot":              "#4CAF50",
