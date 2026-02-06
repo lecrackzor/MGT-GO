@@ -1,0 +1,49 @@
+---
+sidebar_label: 'Basic example'
+hide_table_of_contents: false
+---
+
+# Basic React example
+
+This example demonstrates how to embed Lightweight Charts™ in a React component. Use it as a starting point and adapt it to your needs by adding properties or additional functionality.
+
+## Prepare your project
+
+Clone the [Parcel starter kit](https://github.com/brandiqa/react-parcel-starter) and install dependencies to set up a project. You can use any other tool or starter kit that fits your requirements.
+
+```console
+git clone git@github.com:brandiqa/react-parcel-starter.git lwc-react
+cd lwc-react
+npm install
+```
+
+## Create a charting component
+
+The code below defines a React component that renders a chart with an [area series](/docs/series-types#area). You can change the [series type](/docs/series-types) to any other, such as candlestick or line.
+
+:::info
+
+In this example, chart colors are specified with props depending on the current theme (light or dark). In a real application, consider using [Context](https://react.dev/learn/passing-data-deeply-with-context) instead.
+
+:::
+
+import { ThemedChart } from '@site/src/components/tutorials/themed-chart-colors-wrapper';
+import CodeBlock from '@theme/CodeBlock';
+import code from '!!raw-loader!@site/src/components/tutorials/simple-react-example';
+
+<CodeBlock replaceThemeConstants className="language-jsx">{code}</CodeBlock>
+
+## Result
+
+Execute the `npm start` command in the `lwc-react` folder to run the project locally. Then open `http://localhost:1234` in your web browser to see the result.
+
+import { App } from '@site/src/components/tutorials/simple-react-example';
+import styles from '@site/src/pages/chart.module.css';
+
+<div className={styles.ChartContainer}>
+    <ThemedChart ChartComponent={App}/>
+</div>
+
+## What's next?
+
+As a next step, consider the [advanced example](./advanced), which shows how to embed Lightweight Charts™ into a component having child components.

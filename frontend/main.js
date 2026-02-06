@@ -217,6 +217,7 @@ function getDefaultSettings() {
         APISubscriptionTiers: ['classic'],
         TickerConfigs: {},
         UseMarketTime: false,
+        Use24HourTime: true,
         EnableLogging: true,
         HiddenPlots: [],
         ChartColors: {
@@ -1315,6 +1316,13 @@ function loadGeneralSettings(settings) {
             console.log('[General Settings] UseMarketTime:', useMarketTimeCheckbox.checked);
         }
         
+        // Use24HourTime
+        const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
+        if (use24HourTimeCheckbox) {
+            use24HourTimeCheckbox.checked = settings.Use24HourTime !== false;
+            console.log('[General Settings] Use24HourTime:', use24HourTimeCheckbox.checked);
+        }
+        
         // EnableLogging
         const enableLoggingCheckbox = document.getElementById('enable-logging');
         if (enableLoggingCheckbox) {
@@ -1386,6 +1394,11 @@ function saveGeneralSettings(settings) {
         settings.UseMarketTime = useMarketTimeCheckbox.checked;
     }
     
+    const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
+    if (use24HourTimeCheckbox) {
+        settings.Use24HourTime = use24HourTimeCheckbox.checked;
+    }
+    
     const enableLoggingCheckbox = document.getElementById('enable-logging');
     if (enableLoggingCheckbox) {
         settings.EnableLogging = enableLoggingCheckbox.checked;
@@ -1421,6 +1434,7 @@ function saveGeneralSettings(settings) {
     }
     console.log('[General Settings] Saved:', {
         UseMarketTime: settings.UseMarketTime,
+        Use24HourTime: settings.Use24HourTime,
         EnableLogging: settings.EnableLogging,
         HideConsole: settings.HideConsole,
         ChartZoomFilterPercent: settings.ChartZoomFilterPercent,
@@ -1853,6 +1867,13 @@ async function saveSettings() {
         const dataDirInput = document.getElementById('data-dir');
         if (dataDirInput) {
             settings.DataDirectory = dataDirInput.value || 'Tickers';
+        }
+        
+        // If user entered a new API key in the settings form, include it so it is saved and poller uses it
+        const apiKeyInput = document.getElementById('api-key');
+        if (apiKeyInput && apiKeyInput.value.trim() !== '') {
+            settings.APITKey = apiKeyInput.value.trim();
+            console.log('[Save Settings] New API key provided (length:', settings.APITKey.length, ')');
         }
         
         // Save subscription tiers - read checkboxes carefully

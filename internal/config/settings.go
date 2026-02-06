@@ -28,8 +28,9 @@ type Settings struct {
 	EnableDebug                        bool                    `yaml:"enable_debug"`
 	EnableLogging                      bool                    `yaml:"enable_logging"`
 	HideConsole                        bool                    `yaml:"hide_console"`
-	UseMarketTime                      bool                    `yaml:"use_market_time"` // Display times in ET instead of local time
-	HiddenPlots                        []string                `yaml:"hidden_plots"`    // Plots hidden by default on charts
+	UseMarketTime                      bool                    `yaml:"use_market_time"`  // Display times in ET instead of local time
+	Use24HourTime                      bool                    `yaml:"use_24_hour_time"` // Chart times: true = 24-hour (14:30), false = 12-hour AM/PM (2:30 PM)
+	HiddenPlots                        []string                `yaml:"hidden_plots"`     // Plots hidden by default on charts
 	ShowCrosshair                      bool                    `yaml:"show_crosshair"`
 	ShowDialogWarnings                 bool                    `yaml:"show_dialog_warnings"`
 	CrosshairColor                     string                  `yaml:"crosshair_color"`
@@ -487,6 +488,7 @@ func getDefaultSettings() *Settings {
 		EnableLogging:                      true,
 		HideConsole:                        true,
 		UseMarketTime:                      false,      // Default to local time
+		Use24HourTime:                      true,       // Default to 24-hour chart times
 		HiddenPlots:                        []string{}, // No plots hidden by default
 		ShowCrosshair:                      true,
 		ShowDialogWarnings:                 true,

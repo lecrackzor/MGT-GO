@@ -61,16 +61,22 @@ func NewDataLoader(settings *config.Settings, debugPrint func(string, string)) *
 	}
 }
 
-// LoadChartData loads only the columns needed for chart display
+// LoadChartData loads only the columns needed for chart display.
+// It is READ-ONLY: opens the database with read-only connection and never writes.
+// Chart data requests do not modify the database file.
 // CRITICAL: Skips profiles_blob to prevent massive memory usage (28GB+ issue)
 // Loads: timestamp, spot, zero_gamma, major_pos_vol, major_neg_vol, major_long_gamma, major_short_gamma,
 //        major_positive, major_negative, major_pos_oi, major_neg_oi
 // Does NOT use query cache (chart data changes frequently)
-func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int) (map[string][]interface{}, error) {
+// If since is non-nil, only rows with timestamp > since are returned (incremental load).
+func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int, since *float64) (map[string][]interface{}, error) {
 	dateStr := date.Format("2006-01-02")
-	
+	incStr := "full"
+	if since != nil {
+		incStr = fmt.Sprintf("incremental since=%v", *since)
+	}
+	dl.debugPrint(fmt.Sprintf("LoadChartData: [START] Loading chart data for %s on %s (maxRows=%d, %s)", ticker, dateStr, maxRows, incStr), "loader")
 	dbPath := dl.getDBPath(ticker, date)
-	dl.debugPrint(fmt.Sprintf("LoadChartData: [START] Loading chart data for %s on %s (maxRows=%d)", ticker, dateStr, maxRows), "loader")
 	dl.debugPrint(fmt.Sprintf("LoadChartData: Checking database path for %s on %s: %s", ticker, dateStr, dbPath), "loader")
 
 	// Check if file exists - return empty data if it doesn't
@@ -150,11 +156,16 @@ func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int) 
 	// Build SELECT statement with only existing required columns
 	// NOTE: Embed limit directly in query string (modernc.org/sqlite may not handle LIMIT ? correctly)
 	selectCols := strings.Join(existingRequiredColumns, ", ")
-	query := fmt.Sprintf("SELECT %s FROM ticker_data ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
-	dl.debugPrint(fmt.Sprintf("LoadChartData: Executing query for %s: %s", ticker, query), "loader")
-
-	// Query data with row limit (embedded in query string)
-	rows, err := db.Query(query)
+	var rows *sql.Rows
+	if since != nil {
+		query := fmt.Sprintf("SELECT %s FROM ticker_data WHERE timestamp > ? ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
+		dl.debugPrint(fmt.Sprintf("LoadChartData: Executing incremental query for %s: timestamp > %v", ticker, *since), "loader")
+		rows, err = db.Query(query, *since)
+	} else {
+		query := fmt.Sprintf("SELECT %s FROM ticker_data ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
+		dl.debugPrint(fmt.Sprintf("LoadChartData: Executing query for %s: %s", ticker, query), "loader")
+		rows, err = db.Query(query)
+	}
 	if err != nil {
 		dl.debugPrint(fmt.Sprintf("LoadChartData: Query failed for %s: %v", ticker, err), "error")
 		// Check if table exists

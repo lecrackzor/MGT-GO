@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -660,15 +661,19 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 			ticker, config.CollectionEnabled, config.Display, config.Priority, refreshRateStr), "app")
 	}
 
-	// Preserve existing API key (frontend shouldn't send it for security)
+	// Preserve existing API key when frontend doesn't send one (e.g. user didn't change it)
 	currentSettings := a.settingsManager.GetSettings()
 	if settings.APITKey == "" && currentSettings.APITKey != "" {
 		settings.APITKey = currentSettings.APITKey
 		a.debugPrint(fmt.Sprintf("SaveSettings: Preserved existing API key (length: %d)", len(settings.APITKey)), "app")
 	}
 
-	// Save settings (API key will NOT be saved to file - only in memory)
-	if err := a.settingsManager.SaveSettings(settings); err != nil {
+	// When user provided a new API key, persist it to file and use saveAPIKey=true so poller and all consumers get it
+	saveAPIKey := settings.APITKey != "" && settings.APITKey != currentSettings.APITKey
+	if saveAPIKey {
+		a.debugPrint(fmt.Sprintf("SaveSettings: New API key provided (length: %d), will save to file and update runtime", len(settings.APITKey)), "app")
+	}
+	if err := a.settingsManager.SaveSettingsWithOptions(settings, saveAPIKey); err != nil {
 		a.debugPrint(fmt.Sprintf("ERROR: SaveSettings failed: %v", err), "error")
 		return err
 	}
@@ -679,13 +684,34 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 	reloadedSettings, err := a.settingsManager.LoadSettings()
 	if err != nil {
 		a.debugPrint(fmt.Sprintf("WARNING: Failed to reload settings after save: %v", err), "error")
+		// Still apply new API key to runtime so poller uses it even if reload failed
+		if saveAPIKey && settings.APITKey != "" {
+			if a.apiClient != nil {
+				a.apiClient.SetAPIKey(settings.APITKey)
+			}
+			if a.querySystem != nil {
+				a.querySystem.SetAPIKey(settings.APITKey)
+			}
+			a.debugPrint(fmt.Sprintf("SaveSettings: Updated API key in apiClient/querySystem after reload failure (length: %d)", len(settings.APITKey)), "app")
+		}
 	} else {
-		// Preserve API key in reloaded settings (it won't be in file, but should be in memory)
+		// Preserve API key in reloaded settings when it wasn't written to file (normal save)
 		if reloadedSettings.APITKey == "" && settings.APITKey != "" {
 			reloadedSettings.APITKey = settings.APITKey
 			a.debugPrint(fmt.Sprintf("SaveSettings: Restored API key in reloaded settings (length: %d)", len(reloadedSettings.APITKey)), "app")
 		}
 		a.settingsManager.SetSettings(reloadedSettings)
+
+		// Ensure API client and query system (poller, etc.) use current API key so new key takes effect without restart
+		if reloadedSettings.APITKey != "" {
+			if a.apiClient != nil {
+				a.apiClient.SetAPIKey(reloadedSettings.APITKey)
+			}
+			if a.querySystem != nil {
+				a.querySystem.SetAPIKey(reloadedSettings.APITKey)
+			}
+			a.debugPrint(fmt.Sprintf("SaveSettings: Updated API key in apiClient and querySystem (length: %d)", len(reloadedSettings.APITKey)), "app")
+		}
 
 		// Update scheduler settings so it sees new priorities and refresh rates
 		if a.scheduler != nil {
@@ -921,11 +947,12 @@ func filterChartData(data map[string][]interface{}) map[string][]interface{} {
 	return filtered
 }
 
-// GetChartData serves chart data for chart windows
-// Loads data with limits and filters to reduce memory usage
+// GetChartData serves chart data for chart windows.
+// READ-ONLY: Only reads from the database via LoadChartData (read-only connection). Never writes to the database.
 // ticker: Ticker symbol
 // dateStr: Date in format "2006-01-02" (YYYY-MM-DD)
-func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{}, error) {
+// sinceStr: Optional; if non-empty, only rows with timestamp > sinceStr (Unix seconds, float) are returned (incremental load)
+func (a *App) GetChartData(ticker string, dateStr string, sinceStr string) (map[string]interface{}, error) {
 	// Log memory usage before loading data
 	var mBefore runtime.MemStats
 	runtime.ReadMemStats(&mBefore)
@@ -947,11 +974,20 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 
 	const maxRows = 30000 // Maximum rows to load (full trading day at 1s = ~23,400)
 
-	a.debugPrint(fmt.Sprintf("GetChartData: Loading chart data for %s on %s (max %d rows, skipping profiles)", ticker, dateStr, maxRows), "app")
+	var since *float64
+	if sinceStr != "" {
+		if v, errParse := strconv.ParseFloat(strings.TrimSpace(sinceStr), 64); errParse == nil {
+			since = &v
+			a.debugPrint(fmt.Sprintf("GetChartData: Incremental load for %s on %s (since=%v)", ticker, dateStr, v), "app")
+		}
+	}
+	if since == nil {
+		a.debugPrint(fmt.Sprintf("GetChartData: Loading chart data for %s on %s (max %d rows, skipping profiles)", ticker, dateStr, maxRows), "app")
+	}
 
 	// Load chart data (only required columns, no profiles_blob)
 	// This prevents massive memory usage from decompressing profiles
-	data, err := a.dataLoader.LoadChartData(ticker, date, maxRows)
+	data, err := a.dataLoader.LoadChartData(ticker, date, maxRows, since)
 	if err != nil {
 		a.debugPrint(fmt.Sprintf("GetChartData: Error loading data for %s: %v", ticker, err), "error")
 		return nil, err
@@ -995,6 +1031,9 @@ func (a *App) GetChartData(ticker string, dateStr string) (map[string]interface{
 		} else {
 			result[field] = []interface{}{}
 		}
+	}
+	if since != nil {
+		result["incremental"] = true
 	}
 
 	// Log filtering results

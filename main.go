@@ -157,12 +157,13 @@ func main() {
 			if len(parts) >= 2 {
 				ticker := parts[0]
 				dateStr := parts[1]
+				sinceStr := r.URL.Query().Get("since")
 
-				utils.Logf("[HTTP] Parsed ticker=%s, date=%s", ticker, dateStr)
+				utils.Logf("[HTTP] Parsed ticker=%s, date=%s, since=%s", ticker, dateStr, sinceStr)
 
-				// Call GetChartData method
+				// Call GetChartData method (since optional for incremental load)
 				utils.Logf("[HTTP] Calling GetChartData for %s on %s", ticker, dateStr)
-				data, err := appInstance.GetChartData(ticker, dateStr)
+				data, err := appInstance.GetChartData(ticker, dateStr, sinceStr)
 				if err != nil {
 					utils.Logf("[HTTP] ERROR: GetChartData failed for %s: %v", ticker, err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)

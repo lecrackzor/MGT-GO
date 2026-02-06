@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.composite.base.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"types": ["node"]
+	},
+	"references": [
+		{ "path": "../../src/tsconfig.composite.json" }
+	],
+	"include": [
+		"./**/*.ts"
+	]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "go",
+  "version": "1.0.0",
+  "description": "<div align=\"center\">\r   <img src=\"MGT.png\" alt=\"Market Terminal Gexbot Screenshot\">\r </div>",
+  "main": "runtime-debug.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lecrackzor/MGT-GO.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/lecrackzor/MGT-GO/issues"
+  },
+  "homepage": "https://github.com/lecrackzor/MGT-GO#readme",
+  "devDependencies": {
+    "lightweight-charts": "^5.1.0"
+  }
+}

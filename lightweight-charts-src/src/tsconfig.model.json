@@ -1,0 +1,12 @@
+{
+	"extends": "../tsconfig.composite.base.json",
+	"references": [
+		{ "path": "./formatters/tsconfig.composite.json" },
+		{ "path": "./helpers/tsconfig.composite.json" }
+	],
+	"include": [
+		"./model/**/*.ts",
+		"./renderers/**/*.ts",
+		"./views/**/*.ts"
+	]
+}

@@ -1,0 +1,238 @@
+---
+sidebar_label: 'Advanced example'
+hide_table_of_contents: false
+---
+
+# Advanced React example
+
+This example demonstrates how to integrate Lightweight Charts™ with React. Unlike the [basic example](./simple), which uses a single component, this one shows how to split the library API across multiple components.
+
+:::tip
+
+This guide assumes that you are familiar with Lightweight Charts™. You should know how to set up a project and create a chart.
+We also recommend that you consider the [basic React example](./simple) first.
+
+:::
+
+## Component-based architecture
+
+In Lightweight Charts™, a chart is a container that stores one or more [series](/docs/series-types).
+Each series has its own options, such as [`AreaStyleOptions`](/docs/api/interfaces/AreaStyleOptions) and [`LineStyleOptions`](/docs/api/interfaces/LineStyleOptions).
+
+In your React application, you can create a _Chart_ component that has _Series_ child components. Each _Series_ could also have its own children, and so on.
+The pseudocode below shows a potential application structure:
+
+```
+<Chart component>
+    <Series component 1>
+        <Child component />
+    </Series component 1>
+
+    {/* ... */}
+
+    <Series component N>
+        <Child component />
+    </Series component N>
+</Chart component>
+```
+
+The components should interact with each other, for example, when more data is loaded to the series or the chart is resized.
+To implement this interaction, use [hooks](https://react.dev/reference/react/hooks) and [composition](https://reactjs.org/docs/composition-vs-inheritance.html).
+
+One drawback of hooks, such as [`useEffect`](https://react.dev/reference/react/hooks#effect-hooks), in a parent–child setup is that hooks run in a bottom-up order during instantiation, but in a top-down order during cleanup.
+The following skeleton illustrates the mechanism.
+
+```js
+import React, { useEffect } from 'react';
+
+export const ParentComponent = () => {
+    // This effect will be triggered in position 3
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 1
+        }
+    , []);
+
+    // This effect will be triggered in position 4
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 2
+        }
+    , []);
+
+    // All props and internal references will be passed down to the children
+    return (
+        <ChildComponent />
+    );
+};
+ParentComponent.displayName = 'ParentComponent';
+
+export const ChildComponent = () => {
+    // This effect will be triggered in position 1
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 3
+        }
+    , []);
+
+    // This effect will be triggered in position 2
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 4
+        }
+    , []);
+
+    return (
+        <div />
+    );
+};
+ChildComponent.displayName = 'ChildComponent';
+```
+
+In the example above, the `ChildComponent` (_Series_) may be created before the `ParentComponent` (_Chart_), which can lead to unexpected behavior.
+To prevent this, you should use hooks with [refs](https://react.dev/learn/manipulating-the-dom-with-refs) that allow a parent to share internal references or properties directly with its children.
+
+Considering using refs, the component structure and usage remain the same, but under the hood it works as follows:
+
+```
+<Chart component>
+    <ChartContainer>
+        <Series component 1>
+            <Child component />
+        </Series component 1>
+
+        {/* ... */}
+
+        <Series component N>
+            <Child component />
+        </Series component N>
+    <ChartContainer>
+</Chart component>
+```
+
+In this structure, `ChartContainer` is required to provide a DOM element where the chart will be rendered. `ChartContainer` also creates a reference that stores functions to manage the chart's lifecycle. This reference is then passed down to each _Series_.
+
+The _Series_ component uses the same approach to manage the lifecycle of a series: creating, adding data, and cleaning it up.
+
+Both of these components can expose functions from their internal reference objects at a higher level.
+Therefore, any other component can interact with the chart or any series directly.
+
+The application skeleton is shown below:
+
+```js
+import React, { useEffect, useImperativeHandle, useRef, createContext, forwardRef } from 'react';
+
+const Context = createContext();
+
+export const MainComponent = props =>
+    // Creates the first reference and instantiates a ParentComponent
+    (
+        <div ref={chartReference}>
+            <ParentComponent {...props} container={container} />
+        </div>
+    );
+
+export const ParentComponent = forwardRef((props, ref) => {
+    const internalRef = useRef({
+        method1() {
+            // This function would be responsible for creating the chart for instance
+        },
+        methodn() {
+            // This function would be responsible for cleaning up the chart
+        },
+    });
+
+    // This effect will be triggered in position 3
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 1
+        }
+    , []);
+
+    // This effect will be triggered in position 4
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 2
+        }
+    , []);
+
+    useImperativeHandle(ref, () => {
+        // That's the hook responsible for exposing part of/entirety of internalRef
+    }, []);
+
+    // Following bit is to propagate all props & internalRef object down to children
+    return (
+        <Context.Provider value={internalRef.current}>
+            {props.children}
+        </Context.Provider>
+    );
+});
+ParentComponent.displayName = 'ParentComponent';
+
+export const ChildComponent = forwardRef((props, ref) => {
+    const internalRef = useRef({
+        method1() {
+            // This function would be responsible for creating a series
+        },
+        methodn() {
+            // This function would be responsible for removing it
+        },
+    });
+
+    // This effect will be triggered in position 1
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 3
+        }
+    , []);
+
+    // This effect will be triggered in position 2
+    useEffect(() =>
+        () => {
+            // This cleanup will be triggered in position 4
+        }
+    , []);
+
+    useImperativeHandle(ref, () => {
+        // That's the hook responsible for exposing part of/entirety of internalRef
+    }, []);
+
+    // Following bit is to propagate all props & internalRef object down to children
+    return (
+        <Context.Provider value={internalRef.current}>
+            {props.children}
+        </Context.Provider>
+    );
+});
+ChildComponent.displayName = 'ChildComponent';
+```
+
+## Complete code
+
+:::info
+
+In this example, chart colors are specified with props depending on the current theme (light or dark). In a real application, consider using [Context](https://react.dev/learn/passing-data-deeply-with-context) instead.
+
+:::
+
+import { ThemedChart } from '@site/src/components/tutorials/themed-chart-colors-wrapper';
+import CodeBlock from '@theme/CodeBlock';
+import code from '!!raw-loader!@site/src/components/tutorials/advanced-react-example';
+
+<CodeBlock replaceThemeConstants className="language-jsx">{code}</CodeBlock>
+
+## Result
+
+import { App } from '@site/src/components/tutorials/advanced-react-example';
+import styles from '@site/src/pages/chart.module.css';
+
+<div className={styles.ChartContainer}>
+    <ThemedChart ChartComponent={App} />
+</div>
+
+## What's next?
+
+Consider other community examples on how to wrap Lightweight Charts™ into React components:
+
+- [lightweight-charts-react-wrapper](https://github.com/trash-and-fire/lightweight-charts-react-wrapper)
+- [lightweight-charts-react-components](https://github.com/ukorvl/lightweight-charts-react-components)
