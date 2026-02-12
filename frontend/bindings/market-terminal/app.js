@@ -50,16 +50,18 @@ export function GetAvailableDates() {
 }
 
 /**
- * GetChartData serves chart data for chart windows
- * Loads data with limits and filters to reduce memory usage
+ * GetChartData serves chart data for chart windows.
+ * READ-ONLY: Only reads from the database via LoadChartData (read-only connection). Never writes to the database.
  * ticker: Ticker symbol
  * dateStr: Date in format "2006-01-02" (YYYY-MM-DD)
+ * sinceStr: Optional; if non-empty, only rows with timestamp > sinceStr (Unix seconds, float) are returned (incremental load)
  * @param {string} ticker
  * @param {string} dateStr
+ * @param {string} sinceStr
  * @returns {$CancellablePromise<{ [_: string]: any }>}
  */
-export function GetChartData(ticker, dateStr) {
-    return $Call.ByID(3472344969, ticker, dateStr).then(/** @type {($result: any) => any} */(($result) => {
+export function GetChartData(ticker, dateStr, sinceStr) {
+    return $Call.ByID(3472344969, ticker, dateStr, sinceStr).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }

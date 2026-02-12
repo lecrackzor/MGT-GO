@@ -1897,6 +1897,10 @@
             marketOpen.setHours(openHour, openMin, 0, 0);
             const marketClose = new Date(chartDate);
             marketClose.setHours(closeHour, closeMin, 0, 0);
+            // When local close is earlier than open (e.g. 02:30 vs 20:00 in IST), close is next calendar day
+            if (marketClose.getTime() <= marketOpen.getTime()) {
+                marketClose.setDate(marketClose.getDate() + 1);
+            }
             
             // Filter labels and all data arrays
             const filteredLabels = [];

@@ -54,6 +54,9 @@ app.exe
 app
 dist/
 
+# Windows resource .syso (generated from winres/ + gex2.ico by go-winres make)
+*.syso
+
 # Profiling files
 *.pb.gz
 *.prof
