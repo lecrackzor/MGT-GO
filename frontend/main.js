@@ -28,6 +28,28 @@ const MAG7 = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"];
 const STOCKS = ["AMD", "APP", "AVGO", "BABA", "COIN", "CRWD", "CRWV", "GLD", "GOOG", "GME", "HOOD", "HYG", "IBIT", "INTC", "IONQ", "MSTR", "MU", "NFLX", "PLTR", "SLV", "SMCI", "SNOW", "SOFI", "TLT", "TQQQ", "TSM", "UNH", "USO", "UVXY", "VALE"];
 const ALL_TICKERS = [...FUTURES, ...INDEXES, ...MAG7, ...STOCKS];
 
+// Canonical chart series metadata so plot names, legend names, and color settings stay aligned.
+const CHART_SERIES_METADATA = [
+    { key: 'spot', label: 'Spot Price', defaultColor: '#4CAF50' },
+    { key: 'zero_gamma', label: 'Zero Gamma', defaultColor: '#FF9800' },
+    { key: 'major_pos_vol', label: 'Positive Gamma', defaultColor: '#2196F3' },
+    { key: 'major_neg_vol', label: 'Negative Gamma', defaultColor: '#F44336' },
+    { key: 'net', label: 'Net Gamma', defaultColor: '#00FFFF' },
+    { key: 'major_long_gamma', label: 'Long Gamma', defaultColor: '#9C27B0' },
+    { key: 'major_short_gamma', label: 'Short Gamma', defaultColor: '#00BCD4' },
+    { key: 'major_positive', label: 'Major Positive Strike', defaultColor: '#8BC34A' },
+    { key: 'major_negative', label: 'Major Negative Strike', defaultColor: '#FF5722' },
+    { key: 'major_pos_oi', label: 'Major Positive OI', defaultColor: '#3F51B5' },
+    { key: 'major_neg_oi', label: 'Major Negative OI', defaultColor: '#E91E63' }
+];
+
+function getDefaultChartColors() {
+    return CHART_SERIES_METADATA.reduce((acc, series) => {
+        acc[series.key] = series.defaultColor;
+        return acc;
+    }, {});
+}
+
 // Organize tickers by tier
 function organizeTickersByTier(tickers) {
     const organized = {
@@ -220,18 +242,7 @@ function getDefaultSettings() {
         Use24HourTime: true,
         EnableLogging: true,
         HiddenPlots: [],
-        ChartColors: {
-            'spot': '#4CAF50',
-            'zero_gamma': '#FF9800',
-            'major_pos_vol': '#2196F3',
-            'major_neg_vol': '#F44336',
-            'major_long_gamma': '#9C27B0',
-            'major_short_gamma': '#00BCD4',
-            'major_positive': '#8BC34A',
-            'major_negative': '#FF5722',
-            'major_pos_oi': '#3F51B5',
-            'major_neg_oi': '#E91E63'
-        },
+        ChartColors: getDefaultChartColors(),
         ChartZoomFilterPercent: 1.0,
         AutoFollowBufferPercent: 1.0,
         PriceAxisLocation: 'left'
@@ -361,6 +372,27 @@ let marketCountdownInterval = null;
 
 // Date selector state
 let selectedDate = null; // Stores selected date as "YYYY-MM-DD" string
+// When selectedDate === lastKnownMarketDate, we consider the user to be viewing "today" and will auto-advance when the market date rolls over
+let lastKnownMarketDate = null;
+
+// Fetch current market date from backend (cache-bust + no-store so webview never uses cached value)
+async function fetchMarketDate() {
+    const response = await fetch('/api/market-date?t=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.date || null;
+}
+
+// Verification: run from DevTools console to confirm each request hits the server (no caching).
+// Watch the app terminal for "[api/market-date] requested" — you should see 3 lines, one per 2s.
+window.verifyMarketDateNoCache = async function () {
+    for (let i = 0; i < 3; i++) {
+        const date = await fetchMarketDate();
+        console.log('[verifyMarketDateNoCache] fetch', i + 1, '->', date);
+        if (i < 2) await new Promise(r => setTimeout(r, 2000));
+    }
+    console.log('[verifyMarketDateNoCache] Done. Check terminal: 3 "[api/market-date] requested" lines = no cache.');
+};
 
 // Update market status and countdown - completely rewritten to be simple and reliable
 async function updateMarketStatus() {
@@ -1096,7 +1128,7 @@ async function initializeUI() {
         console.error('========================================');
         const tbody = document.getElementById('ticker-table-body');
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #f44336;">Error loading tickers: ${error.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #f44336;">Error loading tickers: ${error.message}</td></tr>`;
         } else {
             console.error('[InitializeUI] ERROR: ticker-table-body element not found!');
         }
@@ -1127,6 +1159,7 @@ function initializeTickerTable(tickers) {
             <td id="${ticker}-zero-gamma">-</td>
             <td id="${ticker}-pos-gamma">-</td>
             <td id="${ticker}-neg-gamma">-</td>
+            <td id="${ticker}-net">-</td>
             <td id="${ticker}-last-update">-</td>
             <td><button class="chart-btn" data-ticker="${ticker}">📊 Chart</button></td>
         `;
@@ -1741,18 +1774,7 @@ function loadChartColors(settings) {
         colorsGrid.innerHTML = '';
         
         // Default chart colors
-        const defaultColors = {
-            'spot': '#4CAF50',
-            'zero_gamma': '#FF9800',
-            'major_pos_vol': '#2196F3',
-            'major_neg_vol': '#F44336',
-            'major_long_gamma': '#9C27B0',
-            'major_short_gamma': '#00BCD4',
-            'major_positive': '#8BC34A',
-            'major_negative': '#FF5722',
-            'major_pos_oi': '#3F51B5',
-            'major_neg_oi': '#E91E63'
-        };
+        const defaultColors = getDefaultChartColors();
         
         // Get chart colors from settings, use defaults if not available
         let chartColors = {};
@@ -1763,19 +1785,19 @@ function loadChartColors(settings) {
             console.log('[Chart Colors] No ChartColors in settings, using defaults');
         }
         
-        Object.keys(defaultColors).forEach(series => {
-            const colorValue = chartColors[series] || defaultColors[series];
+        CHART_SERIES_METADATA.forEach(series => {
+            const colorValue = chartColors[series.key] || defaultColors[series.key];
             
             const colorItem = document.createElement('div');
             colorItem.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
             
             const label = document.createElement('label');
-            label.textContent = series.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            label.textContent = series.label;
             label.style.cssText = 'font-size: 0.85rem; color: #aaa;';
             
             const colorInput = document.createElement('input');
             colorInput.type = 'color';
-            colorInput.id = `color-${series}`;
+            colorInput.id = `color-${series.key}`;
             colorInput.value = colorValue;
             colorInput.style.cssText = 'width: 100%; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer;';
             
@@ -1794,9 +1816,9 @@ function loadChartColors(settings) {
             resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
             
             newResetBtn.addEventListener('click', () => {
-                Object.keys(defaultColors).forEach(series => {
-                    const input = document.getElementById(`color-${series}`);
-                    if (input) input.value = defaultColors[series];
+                CHART_SERIES_METADATA.forEach(series => {
+                    const input = document.getElementById(`color-${series.key}`);
+                    if (input) input.value = defaultColors[series.key];
                 });
             });
         }
@@ -1815,22 +1837,10 @@ function saveChartColors(settings) {
     if (!settings.ChartColors) {
         settings.ChartColors = {};
     }
-    const defaultColors = {
-        'spot': '#4CAF50',
-        'zero_gamma': '#FF9800',
-        'major_pos_vol': '#2196F3',
-        'major_neg_vol': '#F44336',
-        'major_long_gamma': '#9C27B0',
-        'major_short_gamma': '#00BCD4',
-        'major_positive': '#8BC34A',
-        'major_negative': '#FF5722',
-        'major_pos_oi': '#3F51B5',
-        'major_neg_oi': '#E91E63'
-    };
-    Object.keys(defaultColors).forEach(series => {
-        const input = document.getElementById(`color-${series}`);
+    CHART_SERIES_METADATA.forEach(series => {
+        const input = document.getElementById(`color-${series.key}`);
         if (input) {
-            settings.ChartColors[series] = input.value;
+            settings.ChartColors[series.key] = input.value;
         }
     });
     console.log('[Chart Colors] Chart colors saved to settings object.');
@@ -2050,6 +2060,8 @@ async function saveSettings() {
 
 // Periodic updates interval
 let periodicUpdateInterval = null;
+// Market date rollover check: when user is viewing "today", advance to new date after rollover (e.g. market open)
+let marketDateRolloverInterval = null;
 
 // Start periodic updates
 // Monitor window size and save periodically (backup for resize events)
@@ -2102,11 +2114,44 @@ function startPeriodicUpdates() {
         clearInterval(periodicUpdateInterval);
         periodicUpdateInterval = null;
     }
+    if (marketDateRolloverInterval) {
+        clearInterval(marketDateRolloverInterval);
+        marketDateRolloverInterval = null;
+    }
     
     // Update every 1 second to reflect high-priority ticker updates
     periodicUpdateInterval = setInterval(async () => {
         await updateTickerData();
     }, 1000);
+    
+    // Check for market date rollover every 60s (e.g. app started before open; after 8:30 AM ET we should show today)
+    marketDateRolloverInterval = setInterval(async () => {
+        if (selectedDate === null || lastKnownMarketDate === null) return;
+        if (selectedDate !== lastKnownMarketDate) return; // user is viewing a past date, don't auto-advance
+        try {
+            const currentMarketDate = await fetchMarketDate();
+            if (!currentMarketDate) return;
+            if (currentMarketDate === selectedDate) return; // no rollover
+            // Market date rolled over (e.g. new day at 8:30 AM ET); switch to new date and refresh list
+            lastKnownMarketDate = currentMarketDate;
+            selectedDate = currentMarketDate;
+            await loadAvailableDates();
+            // Ensure dropdown and state show the new date (loadAvailableDates may have picked another if new date wasn't in list yet)
+            selectedDate = currentMarketDate;
+            const dateSelector = document.getElementById('date-selector');
+            if (dateSelector) {
+                for (let i = 0; i < dateSelector.options.length; i++) {
+                    if (dateSelector.options[i].value === currentMarketDate) {
+                        dateSelector.selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            await updateTickerData();
+        } catch (e) {
+            // ignore
+        }
+    }, 60000);
     
     // Initial update
     updateTickerData();
@@ -2116,30 +2161,52 @@ function startPeriodicUpdates() {
 async function updateTickerData() {
     try {
         const tickers = await App.GetEnabledTickers();
-        // Use selected date if available, otherwise use current market date
+        // Determine which date to use for loading data
         let dateStr = selectedDate;
+        const viewingToday = (selectedDate === lastKnownMarketDate);
+        const useBackendToday = !dateStr || viewingToday;
+
         if (!dateStr) {
-            // Fallback to current market date
             try {
-                const response = await fetch('/api/market-date');
-                if (response.ok) {
-                    const data = await response.json();
-                    dateStr = data.date;
+                const fetched = await fetchMarketDate();
+                if (fetched) {
+                    dateStr = fetched;
+                    lastKnownMarketDate = fetched;
                 } else {
-                    // Last resort: use today's date
-                    const now = new Date();
-                    dateStr = now.toISOString().split('T')[0];
+                    dateStr = new Date().toISOString().split('T')[0];
                 }
             } catch (error) {
                 console.warn('[UpdateTickerData] Failed to get market date, using today:', error);
-                const now = new Date();
-                dateStr = now.toISOString().split('T')[0];
+                dateStr = new Date().toISOString().split('T')[0];
+            }
+        } else if (viewingToday) {
+            try {
+                const live = await fetchMarketDate();
+                if (live && live !== selectedDate) {
+                    lastKnownMarketDate = live;
+                    selectedDate = live;
+                    await loadAvailableDates();
+                    selectedDate = live;
+                    const dateSelector = document.getElementById('date-selector');
+                    if (dateSelector) {
+                        for (let i = 0; i < dateSelector.options.length; i++) {
+                            if (dateSelector.options[i].value === live) {
+                                dateSelector.selectedIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // ignore
             }
         }
-        
+
+        // When showing "today", pass "" so backend resolves current market date at request time (rollover without restart)
+        const dateStrForRequest = useBackendToday ? '' : dateStr;
         // Fetch all tickers in parallel for better performance
         const promises = tickers.map(ticker => 
-            App.GetTickerData(ticker, dateStr)
+            App.GetTickerData(ticker, dateStrForRequest)
                 .then(data => ({ ticker, data, error: null }))
                 .catch(error => ({ ticker, data: null, error }))
         );
@@ -2162,7 +2229,7 @@ async function updateTickerData() {
                 updateTickerRow(ticker, data);
             } else {
                 // No data available - show placeholder
-                console.log(`No data available for ${ticker} on ${dateStr}`);
+                console.log(`No data available for ${ticker} on ${dateStrForRequest === '' ? 'today' : dateStr}`);
                 const row = document.getElementById(`${ticker}-spot`);
                 if (row) {
                     row.textContent = 'No data';
@@ -2184,6 +2251,11 @@ function updateTickerRow(ticker, data) {
     const zeroGamma = getLatestValue(data, 'zero_gamma');
     const posGamma = getLatestValue(data, 'major_pos_vol');
     const negGamma = getLatestValue(data, 'major_neg_vol');
+    let netGamma = null;
+    if (typeof spot === 'number' && typeof posGamma === 'number' && typeof negGamma === 'number') {
+        // Match NinjaScript Net plot level: spot + ((pos - abs(neg)) / 100)
+        netGamma = spot + ((posGamma - Math.abs(negGamma)) / 100);
+    }
     
     if (spot !== null) {
         document.getElementById(`${ticker}-spot`).textContent = formatNumber(spot);
@@ -2196,6 +2268,9 @@ function updateTickerRow(ticker, data) {
     }
     if (negGamma !== null) {
         document.getElementById(`${ticker}-neg-gamma`).textContent = formatNumber(negGamma);
+    }
+    if (netGamma !== null) {
+        document.getElementById(`${ticker}-net`).textContent = formatNumber(netGamma);
     }
     
     // Get API timestamp from data (when the data was actually collected)
@@ -2246,18 +2321,11 @@ async function openChart(ticker) {
         let dateStr = selectedDate;
         if (!dateStr) {
             try {
-                const response = await fetch('/api/market-date');
-                if (response.ok) {
-                    const data = await response.json();
-                    dateStr = data.date;
-                } else {
-                    const now = new Date();
-                    dateStr = now.toISOString().split('T')[0];
-                }
+                dateStr = await fetchMarketDate();
+                if (!dateStr) dateStr = new Date().toISOString().split('T')[0];
             } catch (error) {
                 console.warn('[OpenChart] Failed to get market date, using today:', error);
-                const now = new Date();
-                dateStr = now.toISOString().split('T')[0];
+                dateStr = new Date().toISOString().split('T')[0];
             }
         }
         
@@ -2323,11 +2391,7 @@ async function loadAvailableDates() {
         // Get current market date for comparison
         let todayStr = null;
         try {
-            const marketDateResponse = await fetch('/api/market-date');
-            if (marketDateResponse.ok) {
-                const marketDateData = await marketDateResponse.json();
-                todayStr = marketDateData.date;
-            }
+            todayStr = await fetchMarketDate();
         } catch (error) {
             console.warn('[Date Selector] Failed to get market date:', error);
         }
@@ -2372,6 +2436,9 @@ async function loadAvailableDates() {
         
         dateSelector.selectedIndex = defaultIndex;
         selectedDate = dates[defaultIndex];
+        // Track "today" so we can auto-advance when market date rolls over (e.g. at market open)
+        // If todayStr is null (fetch failed), treat selected date as "today" so we still use live date when available
+        lastKnownMarketDate = todayStr || selectedDate;
         
         console.log('[Date Selector] Default date selected:', selectedDate);
         
@@ -2397,31 +2464,38 @@ async function onDateChanged(dateStr) {
 // Set date selector to today
 async function setDateToToday() {
     try {
-        const response = await fetch('/api/market-date');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const todayStr = await fetchMarketDate();
+        if (!todayStr) {
+            throw new Error('Failed to get market date');
         }
-        
-        const data = await response.json();
-        const todayStr = data.date;
-        
+        lastKnownMarketDate = todayStr;
+        selectedDate = todayStr;
+
         const dateSelector = document.getElementById('date-selector');
         if (!dateSelector) return;
-        
-        // Find today's date in the dropdown
+
+        // Refresh date list first (backend always includes current market date now)
+        await loadAvailableDates();
+
+        // Ensure today is selected (list may have been rebuilt by loadAvailableDates)
         for (let i = 0; i < dateSelector.options.length; i++) {
             if (dateSelector.options[i].value === todayStr) {
                 dateSelector.selectedIndex = i;
-                await onDateChanged(todayStr);
+                selectedDate = todayStr;
+                await updateTickerData();
                 return;
             }
         }
-        
-        // If today not found, select first item
-        if (dateSelector.options.length > 0) {
-            dateSelector.selectedIndex = 0;
-            await onDateChanged(dateSelector.options[0].value);
-        }
+
+        // If today still not in dropdown, add it and select (fallback)
+        const option = document.createElement('option');
+        option.value = todayStr;
+        const [y, m, d] = todayStr.split('-');
+        option.textContent = `${m}/${d}/${y} (Today)`;
+        dateSelector.insertBefore(option, dateSelector.options[0]);
+        dateSelector.selectedIndex = 0;
+        selectedDate = todayStr;
+        await updateTickerData();
     } catch (error) {
         console.error('[Date Selector] Error setting to today:', error);
     }

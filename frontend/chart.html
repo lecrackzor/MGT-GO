@@ -326,6 +326,11 @@
             border-color: #5a5a5a;
         }
         
+        #chart-toolbar button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        
         #auto-follow-btn.active {
             background: #4CAF50;
             border-color: #5CBF60;
@@ -360,6 +365,7 @@
     <div id="chart-toolbar">
         <button id="reset-zoom-btn" title="Reset view to default zoom filter">Reset</button>
         <button id="auto-follow-btn" title="Auto-follow new data while preserving zoom">Auto-Follow: OFF</button>
+        <button id="chart-screenshot-btn" title="Save PNG of the chart panel (native chart render at full resolution; crosshair included; floating info box not included)">Screenshot</button>
     </div>
     <div id="status">Initializing...</div>
     
@@ -1315,6 +1321,7 @@
             zero_gamma: '#FF9800',
             major_pos_vol: '#2196F3',
             major_neg_vol: '#F44336',
+            net: '#00FFFF',
             major_long_gamma: '#9C27B0',
             major_short_gamma: '#00BCD4',
             major_positive: '#8BC34A',
@@ -1480,6 +1487,7 @@
             zero_gamma: 'Zero Gamma',
             major_pos_vol: 'Positive Gamma',
             major_neg_vol: 'Negative Gamma',
+            net: 'Net Gamma',
             major_long_gamma: 'Long Gamma',
             major_short_gamma: 'Short Gamma',
             major_positive: 'Major Positive Strike',
@@ -1487,6 +1495,26 @@
             major_pos_oi: 'Major Positive OI',
             major_neg_oi: 'Major Negative OI'
         };
+
+        function computeNetSeries(dataObj) {
+            if (!dataObj || !Array.isArray(dataObj.major_pos_vol) || !Array.isArray(dataObj.major_neg_vol) || !Array.isArray(dataObj.spot)) {
+                return;
+            }
+            const len = Math.min(dataObj.major_pos_vol.length, dataObj.major_neg_vol.length, dataObj.spot.length);
+            const net = new Array(len);
+            for (let i = 0; i < len; i++) {
+                const pos = Number(dataObj.major_pos_vol[i]);
+                const neg = Number(dataObj.major_neg_vol[i]);
+                const spot = Number(dataObj.spot[i]);
+                if (!Number.isFinite(pos) || !Number.isFinite(neg) || !Number.isFinite(spot)) {
+                    net[i] = null;
+                    continue;
+                }
+                // Match NinjaScript plot level: spot + ((pos - abs(neg)) / 100)
+                net[i] = spot + ((pos - Math.abs(neg)) / 100);
+            }
+            dataObj.net = net;
+        }
         
         // Replace 0 values with the last previously known non-zero (forward-fill). Used so y-axis and labels never show 0 when we have a prior value.
             function forwardFillZeros(values) {
@@ -1816,6 +1844,39 @@
             return fallbackDate;
         }
         
+        // Resolve timezone offset (e.g. "-04:00") for a specific zone/date.
+        // Uses Intl so DST transitions are handled correctly.
+        function getOffsetForZoneAtDate(timeZone, date) {
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone,
+                timeZoneName: 'longOffset',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            }).formatToParts(date);
+            const tzPart = parts.find(p => p.type === 'timeZoneName');
+            const raw = tzPart && tzPart.value ? tzPart.value : 'GMT-05:00';
+            const normalized = raw.replace(/^GMT/, '');
+            return /^[-+]\d{2}:\d{2}$/.test(normalized) ? normalized : '-05:00';
+        }
+
+        // Convert an ET wall-clock time (HH:MM) to local HH:MM for today's ET date.
+        function convertETClockToLocalHHMM(hour, minute, referenceDate = new Date()) {
+            const etDateParts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/New_York',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).format(referenceDate); // "YYYY-MM-DD"
+            const etOffset = getOffsetForZoneAtDate('America/New_York', referenceDate);
+            const etInstant = new Date(`${etDateParts}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00${etOffset}`);
+            return `${String(etInstant.getHours()).padStart(2, '0')}:${String(etInstant.getMinutes()).padStart(2, '0')}`;
+        }
+
         // Function to get market hours in local timezone
             async function getMarketHoursLocal() {
             try {
@@ -1824,27 +1885,10 @@
                     const data = await response.json();
                     await logToBackend('info', `[Chart] Fetched market hours from API (ET): ${data.open} - ${data.close}`);
                     
-                    // Backend returns ET times, we need to convert to local time
-                    // Create a date for today, set ET time, then get local time equivalent
-                    const today = new Date();
                     const [etOpenHour, etOpenMin] = data.open.split(':').map(Number);
                     const [etCloseHour, etCloseMin] = data.close.split(':').map(Number);
-                    
-                    // Create Date objects in ET timezone, then convert to local
-                    // ET is UTC-5 (EST) or UTC-4 (EDT)
-                    // We'll create dates assuming EST (UTC-5) for simplicity
-                    // JavaScript will automatically convert to local timezone
-                    const etOpenDate = new Date(`2026-01-15T${String(etOpenHour).padStart(2, '0')}:${String(etOpenMin).padStart(2, '0')}:00-05:00`);
-                    const etCloseDate = new Date(`2026-01-15T${String(etCloseHour).padStart(2, '0')}:${String(etCloseMin).padStart(2, '0')}:00-05:00`);
-                    
-                    // Get local time equivalents
-                    const localOpenHour = etOpenDate.getHours();
-                    const localOpenMin = etOpenDate.getMinutes();
-                    const localCloseHour = etCloseDate.getHours();
-                    const localCloseMin = etCloseDate.getMinutes();
-                    
-                    const localOpen = `${String(localOpenHour).padStart(2, '0')}:${String(localOpenMin).padStart(2, '0')}`;
-                    const localClose = `${String(localCloseHour).padStart(2, '0')}:${String(localCloseMin).padStart(2, '0')}`;
+                    const localOpen = convertETClockToLocalHHMM(etOpenHour, etOpenMin);
+                    const localClose = convertETClockToLocalHHMM(etCloseHour, etCloseMin);
                     
                     await logToBackend('info', `[Chart] Converted ET to local: ${data.open} ET -> ${localOpen} local, ${data.close} ET -> ${localClose} local`);
                     
@@ -1853,12 +1897,9 @@
             } catch (error) {
                 await logToBackend('warn', `[Chart] Could not fetch market hours, using defaults: ${error.message || error}`);
             }
-            // Fallback: Market hours are 9:30 AM - 4:00 PM ET
-            // Convert to local time (approximate - assumes EST, not EDT)
-            const etOpenDate = new Date('2026-01-15T09:30:00-05:00');
-            const etCloseDate = new Date('2026-01-15T16:00:00-05:00');
-            const localOpen = `${String(etOpenDate.getHours()).padStart(2, '0')}:${String(etOpenDate.getMinutes()).padStart(2, '0')}`;
-            const localClose = `${String(etCloseDate.getHours()).padStart(2, '0')}:${String(etCloseDate.getMinutes()).padStart(2, '0')}`;
+            // Fallback: Market hours are 9:30 AM - 4:00 PM ET (DST-aware conversion).
+            const localOpen = convertETClockToLocalHHMM(9, 30);
+            const localClose = convertETClockToLocalHHMM(16, 0);
             await logToBackend('warn', `[Chart] Using fallback market hours: 09:30 ET -> ${localOpen} local, 16:00 ET -> ${localClose} local`);
             return { open: localOpen, close: localClose };
         }
@@ -1983,7 +2024,7 @@
                         }
                         return;
                     }
-                    const keys = ['timestamp', 'spot', 'zero_gamma', 'major_pos_vol', 'major_neg_vol', 'major_long_gamma', 'major_short_gamma', 'major_positive', 'major_negative', 'major_pos_oi', 'major_neg_oi'];
+                    const keys = ['timestamp', 'spot', 'zero_gamma', 'major_pos_vol', 'major_neg_vol', 'major_long_gamma', 'major_short_gamma', 'major_positive', 'major_negative', 'major_pos_oi', 'major_neg_oi', 'net'];
                     for (const key of keys) {
                         if (Array.isArray(chartDataCache[key]) && Array.isArray(data[key])) {
                             for (let i = 0; i < data[key].length; i++) chartDataCache[key].push(data[key][i]);
@@ -1999,8 +2040,12 @@
                     data = chartDataCache;
                     await logToBackend('info', `[Chart] Merged incremental: ${data.timestamp.length} points, lastTs=${lastChartTimestamp}`);
                 } else if (data && data.incremental !== true && data.timestamp && Array.isArray(data.timestamp) && data.timestamp.length > 0) {
-                    chartDataCache = { ticker, dateStr, timestamp: [...data.timestamp], spot: data.spot ? [...data.spot] : [], zero_gamma: data.zero_gamma ? [...data.zero_gamma] : [], major_pos_vol: data.major_pos_vol ? [...data.major_pos_vol] : [], major_neg_vol: data.major_neg_vol ? [...data.major_neg_vol] : [], major_long_gamma: data.major_long_gamma ? [...data.major_long_gamma] : [], major_short_gamma: data.major_short_gamma ? [...data.major_short_gamma] : [], major_positive: data.major_positive ? [...data.major_positive] : [], major_negative: data.major_negative ? [...data.major_negative] : [], major_pos_oi: data.major_pos_oi ? [...data.major_pos_oi] : [], major_neg_oi: data.major_neg_oi ? [...data.major_neg_oi] : [] };
+                    chartDataCache = { ticker, dateStr, timestamp: [...data.timestamp], spot: data.spot ? [...data.spot] : [], zero_gamma: data.zero_gamma ? [...data.zero_gamma] : [], major_pos_vol: data.major_pos_vol ? [...data.major_pos_vol] : [], major_neg_vol: data.major_neg_vol ? [...data.major_neg_vol] : [], major_long_gamma: data.major_long_gamma ? [...data.major_long_gamma] : [], major_short_gamma: data.major_short_gamma ? [...data.major_short_gamma] : [], major_positive: data.major_positive ? [...data.major_positive] : [], major_negative: data.major_negative ? [...data.major_negative] : [], major_pos_oi: data.major_pos_oi ? [...data.major_pos_oi] : [], major_neg_oi: data.major_neg_oi ? [...data.major_neg_oi] : [], net: [] };
                     lastChartTimestamp = data.timestamp[data.timestamp.length - 1];
+                }
+                computeNetSeries(data);
+                if (chartDataCache && chartDataCache.ticker === ticker && chartDataCache.dateStr === dateStr) {
+                    computeNetSeries(chartDataCache);
                 }
                 
                 if (!data || !data.timestamp || data.timestamp.length === 0) {
@@ -2233,6 +2278,7 @@
                     'zero_gamma',
                     'major_pos_vol',    // Positive gamma
                     'major_neg_vol',    // Negative gamma
+                    'net',              // Net gamma (computed)
                     'major_long_gamma', // Long gamma
                     'major_short_gamma', // Short gamma
                     'major_positive',   // Major positive strike
@@ -2732,6 +2778,54 @@
                     autoFollowBtn.classList.toggle('active', autoFollowEnabled);
                     logToBackend('info', `[Chart] Auto-follow ${autoFollowEnabled ? 'enabled' : 'disabled'}`).catch(() => {});
                 });
+            }
+            
+            const screenshotBtn = document.getElementById('chart-screenshot-btn');
+            if (screenshotBtn) {
+                if (typeof chart.takeScreenshot !== 'function') {
+                    screenshotBtn.disabled = true;
+                    screenshotBtn.title = 'Screenshot requires a newer lightweight-charts build (takeScreenshot missing)';
+                } else {
+                    screenshotBtn.addEventListener('click', function onScreenshotClick() {
+                        try {
+                            requestAnimationFrame(function () {
+                                requestAnimationFrame(function () {
+                                    try {
+                                        var shot = chart.takeScreenshot(true, true);
+                                        if (!shot || typeof shot.toBlob !== 'function') {
+                                            logToBackend('warn', '[Chart] Screenshot: takeScreenshot did not return a canvas with toBlob').catch(function () {});
+                                            return;
+                                        }
+                                        shot.toBlob(function (blob) {
+                                            if (!blob) {
+                                                logToBackend('warn', '[Chart] Screenshot: toBlob returned null').catch(function () {});
+                                                return;
+                                            }
+                                            var url = URL.createObjectURL(blob);
+                                            var a = document.createElement('a');
+                                            var safeTicker = String(ticker).replace(/[^\w.-]+/g, '_');
+                                            var datePart = String(currentChartDateStr || dateFromURL || '').replace(/[^\w.-]+/g, '_') || 'nodate';
+                                            var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                                            a.href = url;
+                                            a.download = safeTicker + '_' + datePart + '_' + ts + '.png';
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            document.body.removeChild(a);
+                                            URL.revokeObjectURL(url);
+                                            logToBackend('info', '[Chart] Screenshot saved: ' + a.download).catch(function () {});
+                                        }, 'image/png');
+                                    } catch (err) {
+                                        console.error('[Chart] Screenshot error:', err);
+                                        logToBackend('error', '[Chart] Screenshot error: ' + (err && err.message ? err.message : String(err))).catch(function () {});
+                                    }
+                                });
+                            });
+                        } catch (err) {
+                            console.error('[Chart] Screenshot error:', err);
+                            logToBackend('error', '[Chart] Screenshot error: ' + (err && err.message ? err.message : String(err))).catch(function () {});
+                        }
+                    });
+                }
             }
             
             // Load colors from settings, then initialize chart

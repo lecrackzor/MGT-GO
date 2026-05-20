@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ type Client struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	userAgent  string
 	mu         sync.RWMutex
 	debugPrint func(string, string)
 }
@@ -38,12 +40,28 @@ func NewClient(apiKey string, debugPrint func(string, string)) *Client {
 		apiKey:     apiKey,
 		baseURL:    config.APIBaseURL,
 		httpClient: httpClient,
+		userAgent:  "MarketTerminalGexbot/1.0",
 		debugPrint: debugPrint,
 	}
 }
 
+// getAPIKey returns the current API key in a thread-safe way.
+func (c *Client) getAPIKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apiKey
+}
+
 // FetchEndpoint fetches data from a specific API endpoint
 func (c *Client) FetchEndpoint(endpoint, ticker string) (map[string]interface{}, error) {
+	apiKey := strings.TrimSpace(c.getAPIKey())
+	if apiKey == "" {
+		return nil, &SubscriptionError{
+			Endpoint: endpoint,
+			Message:  "API key is not configured. Set GEXBOT_API_KEY or save an API key in settings to use Bearer authentication.",
+		}
+	}
+
 	// Get endpoint URL template
 	urlTemplate, ok := Endpoints[endpoint]
 	if !ok {
@@ -51,7 +69,7 @@ func (c *Client) FetchEndpoint(endpoint, ticker string) (map[string]interface{},
 	}
 
 	// Build URL
-	url := fmt.Sprintf(urlTemplate, c.baseURL, ticker, c.apiKey)
+	url := fmt.Sprintf(urlTemplate, c.baseURL, ticker)
 
 	// Retry logic for transient errors
 	maxRetries := 3
@@ -63,8 +81,17 @@ func (c *Client) FetchEndpoint(endpoint, ticker string) (map[string]interface{},
 		
 		c.debugPrint(fmt.Sprintf("API: Fetching %s for %s (attempt %d/%d)", endpoint, ticker, attempt+1, maxRetries), "api")
 
+		// Build authenticated request (GEXBot now requires header-based auth).
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build request for %s/%s: %w", endpoint, ticker, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("User-Agent", c.userAgent)
+		req.Header.Set("Accept", "application/json")
+
 		// Make HTTP request
-		resp, err := c.httpClient.Get(url)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
 			if attempt < maxRetries-1 {

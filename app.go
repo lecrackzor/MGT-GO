@@ -802,7 +802,7 @@ func (a *App) GetEnabledTickers() []string {
 }
 
 // GetTickerData loads ticker data from the database
-// dateStr is in format "2006-01-02" (YYYY-MM-DD)
+// dateStr is in format "2006-01-02" (YYYY-MM-DD). Empty string means "current market date" (resolved at request time so rollover works without restart).
 // Returns map[string][]interface{} where each key is a field name and value is an array of values
 // Returns empty data if database doesn't exist yet (data collection hasn't started)
 // CRITICAL: Uses LoadTickerData instead of LoadFromFile to skip profiles_blob and prevent memory issues
@@ -813,13 +813,18 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 	a.debugPrint(fmt.Sprintf("GetTickerData: Memory before loading %s: Alloc=%d MB, Sys=%d MB, HeapAlloc=%d MB",
 		ticker, mBefore.Alloc/1024/1024, mBefore.Sys/1024/1024, mBefore.HeapAlloc/1024/1024), "memory")
 
-	// Parse date string in ET (not UTC)
-	date, err := utils.ParseDateInET(dateStr)
-	if err != nil {
-		// Try current market date if parsing fails
-		date = utils.GetMarketDate()
-		// Extract just the date part at midnight ET
-		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
+	var date time.Time
+	if strings.TrimSpace(dateStr) == "" {
+		// Empty = "today" — resolve at request time so 8:30 AM ET rollover works without restart
+		md := utils.GetMarketDate()
+		date = time.Date(md.Year(), md.Month(), md.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
+	} else {
+		var err error
+		date, err = utils.ParseDateInET(dateStr)
+		if err != nil {
+			md := utils.GetMarketDate()
+			date = time.Date(md.Year(), md.Month(), md.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
+		}
 	}
 
 	// Load data using lightweight LoadTickerData (skips profiles_blob)
@@ -1147,6 +1152,22 @@ func (a *App) GetAvailableDates() []string {
 	sort.Slice(availableDates, func(i, j int) bool {
 		return availableDates[i].After(availableDates[j])
 	})
+
+	// Always include current market date at the top so "Today" is always selectable
+	// (folder may not exist yet; user will see today's data once it arrives)
+	currentMarket := utils.GetMarketDate()
+	todayMidnight := time.Date(currentMarket.Year(), currentMarket.Month(), currentMarket.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
+	todayStr := todayMidnight.Format("2006-01-02")
+	hasToday := false
+	for _, d := range availableDates {
+		if d.Format("2006-01-02") == todayStr {
+			hasToday = true
+			break
+		}
+	}
+	if !hasToday {
+		availableDates = append([]time.Time{todayMidnight}, availableDates...)
+	}
 
 	// Convert to "YYYY-MM-DD" format strings
 	result := make([]string, len(availableDates))

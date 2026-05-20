@@ -568,6 +568,7 @@ func getDefaultSettings() *Settings {
 			"zero_gamma":        "#FF9800",
 			"major_pos_vol":     "#2196F3",
 			"major_neg_vol":     "#F44336",
+			"net":               "#00FFFF",
 			"major_long_gamma":  "#9C27B0",
 			"major_short_gamma": "#00BCD4",
 			"major_positive":    "#8BC34A",

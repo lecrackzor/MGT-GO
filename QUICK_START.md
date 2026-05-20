@@ -58,7 +58,6 @@ This creates `build/bin/market-terminal.exe` that you can double-click to run (n
 
 ### Memory Profiling
 - **Python**: Limited visibility into C-level memory
-- **Go**: Full visibility with `go tool pprof` - see every allocation!
 
 ### Dependencies
 - **Python**: `pip install -r requirements.txt`

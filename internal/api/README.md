@@ -67,5 +67,4 @@ querySystem.ExecuteQueryPlan(queries, 96, func(q api.Query, result map[string]in
 
 All HTTP operations use Go's standard `net/http` package:
 - **No C dependencies** - all memory allocations visible in Go profiler
-- **Full visibility** - use `go tool pprof` to see exact allocations
 - **Connection pooling** - managed by Go's HTTP transport

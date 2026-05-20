@@ -6,6 +6,7 @@ bin/
 *.dll
 *.so
 *.dylib
+*.exebak
 
 # Test binary
 *.test
@@ -39,6 +40,9 @@ Thumbs.db
 # Ticker data directories
 Tickers */
 
+# PNG chart gallery (scripts/export_daily_charts.py default --out)
+chart_gallery/
+
 # Log files
 *.log
 logs/
@@ -61,3 +65,26 @@ dist/
 *.pb.gz
 *.prof
 pprof/
+
+# ---------------------------------------------------------------------------
+# Python ML sidecar (local-only — do not commit the side project)
+# ---------------------------------------------------------------------------
+ml/
+scripts/ml/
+tests/
+
+# Python bytecode / caches (any stray .py outside the dirs above)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# Large ML artifacts if copied outside ml/ (e.g. manual backups)
+*.joblib
+*.parquet
+optuna.db
+optuna.db-journal

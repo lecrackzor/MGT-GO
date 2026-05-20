@@ -64,5 +64,4 @@ masterTimer.Start()
 
 All scheduling operations use pure Go:
 - **No C dependencies** - all memory allocations visible in Go profiler
-- **Full visibility** - use `go tool pprof` to see exact allocations
 - **Efficient data structures** - slices and maps with automatic cleanup

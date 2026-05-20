@@ -50,5 +50,4 @@ coordinator.ProcessTickerBatch([]string{"SPX", "ES_SPX"})
 
 All coordination operations use pure Go:
 - **No C dependencies** - all memory allocations visible in Go profiler
-- **Full visibility** - use `go tool pprof` to see exact allocations
 - **Efficient data structures** - maps and slices with automatic cleanup

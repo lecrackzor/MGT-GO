@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	_ "net/http/pprof" // Memory profiling
 	"strings"
 	_ "time/tzdata" // Embed IANA timezone database for Windows compatibility
 
@@ -57,19 +56,6 @@ func main() {
 		log.Printf("File logging disabled by user setting")
 	}
 
-	// Start memory profiler (for debugging)
-	go func() {
-		// Try to start profiler, but don't fail if port is in use
-		addr := "localhost:6060"
-		utils.Logf("Memory profiler starting on http://%s/debug/pprof/", addr)
-		utils.Logf("  - Heap: http://%s/debug/pprof/heap", addr)
-		utils.Logf("  - Allocs: http://%s/debug/pprof/allocs", addr)
-		utils.Logf("  - Goroutine: http://%s/debug/pprof/goroutine", addr)
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			utils.Logf("Memory profiler unavailable (port 6060 may be in use): %v", err)
-		}
-	}()
-
 	// Create app instance
 	appInstance := NewApp()
 
@@ -118,9 +104,13 @@ func main() {
 
 		// Handle API routes
 		if r.URL.Path == "/api/market-date" {
-			// Get current market date
+			// Get current market date (never cache - date rolls over at 8:30 AM ET)
 			marketDate := appInstance.GetCurrentMarketDate()
+			nowET := utils.NowMarketTime()
+			log.Printf("[api/market-date] requested -> %s (now ET: %s)", marketDate, nowET.Format("2006-01-02 15:04:05 MST"))
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
 			json.NewEncoder(w).Encode(map[string]string{"date": marketDate})
 			return
 		}
@@ -142,9 +132,10 @@ func main() {
 		}
 
 		if r.URL.Path == "/api/available-dates" {
-			// Get available dates
+			// Get available dates (includes current market date so "Today" is always selectable)
 			dates := appInstance.GetAvailableDates()
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			json.NewEncoder(w).Encode(dates)
 			return
 		}

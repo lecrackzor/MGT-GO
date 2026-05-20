@@ -1,54 +1,54 @@
 package api
 
 // Endpoints maps endpoint names to URL templates
-// Template format: "%s/{ticker}/classic/zero?key=%s" (base, ticker, key)
+// Template format: "%s/{ticker}/classic/zero" (base, ticker)
 var Endpoints = map[string]string{
 	// Classic Subscription Endpoints
-	"classic_full":         "%s/%s/classic/full?key=%s",
-	"classic_zero":         "%s/%s/classic/zero?key=%s",
-	"classic_one":          "%s/%s/classic/one?key=%s",
-	"classic_full_majors":  "%s/%s/classic/full/majors?key=%s",
-	"classic_zero_majors":  "%s/%s/classic/zero/majors?key=%s",
-	"classic_one_majors":   "%s/%s/classic/one/majors?key=%s",
-	"classic_full_maxchange": "%s/%s/classic/full/maxchange?key=%s",
-	"classic_zero_maxchange": "%s/%s/classic/zero/maxchange?key=%s",
-	"classic_one_maxchange":   "%s/%s/classic/one/maxchange?key=%s",
+	"classic_full":         "%s/%s/classic/full",
+	"classic_zero":         "%s/%s/classic/zero",
+	"classic_one":          "%s/%s/classic/one",
+	"classic_full_majors":  "%s/%s/classic/full/majors",
+	"classic_zero_majors":  "%s/%s/classic/zero/majors",
+	"classic_one_majors":   "%s/%s/classic/one/majors",
+	"classic_full_maxchange": "%s/%s/classic/full/maxchange",
+	"classic_zero_maxchange": "%s/%s/classic/zero/maxchange",
+	"classic_one_maxchange":   "%s/%s/classic/one/maxchange",
 
 	// State Subscription Endpoints
-	"state_full":         "%s/%s/state/full?key=%s",
-	"state_zero":         "%s/%s/state/zero?key=%s",
-	"state_one":          "%s/%s/state/one?key=%s",
-	"state_full_majors":  "%s/%s/state/full/majors?key=%s",
-	"state_zero_majors":  "%s/%s/state/zero/majors?key=%s",
-	"state_one_majors":   "%s/%s/state/one/majors?key=%s",
-	"state_full_maxchange": "%s/%s/state/full/maxchange?key=%s",
-	"state_zero_maxchange": "%s/%s/state/zero/maxchange?key=%s",
-	"state_one_maxchange":   "%s/%s/state/one/maxchange?key=%s",
+	"state_full":         "%s/%s/state/full",
+	"state_zero":         "%s/%s/state/zero",
+	"state_one":          "%s/%s/state/one",
+	"state_full_majors":  "%s/%s/state/full/majors",
+	"state_zero_majors":  "%s/%s/state/zero/majors",
+	"state_one_majors":   "%s/%s/state/one/majors",
+	"state_full_maxchange": "%s/%s/state/full/maxchange",
+	"state_zero_maxchange": "%s/%s/state/zero/maxchange",
+	"state_one_maxchange":   "%s/%s/state/one/maxchange",
 	
 	// Options Profile Greeks - New API structure (State subscription)
-	"delta_zero": "%s/%s/state/delta_zero?key=%s",
-	"gamma_zero": "%s/%s/state/gamma_zero?key=%s",
-	"delta_one":  "%s/%s/state/delta_one?key=%s",
-	"gamma_one":  "%s/%s/state/gamma_one?key=%s",
+	"delta_zero": "%s/%s/state/delta_zero",
+	"gamma_zero": "%s/%s/state/gamma_zero",
+	"delta_one":  "%s/%s/state/delta_one",
+	"gamma_one":  "%s/%s/state/gamma_one",
 	
 	// Options Profile Greeks - New API structure (Orderflow subscription)
-	"charm_zero": "%s/%s/state/charm_zero?key=%s",
-	"vanna_zero": "%s/%s/state/vanna_zero?key=%s",
-	"charm_one":  "%s/%s/state/charm_one?key=%s",
-	"vanna_one":  "%s/%s/state/vanna_one?key=%s",
+	"charm_zero": "%s/%s/state/charm_zero",
+	"vanna_zero": "%s/%s/state/vanna_zero",
+	"charm_one":  "%s/%s/state/charm_one",
+	"vanna_one":  "%s/%s/state/vanna_one",
 	
 	// Legacy endpoint names (deprecated, kept for backwards compatibility)
-	"state_gamma":     "%s/%s/state/gamma_zero?key=%s",
-	"state_onegamma":  "%s/%s/state/gamma_one?key=%s",
-	"state_delta":     "%s/%s/state/delta_zero?key=%s",
-	"state_onedelta":  "%s/%s/state/delta_one?key=%s",
-	"state_vanna":     "%s/%s/state/vanna_zero?key=%s",
-	"state_onevanna":  "%s/%s/state/vanna_one?key=%s",
-	"state_charm":     "%s/%s/state/charm_zero?key=%s",
-	"state_onecharm":  "%s/%s/state/charm_one?key=%s",
+	"state_gamma":     "%s/%s/state/gamma_zero",
+	"state_onegamma":  "%s/%s/state/gamma_one",
+	"state_delta":     "%s/%s/state/delta_zero",
+	"state_onedelta":  "%s/%s/state/delta_one",
+	"state_vanna":     "%s/%s/state/vanna_zero",
+	"state_onevanna":  "%s/%s/state/vanna_one",
+	"state_charm":     "%s/%s/state/charm_zero",
+	"state_onecharm":  "%s/%s/state/charm_one",
 
 	// Orderflow Subscription Endpoints
-	"orderflow": "%s/%s/orderflow/orderflow?key=%s",
+	"orderflow": "%s/%s/orderflow/orderflow",
 }
 
 // GetEndpointsForTiers returns all endpoints available for the given subscription tiers
