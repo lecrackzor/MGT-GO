@@ -50,6 +50,29 @@ function getDefaultChartColors() {
     }, {});
 }
 
+const CHART_COLOR_OFF_VALUES = new Set(['off', 'none', 'hidden', 'transparent']);
+
+function isChartColorOffValue(color) {
+    if (!color || typeof color !== 'string') return false;
+    const normalized = color.trim().toLowerCase();
+    return CHART_COLOR_OFF_VALUES.has(normalized) || normalized === '#00000000';
+}
+
+function getChartColorsOffFromSettings(settings) {
+    const off = new Set();
+    if (settings && Array.isArray(settings.ChartColorsOff)) {
+        settings.ChartColorsOff.forEach((key) => {
+            if (typeof key === 'string' && key) off.add(key);
+        });
+    }
+    if (settings && settings.ChartColors && typeof settings.ChartColors === 'object') {
+        Object.entries(settings.ChartColors).forEach(([key, color]) => {
+            if (isChartColorOffValue(color)) off.add(key);
+        });
+    }
+    return off;
+}
+
 // Organize tickers by tier
 function organizeTickersByTier(tickers) {
     const organized = {
@@ -243,6 +266,7 @@ function getDefaultSettings() {
         EnableLogging: true,
         HiddenPlots: [],
         ChartColors: getDefaultChartColors(),
+        ChartColorsOff: [],
         ChartZoomFilterPercent: 1.0,
         AutoFollowBufferPercent: 1.0,
         PriceAxisLocation: 'left'
@@ -1778,6 +1802,7 @@ function loadChartColors(settings) {
         
         // Get chart colors from settings, use defaults if not available
         let chartColors = {};
+        const colorsOff = getChartColorsOffFromSettings(settings);
         if (settings && settings.ChartColors) {
             chartColors = settings.ChartColors;
             console.log('[Chart Colors] Using colors from settings:', Object.keys(chartColors));
@@ -1786,7 +1811,11 @@ function loadChartColors(settings) {
         }
         
         CHART_SERIES_METADATA.forEach(series => {
-            const colorValue = chartColors[series.key] || defaultColors[series.key];
+            let colorValue = chartColors[series.key] || defaultColors[series.key];
+            if (isChartColorOffValue(colorValue)) {
+                colorValue = defaultColors[series.key];
+            }
+            const isOff = colorsOff.has(series.key);
             
             const colorItem = document.createElement('div');
             colorItem.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
@@ -1795,14 +1824,42 @@ function loadChartColors(settings) {
             label.textContent = series.label;
             label.style.cssText = 'font-size: 0.85rem; color: #aaa;';
             
+            const controlsRow = document.createElement('div');
+            controlsRow.className = 'chart-color-controls';
+            
             const colorInput = document.createElement('input');
             colorInput.type = 'color';
             colorInput.id = `color-${series.key}`;
             colorInput.value = colorValue;
-            colorInput.style.cssText = 'width: 100%; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer;';
+            colorInput.disabled = isOff;
+            colorInput.style.cssText = 'flex: 1; min-width: 0; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer; opacity: ' + (isOff ? '0.45' : '1') + ';';
             
+            const offLabel = document.createElement('label');
+            offLabel.className = 'chart-color-off-label';
+            offLabel.title = 'Hide on chart (data still collected)';
+            
+            const offCheckbox = document.createElement('input');
+            offCheckbox.type = 'checkbox';
+            offCheckbox.id = `color-off-${series.key}`;
+            offCheckbox.checked = isOff;
+            
+            const offText = document.createElement('span');
+            offText.textContent = 'Off';
+            
+            offLabel.appendChild(offCheckbox);
+            offLabel.appendChild(offText);
+            
+            offCheckbox.addEventListener('change', () => {
+                const off = offCheckbox.checked;
+                colorInput.disabled = off;
+                colorInput.style.opacity = off ? '0.45' : '1';
+                colorInput.style.cursor = off ? 'not-allowed' : 'pointer';
+            });
+            
+            controlsRow.appendChild(colorInput);
+            controlsRow.appendChild(offLabel);
             colorItem.appendChild(label);
-            colorItem.appendChild(colorInput);
+            colorItem.appendChild(controlsRow);
             colorsGrid.appendChild(colorItem);
         });
         
@@ -1818,7 +1875,14 @@ function loadChartColors(settings) {
             newResetBtn.addEventListener('click', () => {
                 CHART_SERIES_METADATA.forEach(series => {
                     const input = document.getElementById(`color-${series.key}`);
-                    if (input) input.value = defaultColors[series.key];
+                    if (input) {
+                        input.value = defaultColors[series.key];
+                        input.disabled = false;
+                        input.style.opacity = '1';
+                        input.style.cursor = 'pointer';
+                    }
+                    const offInput = document.getElementById(`color-off-${series.key}`);
+                    if (offInput) offInput.checked = false;
                 });
             });
         }
@@ -1837,13 +1901,19 @@ function saveChartColors(settings) {
     if (!settings.ChartColors) {
         settings.ChartColors = {};
     }
+    const colorsOff = [];
     CHART_SERIES_METADATA.forEach(series => {
         const input = document.getElementById(`color-${series.key}`);
+        const offInput = document.getElementById(`color-off-${series.key}`);
         if (input) {
             settings.ChartColors[series.key] = input.value;
         }
+        if (offInput && offInput.checked) {
+            colorsOff.push(series.key);
+        }
     });
-    console.log('[Chart Colors] Chart colors saved to settings object.');
+    settings.ChartColorsOff = colorsOff;
+    console.log('[Chart Colors] Chart colors saved to settings object.', colorsOff.length ? `Off: ${colorsOff.join(', ')}` : '');
 }
 
 // Save settings

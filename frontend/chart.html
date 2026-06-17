@@ -1355,10 +1355,25 @@
             UseMarketTime: false,
             Use24HourTime: true,
             HiddenPlots: [],
+            ChartColorsOff: [],
             ChartZoomFilterPercent: 1.0,
             AutoFollowBufferPercent: 1.0,
             PriceAxisLocation: 'left'
         };
+
+        const CHART_COLOR_OFF_VALUES = new Set(['off', 'none', 'hidden', 'transparent']);
+
+        function isChartColorOffValue(color) {
+            if (!color || typeof color !== 'string') return false;
+            const normalized = color.trim().toLowerCase();
+            return CHART_COLOR_OFF_VALUES.has(normalized) || normalized === '#00000000';
+        }
+
+        function isSeriesOffByColorSettings(endpoint) {
+            if (globalChartSettings.ChartColorsOff.includes(endpoint)) return true;
+            const color = chartColors[endpoint];
+            return isChartColorOffValue(color);
+        }
         
         // Function to load settings and update colors
             async function loadChartColors() {
@@ -1371,6 +1386,7 @@
                     globalChartSettings.UseMarketTime = settings.UseMarketTime || false;
                     globalChartSettings.Use24HourTime = settings.Use24HourTime !== false;
                     globalChartSettings.HiddenPlots = settings.HiddenPlots || [];
+                    globalChartSettings.ChartColorsOff = settings.ChartColorsOff || [];
                     globalChartSettings.ChartZoomFilterPercent = settings.ChartZoomFilterPercent || 1.0;
                     globalChartSettings.AutoFollowBufferPercent = settings.AutoFollowBufferPercent || 1.0;
                     globalChartSettings.PriceAxisLocation = (settings.PriceAxisLocation || 'left').toLowerCase() === 'right' ? 'right' : 'left';
@@ -2336,10 +2352,11 @@
                         const colors = datasetColors[endpoint] || { border: 'rgb(128, 128, 128)', fill: 'rgba(128, 128, 128, 0.1)' };
                         const isHiddenByDefault = globalChartSettings.HiddenPlots.includes(endpoint);
                         const isHiddenOnChart = currentChartPrefs.hiddenSeries.includes(endpoint);
+                        const isOffByColor = isSeriesOffByColorSettings(endpoint);
                         const showSeriesName = currentChartPrefs.seriesTitleVisible[endpoint] !== false;
-                        const seriesVisible = !isHiddenByDefault && !isHiddenOnChart;
+                        const seriesVisible = !isHiddenByDefault && !isHiddenOnChart && !isOffByColor;
                         const seriesTitle = showSeriesName ? datasetLabels[endpoint] : '';
-                        const showValueOnScale = true;
+                        const showValueOnScale = seriesVisible;
                         
                         if (isSpot) {
                             const lwData = dataPoints
@@ -2381,7 +2398,7 @@
                                 }
                                 lwSeriesList.push({ endpoint, series, label: datasetLabels[endpoint], color: colors.border, lastTime: null });
                             } else {
-                                series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible });
+                                series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible, lastValueVisible: showValueOnScale });
                             }
                             if (appendOnly && series && !autoFollowEnabled) {
                                 var firstNewTimeSpot = chartAppliedPointCount < optimizedLabels.length ? dateToLWTime(optimizedLabels[chartAppliedPointCount]) : null;
@@ -2428,7 +2445,7 @@
                                 lwSeriesByEndpoint[endpoint] = series;
                                 lwSeriesList.push({ endpoint, series, label: datasetLabels[endpoint], color: colors.border, lastTime: null });
                             } else {
-                                series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible });
+                                series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible, lastValueVisible: showValueOnScale });
                             }
                             if (appendOnly && series && chartAppliedPointCount < labelsToUse.length && !autoFollowEnabled) {
                                 const firstNewTime = dateToLWTime(labelsToUse[chartAppliedPointCount]);
@@ -2473,10 +2490,11 @@
                             const colorsFwd = datasetColorsFwd[endpoint] || { border: 'rgb(128, 128, 128)' };
                             const isHiddenFwd = globalChartSettings.HiddenPlots.includes(endpoint);
                             const isHiddenOnChartFwd = currentChartPrefs.hiddenSeries.includes(endpoint);
+                            const isOffByColorFwd = isSeriesOffByColorSettings(endpoint);
                             const showSeriesNameFwd = currentChartPrefs.seriesTitleVisible[endpoint] !== false;
                             const seriesTitleFwd = showSeriesNameFwd ? datasetLabels[endpoint] : '';
-                            const showValueOnScaleFwd = true;
-                            const seriesVisibleFwd = !isHiddenFwd && !isHiddenOnChartFwd;
+                            const showValueOnScaleFwd = !isHiddenFwd && !isHiddenOnChartFwd && !isOffByColorFwd;
+                            const seriesVisibleFwd = !isHiddenFwd && !isHiddenOnChartFwd && !isOffByColorFwd;
                             if (isSpot) {
                                 const lwDataFwd = dataPointsFwd
                                     .filter((p) => p != null && (typeof p.x !== 'number' || !isNaN(p.x)) && typeof p.y === 'number' && !isNaN(p.y) && isFinite(p.y))
@@ -2507,7 +2525,7 @@
                                         lwSeriesByEndpoint[endpoint] = seriesFwd;
                                         lwSeriesList.push({ endpoint, series: seriesFwd, label: datasetLabels[endpoint], color: colorsFwd.border, lastTime: null });
                                     } else {
-                                        seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd });
+                                        seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd, lastValueVisible: showValueOnScaleFwd });
                                     }
                                     if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length && !autoFollowEnabled) {
                                         var firstNewTimeFwd = dateToLWTime(optimizedLabels[chartAppliedPointCount]);
@@ -2551,7 +2569,7 @@
                                             lwSeriesByEndpoint[endpoint] = seriesFwd;
                                             lwSeriesList.push({ endpoint, series: seriesFwd, label: datasetLabels[endpoint], color: colorsFwd.border, lastTime: null });
                                         } else {
-                                            seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd });
+                                            seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd, lastValueVisible: showValueOnScaleFwd });
                                         }
                                         if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length && !autoFollowEnabled) {
                                             const firstNewTime = dateToLWTime(optimizedLabels[chartAppliedPointCount]);
@@ -2864,6 +2882,7 @@
                             globalChartSettings.UseMarketTime = s.UseMarketTime || false;
                             globalChartSettings.Use24HourTime = s.Use24HourTime !== false;
                             globalChartSettings.HiddenPlots = s.HiddenPlots || [];
+                            globalChartSettings.ChartColorsOff = s.ChartColorsOff || [];
                             globalChartSettings.ChartZoomFilterPercent = s.ChartZoomFilterPercent || 1.0;
                             globalChartSettings.AutoFollowBufferPercent = s.AutoFollowBufferPercent || 1.0;
                             globalChartSettings.PriceAxisLocation = (s.PriceAxisLocation || 'left').toLowerCase() === 'right' ? 'right' : 'left';
@@ -2879,7 +2898,9 @@
                             }
                             const isHidden = globalChartSettings.HiddenPlots.includes(e.endpoint);
                             const isHiddenOnChart = currentChartPrefs.hiddenSeries.includes(e.endpoint);
-                            e.series.applyOptions({ visible: !isHidden && !isHiddenOnChart });
+                            const isOffByColor = isSeriesOffByColorSettings(e.endpoint);
+                            const visible = !isHidden && !isHiddenOnChart && !isOffByColor;
+                            e.series.applyOptions({ visible, lastValueVisible: visible });
                         });
                         await logToBackend('info', '[Chart] Colors and visibility refreshed from settings update');
                     }

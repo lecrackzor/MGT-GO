@@ -60,6 +60,7 @@ type Settings struct {
 	TickerConfigs                      map[string]TickerConfig `yaml:"ticker_configs"`
 	TickerOrder                        []string                `yaml:"ticker_order,omitempty"`     // User-defined ticker display order
 	ChartColors                        map[string]string       `yaml:"chart_colors"`               // Color preferences for chart data series
+	ChartColorsOff                     []string                `yaml:"chart_colors_off"`           // Series hidden on charts via color settings (still collected)
 	ChartZoomFilterPercent             float64                 `yaml:"chart_zoom_filter_percent"`  // Default Y-axis zoom filter as % of current spot price
 	AutoFollowBufferPercent            float64                 `yaml:"auto_follow_buffer_percent"` // Buffer percentage for auto-follow (default 10%)
 	WindowWidth                        int                     `yaml:"window_width,omitempty"`     // Last saved window width
@@ -563,6 +564,7 @@ func getDefaultSettings() *Settings {
 		Charts:        []interface{}{},
 		Tickers:       []interface{}{},
 		TickerConfigs: make(map[string]TickerConfig),
+		ChartColorsOff: []string{},
 		ChartColors: map[string]string{
 			"spot":              "#4CAF50",
 			"zero_gamma":        "#FF9800",

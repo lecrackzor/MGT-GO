@@ -324,6 +324,14 @@ export class Settings {
              */
             this["ChartColors"] = {};
         }
+        if (!("ChartColorsOff" in $$source)) {
+            /**
+             * Series hidden on charts via color settings (still collected)
+             * @member
+             * @type {string[]}
+             */
+            this["ChartColorsOff"] = [];
+        }
         if (!("ChartZoomFilterPercent" in $$source)) {
             /**
              * Default Y-axis zoom filter as % of current spot price
@@ -414,6 +422,9 @@ export class Settings {
         }
         if ("ChartColors" in $$parsedSource) {
             $$parsedSource["ChartColors"] = $$createField42_0($$parsedSource["ChartColors"]);
+        }
+        if ("ChartColorsOff" in $$parsedSource) {
+            $$parsedSource["ChartColorsOff"] = $$createField13_0($$parsedSource["ChartColorsOff"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }

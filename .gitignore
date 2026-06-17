@@ -70,7 +70,7 @@ pprof/
 # Python ML sidecar (local-only — do not commit the side project)
 # ---------------------------------------------------------------------------
 ml/
-scripts/ml/
+scripts/
 tests/
 
 # Python bytecode / caches (any stray .py outside the dirs above)
