@@ -24,9 +24,8 @@ func NewSmartQueryPlanner(settings *config.Settings, enabledTickers []string, qu
 // endpointPlotsMap maps API endpoints to the plot names they provide
 // Used to determine if an endpoint can be skipped when all its plots are hidden
 var endpointPlotsMap = map[string][]string{
-	"classic_zero":        {"spot", "zero_gamma"},
-	"classic_zero_majors": {"major_pos_vol", "major_neg_vol", "major_positive", "major_negative", "major_pos_oi", "major_neg_oi", "major_long_gamma", "major_short_gamma"},
-	"gamma_zero":          {"zero_gamma", "major_long_gamma", "major_short_gamma"},
+	"classic_zero": {"spot", "zero_gamma", "major_pos_vol", "major_neg_vol", "major_pos_oi", "major_neg_oi"},
+	"gamma_zero":   {"zero_gamma", "major_long_gamma", "major_short_gamma", "major_positive", "major_negative"},
 }
 
 // BuildOptimizedPlan builds an optimized query plan for the given tickers

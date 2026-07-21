@@ -53,16 +53,14 @@ var Endpoints = map[string]string{
 
 // GetEndpointsForTiers returns all endpoints available for the given subscription tiers
 func GetEndpointsForTiers(tiers []string) []string {
+	// majors/maxchange intentionally omitted: chart full/zero/one already
+	// include major_* levels; maxchange lookbacks and net_gex_* are unused.
 	tierEndpoints := map[string][]string{
 		"classic": {
 			"classic_full", "classic_zero", "classic_one",
-			"classic_full_majors", "classic_zero_majors", "classic_one_majors",
-			"classic_full_maxchange", "classic_zero_maxchange", "classic_one_maxchange",
 		},
 		"state": {
 			"state_full", "state_zero", "state_one",
-			"state_full_majors", "state_zero_majors", "state_one_majors",
-			"state_full_maxchange", "state_zero_maxchange", "state_one_maxchange",
 			"delta_zero", "gamma_zero", "delta_one", "gamma_one",
 			// NOTE: legacy aliases (state_gamma, state_onegamma, state_delta,
 			// state_onedelta) intentionally excluded - they map to the same URLs
@@ -101,11 +99,10 @@ func GetChartEndpointsForTiers(tiers []string) []string {
 	// These endpoints provide: spot, zero_gamma, major volumes, major gamma, major positions
 	tierChartEndpoints := map[string][]string{
 		"classic": {
-			"classic_zero",        // spot, zero_gamma
-			"classic_zero_majors", // major volumes, gamma, positions
+			"classic_zero", // spot, zero_gamma, major_pos/neg_vol/oi
 		},
 		"state": {
-			"gamma_zero", // State tier gamma data
+			"gamma_zero", // major_long/short_gamma, major_positive/negative
 		},
 		"orderflow": {
 			// Orderflow doesn't have specific chart endpoints yet
