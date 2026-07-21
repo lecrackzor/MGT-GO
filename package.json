@@ -1,8 +1,7 @@
 {
   "name": "go",
   "version": "1.0.0",
-  "description": "<div align=\"center\">\r   <img src=\"MGT.png\" alt=\"Market Terminal Gexbot Screenshot\">\r </div>",
-  "main": "runtime-debug.js",
+  "description": "Market Terminal Gexbot (Go/Wails)",
   "directories": {
     "doc": "docs"
   },
@@ -20,8 +19,5 @@
   "bugs": {
     "url": "https://github.com/lecrackzor/MGT-GO/issues"
   },
-  "homepage": "https://github.com/lecrackzor/MGT-GO#readme",
-  "devDependencies": {
-    "lightweight-charts": "^5.1.0"
-  }
+  "homepage": "https://github.com/lecrackzor/MGT-GO#readme"
 }

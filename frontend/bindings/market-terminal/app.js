@@ -38,6 +38,15 @@ export function CompleteSetup(apiKey, subscriptionTiers, initialTickers) {
 }
 
 /**
+ * FocusMainWindow brings the main window to the foreground.
+ * Used when a second app instance is launched (single-instance guard).
+ * @returns {$CancellablePromise<void>}
+ */
+export function FocusMainWindow() {
+    return $Call.ByID(1159429910);
+}
+
+/**
  * GetAvailableDates returns a list of available dates (newest first) from data directories
  * Scans for directories matching "Tickers MM.DD.YYYY" pattern
  * Returns dates in "YYYY-MM-DD" format, sorted newest first
@@ -99,21 +108,14 @@ export function GetMarketHoursLocal() {
 }
 
 /**
- * GetNextMarketOpenLocalTime returns the next market open time in user's local timezone
- * Matches Python's get_next_market_open_time() logic exactly
- * Returns ISO format string in local timezone for JavaScript Date parsing
+ * GetNextMarketOpenLocalTime returns the next market open time as an RFC3339
+ * string with explicit ET offset - JavaScript Date parsing converts it to the
+ * browser's local timezone. Called repeatedly by the frontend when the market
+ * is closed, so it only logs when the computed time changes.
  * @returns {$CancellablePromise<string>}
  */
 export function GetNextMarketOpenLocalTime() {
     return $Call.ByID(4021482484);
-}
-
-/**
- * GetNextMarketOpenTime returns the next market open time in ISO format (Eastern Time)
- * @returns {$CancellablePromise<string>}
- */
-export function GetNextMarketOpenTime() {
-    return $Call.ByID(105746055);
 }
 
 /**
@@ -128,7 +130,7 @@ export function GetSettings() {
 
 /**
  * GetTickerData loads ticker data from the database
- * dateStr is in format "2006-01-02" (YYYY-MM-DD)
+ * dateStr is in format "2006-01-02" (YYYY-MM-DD). Empty string means "current market date" (resolved at request time so rollover works without restart).
  * Returns map[string][]interface{} where each key is a field name and value is an array of values
  * Returns empty data if database doesn't exist yet (data collection hasn't started)
  * CRITICAL: Uses LoadTickerData instead of LoadFromFile to skip profiles_blob and prevent memory issues
@@ -138,22 +140,6 @@ export function GetSettings() {
  */
 export function GetTickerData(ticker, dateStr) {
     return $Call.ByID(2572115321, ticker, dateStr).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
-    }));
-}
-
-/**
- * GetTickerDataRange loads ticker data within a time range
- * dateStr is in format "2006-01-02" (YYYY-MM-DD)
- * Returns map[string][]interface{} where each key is a field name and value is an array of values
- * @param {string} ticker
- * @param {string} dateStr
- * @param {number} startTime
- * @param {number} endTime
- * @returns {$CancellablePromise<{ [_: string]: any }>}
- */
-export function GetTickerDataRange(ticker, dateStr, startTime, endTime) {
-    return $Call.ByID(2955163430, ticker, dateStr, startTime, endTime).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -176,22 +162,12 @@ export function Greet(name) {
 }
 
 /**
- * IsMarketOpen checks if the market is currently open
+ * IsMarketOpen checks if the market is currently open.
+ * Called by the frontend every second, so only log when the state changes.
  * @returns {$CancellablePromise<boolean>}
  */
 export function IsMarketOpen() {
     return $Call.ByID(2919903461);
-}
-
-/**
- * LogFrontend logs a message from the frontend to the backend console and log file
- * This allows frontend errors to appear in the terminal window
- * @param {string} level
- * @param {string} message
- * @returns {$CancellablePromise<void>}
- */
-export function LogFrontend(level, message) {
-    return $Call.ByID(859772553, level, message);
 }
 
 /**
@@ -212,16 +188,6 @@ export function OpenChartWindow(ticker, dateStr) {
  */
 export function RegisterTickerDisplay(ticker) {
     return $Call.ByID(3357579540, ticker);
-}
-
-/**
- * ResizeMainWindow resizes the main window to the specified dimensions
- * @param {number} width
- * @param {number} height
- * @returns {$CancellablePromise<void>}
- */
-export function ResizeMainWindow(width, height) {
-    return $Call.ByID(3540397824, width, height);
 }
 
 /**
@@ -252,35 +218,6 @@ export function SaveWindowSize(width, height) {
  */
 export function SetApp(app) {
     return $Call.ByID(4256893662, app);
-}
-
-/**
- * TestFrontendConnection is a simple test method that the frontend can call immediately
- * This verifies the frontend JavaScript is executing and can reach the backend
- * @returns {$CancellablePromise<string>}
- */
-export function TestFrontendConnection() {
-    return $Call.ByID(892614793);
-}
-
-/**
- * UnregisterTickerDisplay unregisters a ticker from being displayed
- * @param {string} ticker
- * @returns {$CancellablePromise<void>}
- */
-export function UnregisterTickerDisplay(ticker) {
-    return $Call.ByID(3435906149, ticker);
-}
-
-/**
- * VerifyDataCollection verifies that data collection is working
- * Returns a map with verification results
- * @returns {$CancellablePromise<{ [_: string]: any }>}
- */
-export function VerifyDataCollection() {
-    return $Call.ByID(2182467256).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
-    }));
 }
 
 // Private type creation functions

@@ -3,7 +3,6 @@ package database
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,7 +18,6 @@ import (
 // DataWriter handles writing market data to SQLite databases
 type DataWriter struct {
 	pool              *ConnectionPool
-	schemaManager     *SchemaManager
 	mu                sync.RWMutex
 	pendingWrites     map[string][]*PendingWrite // ticker -> []PendingWrite
 	firstPendingTime  map[string]time.Time       // When first pending write was added (for flush timing)
@@ -66,6 +64,8 @@ func NewDataWriter(settings *config.Settings, debugPrint func(string, string)) *
 }
 
 // startBackgroundFlusher starts a goroutine that periodically flushes pending writes
+// and checkpoints WAL files once a minute (instead of after every flush, which
+// caused lock contention with readers)
 func (dw *DataWriter) startBackgroundFlusher() {
 	dw.wg.Add(1)
 	go func() {
@@ -75,6 +75,9 @@ func (dw *DataWriter) startBackgroundFlusher() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		
+		const checkpointEverySec = 60
+		secondsSinceCheckpoint := 0
+		
 		for {
 			select {
 			case <-dw.stopChan:
@@ -82,6 +85,12 @@ func (dw *DataWriter) startBackgroundFlusher() {
 				return
 			case <-ticker.C:
 				dw.checkAndFlushPending()
+				
+				secondsSinceCheckpoint++
+				if secondsSinceCheckpoint >= checkpointEverySec {
+					secondsSinceCheckpoint = 0
+					dw.pool.CheckpointAll()
+				}
 			}
 		}
 	}()
@@ -110,31 +119,6 @@ func (dw *DataWriter) checkAndFlushPending() {
 			}
 		}
 	}
-}
-
-// Stop stops the background flusher and flushes any remaining pending writes
-func (dw *DataWriter) Stop() {
-	dw.debugPrint("Stopping DataWriter...", "writer")
-	
-	// Signal background flusher to stop
-	close(dw.stopChan)
-	dw.wg.Wait()
-	
-	// Flush any remaining pending writes
-	dw.mu.RLock()
-	tickers := make([]string, 0)
-	for ticker := range dw.pendingWrites {
-		tickers = append(tickers, ticker)
-	}
-	dw.mu.RUnlock()
-	
-	for _, ticker := range tickers {
-		if err := dw.FlushTicker(ticker); err != nil {
-			dw.debugPrint(fmt.Sprintf("Stop: failed to flush %s: %v", ticker, err), "error")
-		}
-	}
-	
-	dw.debugPrint("DataWriter stopped", "writer")
 }
 
 // WriteDataEntry writes a single data entry (queues for batch write)
@@ -530,41 +514,9 @@ func (dw *DataWriter) flushDate(ticker string, date time.Time, writes []*Pending
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	dw.debugPrint(fmt.Sprintf("flushDate: Transaction committed for %s to %s", ticker, dbPath), "writer")
-
-	// WAL checkpointing: Checkpoint WAL file after every flush (prevents WAL file growth)
-	// This matches Python version which checkpoints every flush
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, err := db.Conn(ctx)
-	if err == nil {
-		// Execute WAL checkpoint (TRUNCATE mode moves WAL data to main DB and truncates WAL file)
-		_, err = conn.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
-		if err != nil {
-			// Log but don't fail - checkpoint is optional
-			dw.debugPrint(fmt.Sprintf("WAL checkpoint warning for %s: %v", ticker, err), "writer")
-		} else {
-			dw.debugPrint(fmt.Sprintf("WAL checkpoint completed for %s", ticker), "writer")
-		}
-		conn.Close()
-	}
-
-	// Verify database file exists after commit and checkpoint
-	if fileInfo, err := os.Stat(dbPath); err != nil {
-		dw.debugPrint(fmt.Sprintf("flushDate: ⚠️ WARNING - Database file does not exist after commit: %s (error: %v)", dbPath, err), "error")
-	} else {
-		dw.debugPrint(fmt.Sprintf("flushDate: ✅ Database file verified: %s (size: %d bytes)", dbPath, fileInfo.Size()), "writer")
-	}
-
-	// Also check for WAL file (should be empty or small after checkpoint)
-	walPath := dbPath + "-wal"
-	if walInfo, err := os.Stat(walPath); err == nil {
-		if walInfo.Size() > 0 {
-			dw.debugPrint(fmt.Sprintf("flushDate: WAL file exists: %s (size: %d bytes) - checkpoint may not have completed", walPath, walInfo.Size()), "writer")
-		} else {
-			dw.debugPrint(fmt.Sprintf("flushDate: WAL file is empty (checkpoint successful): %s", walPath), "writer")
-		}
-	}
+	// Note: WAL checkpointing happens periodically in the background flusher
+	// (and on shutdown), not per-flush - per-flush TRUNCATE checkpoints caused
+	// constant lock contention with readers.
 
 	dw.debugPrint(fmt.Sprintf("flushDate: ✅ Successfully flushed %d writes for %s to %s", len(writes), ticker, dbPath), "writer")
 	return nil
@@ -682,10 +634,14 @@ func (dw *DataWriter) deduplicateWrites(writes []*PendingWrite, tolerance float6
 	return result
 }
 
-// Close closes all connections and flushes any pending writes
-// Ensures all data is written to disk and WAL files are cleaned up
+// Close stops the background flusher, flushes all pending writes, and closes
+// all connections. Ensures data is on disk and WAL files are cleaned up.
 func (dw *DataWriter) Close() error {
 	dw.debugPrint("DataWriter: Closing - flushing all pending writes", "writer")
+	
+	// Stop the background flusher first so it doesn't race with final flushes
+	close(dw.stopChan)
+	dw.wg.Wait()
 	
 	// Flush all pending writes before closing
 	dw.mu.Lock()

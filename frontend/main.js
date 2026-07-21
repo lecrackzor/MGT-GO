@@ -418,7 +418,13 @@ window.verifyMarketDateNoCache = async function () {
     console.log('[verifyMarketDateNoCache] Done. Check terminal: 3 "[api/market-date] requested" lines = no cache.');
 };
 
-// Update market status and countdown - completely rewritten to be simple and reliable
+// Cached next-market-open time: refreshed once a minute instead of calling
+// the backend on every 1s countdown tick
+let cachedNextOpenISO = null;
+let cachedNextOpenFetchedAt = 0;
+const NEXT_OPEN_CACHE_MS = 60000;
+
+// Update market status and countdown (runs every second - keep it quiet)
 async function updateMarketStatus() {
     const marketStatusEl = document.getElementById('market-status');
     if (!marketStatusEl) {
@@ -426,28 +432,10 @@ async function updateMarketStatus() {
         return;
     }
     
-    // Check if App is available
-    console.log('[Market Status] Checking App availability:', {
-        App: typeof App,
-        IsMarketOpen: typeof App?.IsMarketOpen,
-        GetNextMarketOpenLocalTime: typeof App?.GetNextMarketOpenLocalTime,
-        AppKeys: App ? Object.keys(App) : 'App is null/undefined'
-    });
-    
     if (!App || typeof App.IsMarketOpen !== 'function' || typeof App.GetNextMarketOpenLocalTime !== 'function') {
         const errorMsg = '[Market Status] ERROR: App or required methods not available - This is why you see "Checking market status..."';
-        console.error('========================================');
         console.error(errorMsg);
-        console.error('[Market Status] App exists:', !!App);
-        console.error('[Market Status] App type:', typeof App);
-        console.error('[Market Status] IsMarketOpen type:', typeof App?.IsMarketOpen);
-        console.error('[Market Status] GetNextMarketOpenLocalTime type:', typeof App?.GetNextMarketOpenLocalTime);
-        console.error('[Market Status] App keys:', App ? Object.keys(App) : 'N/A');
-        console.error('========================================');
-        
-        // Log to backend terminal
         await logToBackend('ERROR', errorMsg);
-        await logToBackend('ERROR', `App exists: ${!!App}, IsMarketOpen: ${typeof App?.IsMarketOpen}, GetNextMarketOpenLocalTime: ${typeof App?.GetNextMarketOpenLocalTime}`);
         marketStatusEl.textContent = 'Backend not connected';
         marketStatusEl.style.background = 'rgba(244, 67, 54, 0.2)';
         marketStatusEl.style.color = '#f44336';
@@ -455,44 +443,32 @@ async function updateMarketStatus() {
     }
     
     try {
-        // Show browser's local time
-        const browserNow = new Date();
-        const browserTimeStr = browserNow.toLocaleString('en-US', {
-            timeZoneName: 'short',
-            hour12: false
-        });
-        const browserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        console.log('[Market Status] Browser local time:', browserTimeStr, 'Timezone:', browserTZ);
-        console.log('[Market Status] Browser Date object:', browserNow.toString(), 'ISO:', browserNow.toISOString());
-        
         // Check if market is open
         const isOpen = await App.IsMarketOpen();
         
         if (isOpen) {
             // Market is open
+            cachedNextOpenISO = null;
             marketStatusEl.textContent = 'Market Open';
             marketStatusEl.style.background = 'rgba(76, 175, 80, 0.2)';
             marketStatusEl.style.color = '#4CAF50';
             return;
         }
         
-        // Market is closed - get next open time and calculate countdown
-        console.log('[Market Status] === CALLING GetNextMarketOpenLocalTime ===');
-        console.log('[Market Status] App object:', App);
-        console.log('[Market Status] App.GetNextMarketOpenLocalTime type:', typeof App.GetNextMarketOpenLocalTime);
-        
-        let nextOpenISO;
-        try {
-            nextOpenISO = await App.GetNextMarketOpenLocalTime();
-            console.log('[Market Status] SUCCESS: Received nextOpenISO:', nextOpenISO);
-            console.log('[Market Status] nextOpenISO type:', typeof nextOpenISO);
-            console.log('[Market Status] nextOpenISO length:', nextOpenISO?.length);
-        } catch (error) {
-            console.error('[Market Status] ERROR calling GetNextMarketOpenLocalTime:', error);
-            marketStatusEl.textContent = 'Market status error';
-            marketStatusEl.style.background = 'rgba(158, 158, 158, 0.2)';
-            marketStatusEl.style.color = '#9E9E9E';
-            return;
+        // Market is closed - get next open time (cached, refreshed once a minute)
+        let nextOpenISO = cachedNextOpenISO;
+        if (!nextOpenISO || (Date.now() - cachedNextOpenFetchedAt) >= NEXT_OPEN_CACHE_MS) {
+            try {
+                nextOpenISO = await App.GetNextMarketOpenLocalTime();
+                cachedNextOpenISO = nextOpenISO;
+                cachedNextOpenFetchedAt = Date.now();
+            } catch (error) {
+                console.error('[Market Status] ERROR calling GetNextMarketOpenLocalTime:', error);
+                marketStatusEl.textContent = 'Market status error';
+                marketStatusEl.style.background = 'rgba(158, 158, 158, 0.2)';
+                marketStatusEl.style.color = '#9E9E9E';
+                return;
+            }
         }
         
         if (!nextOpenISO) {
@@ -507,48 +483,20 @@ async function updateMarketStatus() {
         const nextOpen = new Date(nextOpenISO);
         const now = new Date();
         
-        console.log('[Market Status] === DATE PARSING DEBUG ===');
-        console.log('[Market Status] nextOpenISO (RFC3339 from backend):', nextOpenISO);
-        console.log('[Market Status] nextOpen (parsed Date object):', nextOpen.toString());
-        console.log('[Market Status] nextOpen.getTime() (milliseconds):', nextOpen.getTime());
-        console.log('[Market Status] nextOpen.toISOString() (UTC):', nextOpen.toISOString());
-        console.log('[Market Status] nextOpen local string:', nextOpen.toLocaleString('en-US', { 
-            timeZoneName: 'short',
-            hour12: false,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }));
-        console.log('[Market Status] now (browser Date object):', now.toString());
-        console.log('[Market Status] now.getTime() (milliseconds):', now.getTime());
-        console.log('[Market Status] now.toISOString() (UTC):', now.toISOString());
-        console.log('[Market Status] now local string:', now.toLocaleString('en-US', { 
-            timeZoneName: 'short',
-            hour12: false,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }));
-        
         // Validate date
         if (isNaN(nextOpen.getTime())) {
             console.error('[Market Status] Invalid date:', nextOpenISO);
+            cachedNextOpenISO = null;
             marketStatusEl.textContent = 'Market Closed';
             return;
         }
         
         // Calculate time difference (both dates are in browser's local timezone)
         const diff = nextOpen.getTime() - now.getTime();
-        console.log('[Market Status] Time difference (ms):', diff);
         
         if (diff <= 0) {
-            // Time has passed, market should be open - re-check
+            // Time has passed, market should be open - invalidate cache and re-check
+            cachedNextOpenISO = null;
             const recheckOpen = await App.IsMarketOpen();
             if (recheckOpen) {
                 marketStatusEl.textContent = 'Market Open';
@@ -568,13 +516,6 @@ async function updateMarketStatus() {
         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((diff % (1000 * 60)) / 1000);
         
-        console.log('[Market Status] Countdown calculation:', {
-            diffMs: diff,
-            hours: hours,
-            minutes: minutes,
-            seconds: seconds
-        });
-        
         // Format next open time based on UseMarketTime setting
         const cached = loadSettingsFromCache();
         const useMarketTime = cached?.settings?.UseMarketTime || false;
@@ -588,8 +529,6 @@ async function updateMarketStatus() {
             timeOptions.timeZone = 'America/New_York';
         }
         const openTimeStr = nextOpen.toLocaleTimeString('en-US', timeOptions);
-        
-        console.log('[Market Status] Formatted open time string:', openTimeStr);
         
         // Format countdown message
         let countdownText;
@@ -605,7 +544,6 @@ async function updateMarketStatus() {
             countdownText = `Market Closed - Opens in ${seconds}s (${openTimeStr})`;
         }
         
-        console.log('[Market Status] Final countdown text:', countdownText);
         marketStatusEl.textContent = countdownText;
         marketStatusEl.style.background = 'rgba(255, 193, 7, 0.2)';
         marketStatusEl.style.color = '#FFC107';
@@ -1083,6 +1021,7 @@ async function initializeUI() {
         console.log('[InitializeUI] Calling App.GetEnabledTickers()...');
         // Get enabled tickers
         let tickers = await App.GetEnabledTickers();
+        cachedEnabledTickers = tickers; // seed the 1s-loop cache
         console.log('[InitializeUI] Enabled tickers received:', tickers);
         console.log('[InitializeUI] Ticker count:', tickers ? tickers.length : 0);
         
@@ -2097,6 +2036,7 @@ async function saveSettings() {
             try {
                 console.log('[Save Settings] Calling GetEnabledTickers()...');
                 let enabledTickers = await App.GetEnabledTickers();
+                cachedEnabledTickers = enabledTickers; // refresh the 1s-loop cache
                 console.log('[Save Settings] GetEnabledTickers returned:', enabledTickers, 'length:', enabledTickers?.length);
                 
                 if (enabledTickers && enabledTickers.length > 0) {
@@ -2132,6 +2072,17 @@ async function saveSettings() {
 let periodicUpdateInterval = null;
 // Market date rollover check: when user is viewing "today", advance to new date after rollover (e.g. market open)
 let marketDateRolloverInterval = null;
+
+// Cached enabled-tickers list: seeded at init and refreshed on settings save,
+// so the 1s update loop doesn't ask the backend for it on every tick
+let cachedEnabledTickers = null;
+
+async function getEnabledTickersCached() {
+    if (cachedEnabledTickers === null) {
+        cachedEnabledTickers = await App.GetEnabledTickers();
+    }
+    return cachedEnabledTickers;
+}
 
 // Start periodic updates
 // Monitor window size and save periodically (backup for resize events)
@@ -2230,7 +2181,7 @@ function startPeriodicUpdates() {
 // Update ticker data (parallelized for performance)
 async function updateTickerData() {
     try {
-        const tickers = await App.GetEnabledTickers();
+        const tickers = await getEnabledTickersCached();
         // Determine which date to use for loading data
         let dateStr = selectedDate;
         const viewingToday = (selectedDate === lastKnownMarketDate);
@@ -2249,28 +2200,9 @@ async function updateTickerData() {
                 console.warn('[UpdateTickerData] Failed to get market date, using today:', error);
                 dateStr = new Date().toISOString().split('T')[0];
             }
-        } else if (viewingToday) {
-            try {
-                const live = await fetchMarketDate();
-                if (live && live !== selectedDate) {
-                    lastKnownMarketDate = live;
-                    selectedDate = live;
-                    await loadAvailableDates();
-                    selectedDate = live;
-                    const dateSelector = document.getElementById('date-selector');
-                    if (dateSelector) {
-                        for (let i = 0; i < dateSelector.options.length; i++) {
-                            if (dateSelector.options[i].value === live) {
-                                dateSelector.selectedIndex = i;
-                                break;
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                // ignore
-            }
         }
+        // Note: when viewing "today", market-date rollover is handled by the
+        // 60s marketDateRolloverInterval - no per-second fetch here.
 
         // When showing "today", pass "" so backend resolves current market date at request time (rollover without restart)
         const dateStrForRequest = useBackendToday ? '' : dateStr;

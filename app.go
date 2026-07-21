@@ -41,7 +41,6 @@ type App struct {
 	writeQueue         *coordinator.PriorityWriteQueue
 	coordinator        *coordinator.DataCollectionCoordinator
 	chartTracker       *charts.ChartTracker
-	healthCheck        *coordinator.HealthCheck
 	enabledTickers     []string
 	shuttingDown       bool
 	shutdownLock       sync.RWMutex
@@ -53,6 +52,7 @@ type App struct {
 	// Tracks last logged market-open state so the 1s frontend poll
 	// only produces a log line on state changes
 	lastLoggedMarketOpen *bool
+	lastLoggedNextOpen   string
 	marketOpenLogLock    sync.Mutex
 }
 
@@ -283,12 +283,6 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 				utils.Logf("✗ WARNING: Per-ticker scheduler Start() called but IsRunning() returns false")
 			}
 
-			// Start health check system
-			if a.healthCheck != nil {
-				a.healthCheck.Start()
-				utils.Logf("Health check system started")
-			}
-
 			// Start date rollover monitor
 			if a.coordinator != nil {
 				a.coordinator.StartDateRolloverMonitor()
@@ -387,11 +381,6 @@ func (a *App) ServiceShutdown() error {
 		a.debugPrint(fmt.Sprintf("ServiceShutdown: Closed %d chart window(s)", chartWindowCount), "system")
 	}
 
-	// Stop health check system
-	if a.healthCheck != nil {
-		a.healthCheck.Stop()
-	}
-
 	// Stop date rollover monitor
 	if a.coordinator != nil {
 		a.coordinator.StopDateRolloverMonitor()
@@ -438,14 +427,6 @@ func (a *App) Greet(name string) string {
 // GetVersion returns the application version
 func (a *App) GetVersion() string {
 	return "1.0.0 (Go/Wails)"
-}
-
-// ResizeMainWindow resizes the main window to the specified dimensions
-func (a *App) ResizeMainWindow(width, height int) {
-	if a.mainWindow != nil {
-		a.mainWindow.SetSize(width, height)
-		utils.Logf("Main window resized to %dx%d", width, height)
-	}
 }
 
 // FocusMainWindow brings the main window to the foreground.
@@ -878,34 +859,6 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 	return result, nil
 }
 
-// GetTickerDataRange loads ticker data within a time range
-// dateStr is in format "2006-01-02" (YYYY-MM-DD)
-// Returns map[string][]interface{} where each key is a field name and value is an array of values
-func (a *App) GetTickerDataRange(ticker string, dateStr string, startTime, endTime float64) (map[string]interface{}, error) {
-	// Parse date string in ET (not UTC)
-	date, err := utils.ParseDateInET(dateStr)
-	if err != nil {
-		// Try current market date if parsing fails
-		date = utils.GetMarketDate()
-		// Extract just the date part at midnight ET
-		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, utils.GetMarketTimezone())
-	}
-
-	// Load data (returns map[string][]interface{})
-	data, err := a.dataLoader.LoadTimeRange(ticker, date, startTime, endTime)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to map[string]interface{} for JSON serialization
-	result := make(map[string]interface{})
-	for k, v := range data {
-		result[k] = v
-	}
-
-	return result, nil
-}
-
 // filterChartData filters out NaN and 0 values per-field while maintaining timestamp alignment
 // This prevents vertical lines in charts and reduces memory usage
 // Each field is filtered independently - invalid values are replaced with nil (Chart.js will skip them)
@@ -1231,80 +1184,16 @@ func (a *App) IsMarketOpen() bool {
 	return isOpen
 }
 
-// GetNextMarketOpenTime returns the next market open time in ISO format (Eastern Time)
-func (a *App) GetNextMarketOpenTime() string {
-	now := utils.NowMarketTime()
-	today := now
-
-	// Check if it's a weekend
-	weekday := today.Weekday()
-	if weekday == time.Saturday || weekday == time.Sunday {
-		// Weekend: next market open is Monday at 9:30 AM ET
-		daysUntilMonday := int(time.Monday - weekday)
-		if daysUntilMonday <= 0 {
-			daysUntilMonday += 7
-		}
-		nextMonday := today.AddDate(0, 0, daysUntilMonday)
-		nextOpen := time.Date(nextMonday.Year(), nextMonday.Month(), nextMonday.Day(), 9, 30, 0, 0, utils.GetMarketTimezone())
-		return nextOpen.Format(time.RFC3339)
-	}
-
-	// Weekday: check if before or after market hours today
-	marketOpen, marketClose := utils.MarketOpenCloseTimes(today)
-
-	if now.Before(marketOpen) {
-		// Before market open today: return today's open time
-		return marketOpen.Format(time.RFC3339)
-	} else if now.After(marketClose) || now.Equal(marketClose) {
-		// After market close: return next weekday's open time
-		daysToAdd := 1
-		if weekday == time.Friday {
-			daysToAdd = 3 // Friday -> Monday
-		}
-		nextDay := today.AddDate(0, 0, daysToAdd)
-		nextOpen := time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), 9, 30, 0, 0, utils.GetMarketTimezone())
-		return nextOpen.Format(time.RFC3339)
-	}
-
-	// Market is currently open: return current time (shouldn't happen, but handle it)
-	return marketOpen.Format(time.RFC3339)
-}
-
-// GetNextMarketOpenLocalTime returns the next market open time in user's local timezone
-// Matches Python's get_next_market_open_time() logic exactly
-// Returns ISO format string in local timezone for JavaScript Date parsing
+// GetNextMarketOpenLocalTime returns the next market open time as an RFC3339
+// string with explicit ET offset - JavaScript Date parsing converts it to the
+// browser's local timezone. Called repeatedly by the frontend when the market
+// is closed, so it only logs when the computed time changes.
 func (a *App) GetNextMarketOpenLocalTime() string {
-	// MISSION CRITICAL: Log immediately when function is called
-	log.Printf("=== GetNextMarketOpenLocalTime CALLED ===")
-	utils.Logf("[system] === GetNextMarketOpenLocalTime CALLED ===")
-
 	nowMarket := utils.NowMarketTime() // Current time in ET
-	nowLocal := time.Now()             // Current time in server's local timezone
 	today := nowMarket
 
-	// Get market open/close times for today
-	marketOpenET, marketCloseET := utils.MarketOpenCloseTimes(today)
-
-	// MISSION CRITICAL: Show current times - use multiple logging methods
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)",
-		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Current local time=%s (%s)",
-		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Time difference between ET and local=%s",
-		nowLocal.Sub(nowMarket.In(nowLocal.Location())).String())
-
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Current market time (ET)=%s (%s)",
-		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Current local time=%s (%s)",
-		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Time difference between ET and local=%s",
-		nowLocal.Sub(nowMarket.In(nowLocal.Location())).String())
-
 	var targetOpenET time.Time
-
-	// Check if today is a weekend (Saturday=6, Sunday=0 in Go)
 	todayWeekday := today.Weekday()
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Weekday=%v (0=Sunday, 6=Saturday)", todayWeekday)
 
 	if todayWeekday == time.Saturday || todayWeekday == time.Sunday {
 		// It's a weekend, find next Monday
@@ -1314,71 +1203,39 @@ func (a *App) GetNextMarketOpenLocalTime() string {
 		}
 		nextTradingDay := today.AddDate(0, 0, daysUntilMonday)
 		targetOpenET, _ = utils.MarketOpenCloseTimes(nextTradingDay)
-		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekend detected, next Monday ET=%s",
-			targetOpenET.Format("2006-01-02 15:04:05 MST"))
 	} else {
-		// It's a weekday, check if market has opened/closed today
-		utils.Logf("[system] GetNextMarketOpenLocalTime: Weekday - market open ET=%s, close ET=%s",
-			marketOpenET.Format("15:04:05"), marketCloseET.Format("15:04:05"))
+		marketOpenET, marketCloseET := utils.MarketOpenCloseTimes(today)
 
 		if nowMarket.Before(marketOpenET) {
 			// Market hasn't opened yet today
 			targetOpenET = marketOpenET
-			utils.Logf("[system] GetNextMarketOpenLocalTime: Before market open, using today's open ET=%s",
-				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		} else if nowMarket.After(marketCloseET) || nowMarket.Equal(marketCloseET) {
-			// Market has closed, find next trading day
+			// Market has closed, find next trading day (skip weekends)
 			nextDay := today.AddDate(0, 0, 1)
-			// Skip weekends (find next weekday)
 			for nextDay.Weekday() == time.Saturday || nextDay.Weekday() == time.Sunday {
 				nextDay = nextDay.AddDate(0, 0, 1)
 			}
 			targetOpenET, _ = utils.MarketOpenCloseTimes(nextDay)
-			utils.Logf("[system] GetNextMarketOpenLocalTime: After market close, next trading day ET=%s",
-				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		} else {
 			// Market is open (shouldn't reach here, but handle it)
-			// Return today's open time as fallback
 			targetOpenET = marketOpenET
-			utils.Logf("[system] GetNextMarketOpenLocalTime: Market is open, using today's open as fallback ET=%s",
-				targetOpenET.Format("2006-01-02 15:04:05 MST"))
 		}
 	}
 
-	// Convert target open time to server's local timezone for logging
-	targetOpenLocal := targetOpenET.In(time.Local)
-
-	// CRITICAL: Format RFC3339 with explicit timezone offset
-	// RFC3339 format: "2006-01-02T15:04:05-05:00" (includes timezone offset)
-	// This ensures JavaScript Date.parse() correctly converts ET to browser's local timezone
+	// RFC3339 includes the timezone offset, so JavaScript Date.parse()
+	// correctly converts ET to the browser's local timezone
 	result := targetOpenET.Format(time.RFC3339)
 
-	// Verify the RFC3339 string is correct by parsing it back
-	parsedBack, err := time.Parse(time.RFC3339, result)
-	if err != nil {
-		log.Printf("[TIME] ERROR: Failed to parse RFC3339 back: %v", err)
-	} else {
-		parsedBackLocal := parsedBack.In(time.Local)
-		log.Printf("[TIME] GetNextMarketOpenLocalTime: RFC3339 verification - parsed back to local=%s",
-			parsedBackLocal.Format("2006-01-02 15:04:05 MST"))
+	a.marketOpenLogLock.Lock()
+	changed := a.lastLoggedNextOpen != result
+	if changed {
+		a.lastLoggedNextOpen = result
 	}
-
-	// MISSION CRITICAL: Show conversion - use multiple logging methods
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open ET=%s",
-		targetOpenET.Format("2006-01-02 15:04:05 MST"))
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)",
-		targetOpenLocal.Format("2006-01-02 15:04:05 MST"), targetOpenLocal.Location().String())
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Returning RFC3339 (ET)=%s", result)
-	log.Printf("[TIME] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s",
-		targetOpenLocal.Format("2006-01-02 15:04:05 MST"))
-
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open ET=%s",
-		targetOpenET.Format("2006-01-02 15:04:05 MST"))
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Target open local (server)=%s (%s)",
-		targetOpenLocal.Format("2006-01-02 15:04:05 MST"), targetOpenLocal.Location().String())
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Returning RFC3339=%s", result)
-	utils.Logf("[system] GetNextMarketOpenLocalTime: Expected browser local time (CST): %s",
-		targetOpenLocal.Format("2006-01-02 15:04:05 MST"))
+	a.marketOpenLogLock.Unlock()
+	if changed {
+		utils.Logf("[system] GetNextMarketOpenLocalTime: Next market open = %s (ET now: %s)",
+			result, nowMarket.Format("2006-01-02 15:04:05 MST"))
+	}
 
 	return result
 }
@@ -1399,37 +1256,11 @@ func createWindowFromApp(appRef interface{}, options application.WebviewWindowOp
 	return nil
 }
 
-// LogFrontend logs a message from the frontend to the backend console and log file
-// This allows frontend errors to appear in the terminal window
-func (a *App) LogFrontend(level string, message string) {
-	// Log to both stdout (terminal) and file logger
-	logMsg := fmt.Sprintf("[FRONTEND-%s] %s", level, message)
-	log.Println(logMsg)                            // Terminal/stdout
-	utils.Logf("[frontend-%s] %s", level, message) // File logger
-	a.debugPrint(message, "frontend")
-}
-
-// TestFrontendConnection is a simple test method that the frontend can call immediately
-// This verifies the frontend JavaScript is executing and can reach the backend
-func (a *App) TestFrontendConnection() string {
-	log.Println("[FRONTEND-TEST] TestFrontendConnection called - frontend JavaScript is executing!")
-	utils.Logf("[frontend-test] TestFrontendConnection called - frontend JavaScript is executing!")
-	return "SUCCESS: Frontend can call backend methods"
-}
-
 // RegisterTickerDisplay registers a ticker as being displayed in the frontend
 func (a *App) RegisterTickerDisplay(ticker string) {
 	if a.chartTracker != nil {
 		a.chartTracker.RegisterTicker(ticker)
 		a.debugPrint(fmt.Sprintf("Registered ticker display: %s", ticker), "system")
-	}
-}
-
-// UnregisterTickerDisplay unregisters a ticker from being displayed
-func (a *App) UnregisterTickerDisplay(ticker string) {
-	if a.chartTracker != nil {
-		a.chartTracker.UnregisterTicker(ticker)
-		a.debugPrint(fmt.Sprintf("Unregistered ticker display: %s", ticker), "system")
 	}
 }
 
@@ -1489,78 +1320,4 @@ func (a *App) OpenChartWindow(ticker string, dateStr string) error {
 	// We track windows in chartWindows map and clean up on next open if needed
 
 	return nil
-}
-
-// VerifyDataCollection verifies that data collection is working
-// Returns a map with verification results
-func (a *App) VerifyDataCollection() map[string]interface{} {
-	result := make(map[string]interface{})
-
-	// Check if scheduler is running
-	if a.perTickerScheduler != nil {
-		result["scheduler_running"] = a.perTickerScheduler.IsRunning()
-		result["active_tickers"] = a.perTickerScheduler.GetActiveTickerCount()
-	} else {
-		result["scheduler_running"] = false
-		result["active_tickers"] = 0
-	}
-
-	// Check enabled tickers
-	result["enabled_tickers"] = a.enabledTickers
-	result["enabled_ticker_count"] = len(a.enabledTickers)
-
-	// Check API key
-	settings := a.settingsManager.GetSettings()
-	result["api_key_configured"] = settings.APITKey != ""
-	result["api_key_length"] = len(settings.APITKey)
-	result["subscription_tiers"] = settings.APISubscriptionTiers
-
-	// Check if coordinator is processing
-	if a.coordinator != nil {
-		// We can't easily check if coordinator is processing without exposing internal state
-		result["coordinator_initialized"] = true
-	} else {
-		result["coordinator_initialized"] = false
-	}
-
-	// Check data directory
-	dataDir := settings.DataDirectory
-	if dataDir == "" {
-		dataDir = "Tickers"
-	}
-	today := time.Now()
-	weekday := today.Weekday()
-	if weekday == time.Saturday {
-		today = today.AddDate(0, 0, -1)
-	} else if weekday == time.Sunday {
-		today = today.AddDate(0, 0, -2)
-	}
-	dateStr := today.Format("01.02.2006")
-	dataDirPath := fmt.Sprintf("%s %s", dataDir, dateStr)
-
-	// Check if data directory exists
-	if _, err := os.Stat(dataDirPath); err == nil {
-		result["data_directory_exists"] = true
-		result["data_directory"] = dataDirPath
-
-		// Count database files
-		files, err := os.ReadDir(dataDirPath)
-		if err == nil {
-			dbCount := 0
-			for _, file := range files {
-				if !file.IsDir() && len(file.Name()) > 3 && file.Name()[len(file.Name())-3:] == ".db" {
-					dbCount++
-				}
-			}
-			result["database_files"] = dbCount
-		} else {
-			result["database_files"] = 0
-		}
-	} else {
-		result["data_directory_exists"] = false
-		result["data_directory"] = dataDirPath
-		result["database_files"] = 0
-	}
-
-	return result
 }

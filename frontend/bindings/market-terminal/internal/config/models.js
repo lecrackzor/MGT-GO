@@ -8,6 +8,7 @@ import { Create as $Create } from "@wailsio/runtime";
 
 /**
  * Settings represents the application settings
+ * Concurrent access is protected by SettingsManager.mu, not by the struct itself
  */
 export class Settings {
     /**
@@ -386,6 +387,7 @@ export class Settings {
         const $$createField40_0 = $$createType4;
         const $$createField41_0 = $$createType0;
         const $$createField42_0 = $$createType5;
+        const $$createField43_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("APISubscriptionTiers" in $$parsedSource) {
             $$parsedSource["APISubscriptionTiers"] = $$createField1_0($$parsedSource["APISubscriptionTiers"]);
@@ -424,7 +426,7 @@ export class Settings {
             $$parsedSource["ChartColors"] = $$createField42_0($$parsedSource["ChartColors"]);
         }
         if ("ChartColorsOff" in $$parsedSource) {
-            $$parsedSource["ChartColorsOff"] = $$createField13_0($$parsedSource["ChartColorsOff"]);
+            $$parsedSource["ChartColorsOff"] = $$createField43_0($$parsedSource["ChartColorsOff"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }

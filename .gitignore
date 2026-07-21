@@ -18,6 +18,10 @@ bin/
 vendor/
 node_modules/
 
+# Upstream lightweight-charts source (unused - app uses the vendored
+# frontend/lightweight-charts.standalone.production.js bundle only)
+lightweight-charts-src/
+
 # Go workspace file
 go.work
 

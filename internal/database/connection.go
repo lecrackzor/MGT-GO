@@ -77,6 +77,13 @@ func (p *ConnectionPool) GetConnection(filepath string, readOnly bool) (*sql.DB,
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Single underlying connection per file. This guarantees:
+	// 1. PRAGMAs set in configureConnection apply to ALL statements (SQLite
+	//    pragmas are per-connection; with multiple pooled conns only the
+	//    first one would be configured)
+	// 2. One file never has competing write handles (prevents SQLITE_BUSY)
+	db.SetMaxOpenConns(1)
+
 	// Configure connection
 	if err := p.configureConnection(db, readOnly); err != nil {
 		db.Close()
@@ -127,6 +134,14 @@ func (p *ConnectionPool) configureConnection(db *sql.DB, readOnly bool) error {
 		return err
 	}
 
+	// Wait up to 10s for locks instead of failing immediately with SQLITE_BUSY.
+	// Applies to both readers and writers - checkpoints and commits from other
+	// handles (e.g. loader vs writer pools) briefly lock the same WAL files.
+	_, err = conn.ExecContext(nil, "PRAGMA busy_timeout=10000")
+	if err != nil {
+		return err
+	}
+
 	// Memory-mapped I/O: 256MB (matches Python optimized version from CHANGELOG)
 	// This improves performance for large database files
 	_, err = conn.ExecContext(nil, "PRAGMA mmap_size=268435456") // 256MB
@@ -142,11 +157,6 @@ func (p *ConnectionPool) configureConnection(db *sql.DB, readOnly bool) error {
 		}
 
 		_, err = conn.ExecContext(nil, "PRAGMA read_uncommitted=1")
-		if err != nil {
-			return err
-		}
-
-		_, err = conn.ExecContext(nil, "PRAGMA busy_timeout=10000") // 10 seconds
 		if err != nil {
 			return err
 		}
@@ -189,6 +199,26 @@ func (p *ConnectionPool) cleanupIdleConnections() {
 			pc.db.Close()
 			delete(p.connections, filepath)
 		}
+	}
+}
+
+// CheckpointAll runs a TRUNCATE WAL checkpoint on all open connections.
+// Called periodically by the writer's background flusher (and on Close)
+// to keep WAL files from growing unbounded.
+func (p *ConnectionPool) CheckpointAll() {
+	// Snapshot handles under lock, checkpoint outside it
+	p.mu.RLock()
+	dbs := make([]*sql.DB, 0, len(p.connections))
+	for _, pc := range p.connections {
+		dbs = append(dbs, pc.db)
+	}
+	p.mu.RUnlock()
+
+	for _, db := range dbs {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// busy_timeout on the connection handles transient locks
+		db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+		cancel()
 	}
 }
 

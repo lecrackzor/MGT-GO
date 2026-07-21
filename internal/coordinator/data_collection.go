@@ -27,7 +27,6 @@ type DataCollectionCoordinator struct {
 	debugPrint          func(string, string)
 	tickersInProgress   map[string]bool
 	inProgressLock      sync.RWMutex
-	healthCheck         *HealthCheck // Optional health check reference
 	perTickerScheduler  *scheduler.PerTickerScheduler // Reference to trigger immediate polling
 	currentMarketDate   time.Time // Track current market date for rollover detection
 	dateMonitorStopChan chan struct{} // Channel to stop date monitor
@@ -55,18 +54,10 @@ func NewDataCollectionCoordinator(
 		getOpenCharts:      getOpenCharts,
 		debugPrint:         debugPrint,
 		tickersInProgress:  make(map[string]bool),
-		healthCheck:        nil, // Will be set by app.go after health check is created
-		perTickerScheduler: nil,  // Will be set by app.go after scheduler is created
+		perTickerScheduler: nil, // Will be set by app.go after scheduler is created
 		currentMarketDate: utils.GetMarketDate(),
 		dateMonitorStopChan: nil, // Will be created when monitor starts
 	}
-}
-
-// SetHealthCheck sets the health check reference (called by app.go)
-func (dcc *DataCollectionCoordinator) SetHealthCheck(healthCheck *HealthCheck) {
-	dcc.mu.Lock()
-	defer dcc.mu.Unlock()
-	dcc.healthCheck = healthCheck
 }
 
 // SetPerTickerScheduler sets the per-ticker scheduler reference (called by app.go)
@@ -208,14 +199,6 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 
 	dcc.debugPrint(fmt.Sprintf("ProcessTickerBatch called with %d tickers: %v", len(tickers), tickers), "coordinator")
 
-	// Record fetch for health check (if health check is available)
-	// This will be set by app.go after health check is created
-	if dcc.healthCheck != nil {
-		for _, ticker := range tickers {
-			dcc.healthCheck.RecordFetch(ticker)
-		}
-	}
-
 	// Check if shutting down
 	if dcc.getShuttingDown() {
 		dcc.debugPrint("Shutting down, skipping batch", "coordinator")
@@ -241,11 +224,6 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 	validatedQueries := dcc.querySystem.ValidateAndFilterQueries(plan)
 	dcc.debugPrint(fmt.Sprintf("Validated %d queries (from %d plan items)", len(validatedQueries), len(plan)), "coordinator")
 
-	// Set update in progress for health check
-	if dcc.healthCheck != nil {
-		dcc.healthCheck.SetUpdateInProgress(true)
-	}
-	
 	// Track tickers in progress
 	dcc.inProgressLock.Lock()
 	for _, item := range plan {
@@ -311,11 +289,6 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 		delete(dcc.tickersInProgress, item.Ticker)
 	}
 	dcc.inProgressLock.Unlock()
-	
-	// Clear update in progress for health check
-	if dcc.healthCheck != nil {
-		dcc.healthCheck.SetUpdateInProgress(false)
-	}
 }
 
 // recordRequestOutcome feeds request results into the rate limit tracker.
