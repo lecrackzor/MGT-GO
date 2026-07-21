@@ -1,5 +1,0 @@
-{
-	"private": true,
-	"main": "median-price-calculation",
-	"types": "median-price-calculation.d.ts"
-}

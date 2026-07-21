@@ -1,5 +1,0 @@
-{
-	"private": true,
-	"main": "weighted-close-calculation",
-	"types": "weighted-close-calculation.d.ts"
-}
