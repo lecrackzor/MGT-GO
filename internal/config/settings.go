@@ -12,9 +12,8 @@ import (
 )
 
 // Settings represents the application settings
+// Concurrent access is protected by SettingsManager.mu, not by the struct itself
 type Settings struct {
-	mu sync.RWMutex // Protects settings access
-
 	// API Key is loaded from environment variable GEXBOT_API_KEY first, then from config file
 	// Note: omitempty is removed so API key is always written when present
 	APITKey                            string                  `yaml:"api_key"`

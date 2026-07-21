@@ -5,17 +5,6 @@ import (
 	"market-terminal/internal/config"
 )
 
-// QueryPlanItem represents a ticker with its endpoints
-type QueryPlanItem struct {
-	Ticker    string
-	Endpoints []string
-}
-
-// QueryPlan represents a query plan
-type QueryPlan struct {
-	Items []QueryPlanItem
-}
-
 // SmartQueryPlanner builds optimized query plans
 type SmartQueryPlanner struct {
 	settings        *config.Settings
@@ -41,7 +30,7 @@ var endpointPlotsMap = map[string][]string{
 }
 
 // BuildOptimizedPlan builds an optimized query plan for the given tickers
-func (sqp *SmartQueryPlanner) BuildOptimizedPlan(tickersToFetch []string) []QueryPlanItem {
+func (sqp *SmartQueryPlanner) BuildOptimizedPlan(tickersToFetch []string) []api.QueryPlanItem {
 	// Get endpoints based on subscription tiers and collection mode
 	tiers := sqp.settings.APISubscriptionTiers
 	if len(tiers) == 0 {
@@ -64,7 +53,7 @@ func (sqp *SmartQueryPlanner) BuildOptimizedPlan(tickersToFetch []string) []Quer
 	}
 
 	// Build plan
-	plan := make([]QueryPlanItem, 0)
+	plan := make([]api.QueryPlanItem, 0)
 	for _, ticker := range tickersToFetch {
 		// Check if ticker is enabled
 		isEnabled := false
@@ -78,7 +67,7 @@ func (sqp *SmartQueryPlanner) BuildOptimizedPlan(tickersToFetch []string) []Quer
 			continue
 		}
 
-		plan = append(plan, QueryPlanItem{
+		plan = append(plan, api.QueryPlanItem{
 			Ticker:    ticker,
 			Endpoints: endpoints,
 		})

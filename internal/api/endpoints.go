@@ -64,12 +64,16 @@ func GetEndpointsForTiers(tiers []string) []string {
 			"state_full_majors", "state_zero_majors", "state_one_majors",
 			"state_full_maxchange", "state_zero_maxchange", "state_one_maxchange",
 			"delta_zero", "gamma_zero", "delta_one", "gamma_one",
-			"state_gamma", "state_onegamma", "state_delta", "state_onedelta",
+			// NOTE: legacy aliases (state_gamma, state_onegamma, state_delta,
+			// state_onedelta) intentionally excluded - they map to the same URLs
+			// as delta_zero/gamma_zero/delta_one/gamma_one and would double-fetch.
 		},
 		"orderflow": {
 			"orderflow",
 			"charm_zero", "vanna_zero", "charm_one", "vanna_one",
-			"state_vanna", "state_onevanna", "state_charm", "state_onecharm",
+			// NOTE: legacy aliases (state_vanna, state_onevanna, state_charm,
+			// state_onecharm) intentionally excluded - same URLs as
+			// charm_zero/vanna_zero/charm_one/vanna_one.
 		},
 	}
 

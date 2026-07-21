@@ -1,8 +1,10 @@
 package coordinator
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -205,12 +207,7 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 	}
 
 	dcc.debugPrint(fmt.Sprintf("ProcessTickerBatch called with %d tickers: %v", len(tickers), tickers), "coordinator")
-	log.Printf("DataCollectionCoordinator: Processing batch of %d tickers: %v", len(tickers), tickers)
-	
-	// Log open charts for priority calculation
-	openCharts := dcc.getOpenCharts()
-	log.Printf("DataCollectionCoordinator: Open charts: %v", openCharts)
-	
+
 	// Record fetch for health check (if health check is available)
 	// This will be set by app.go after health check is created
 	if dcc.healthCheck != nil {
@@ -225,42 +222,24 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 		return
 	}
 
-	// Build query plan
-	plan := dcc.queryPlanner.BuildOptimizedPlan(tickers)
-	log.Printf("DataCollectionCoordinator: Query plan generated with %d items", len(plan))
-	if len(plan) == 0 {
-		log.Printf("DataCollectionCoordinator: No query plan items - skipping batch")
+	// Skip the batch entirely while rate limited (429 backoff)
+	rateLimitTracker := dcc.scheduler.GetRateLimitTracker()
+	if rateLimitTracker.IsRateLimited() {
+		utils.Logf("[RATE-LIMIT] Skipping batch for %v (retry in %.0fs)",
+			tickers, rateLimitTracker.RetryAfterSeconds())
 		return
 	}
-	
-	// Log plan details
-	for _, item := range plan {
-		log.Printf("DataCollectionCoordinator: Plan item - Ticker: %s, Endpoints: %v (count: %d)", item.Ticker, item.Endpoints, len(item.Endpoints))
+
+	// Build query plan
+	plan := dcc.queryPlanner.BuildOptimizedPlan(tickers)
+	if len(plan) == 0 {
+		dcc.debugPrint("No query plan items - skipping batch", "coordinator")
+		return
 	}
 
-	// Convert to query system format
-	queries := make([]api.Query, 0)
-	for _, item := range plan {
-		for _, endpoint := range item.Endpoints {
-			queries = append(queries, api.Query{
-				Ticker:   item.Ticker,
-				Endpoint: endpoint,
-			})
-		}
-	}
-
-	// Convert plan to query system format
-	planItems := make([]api.QueryPlanItem, 0, len(plan))
-	for _, item := range plan {
-		planItems = append(planItems, api.QueryPlanItem{
-			Ticker:    item.Ticker,
-			Endpoints: item.Endpoints,
-		})
-	}
-
-	// Validate and filter queries
-	validatedQueries := dcc.querySystem.ValidateAndFilterQueries(planItems)
-	log.Printf("DataCollectionCoordinator: Validated %d queries (from %d plan items)", len(validatedQueries), len(planItems))
+	// Validate and filter queries (also deduplicates alias endpoints by URL)
+	validatedQueries := dcc.querySystem.ValidateAndFilterQueries(plan)
+	dcc.debugPrint(fmt.Sprintf("Validated %d queries (from %d plan items)", len(validatedQueries), len(plan)), "coordinator")
 
 	// Set update in progress for health check
 	if dcc.healthCheck != nil {
@@ -276,7 +255,7 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 
 	// Execute queries in parallel
 	results := make(map[api.Query]map[string]interface{})
-	errors := make(map[api.Query]error)
+	fetchErrors := make(map[api.Query]error)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -292,21 +271,20 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
+			// Skip remaining queries in this batch if a 429 already tripped the limiter
+			if rateLimitTracker.IsRateLimited() {
+				return
+			}
+
 			// Fetch endpoint
-			log.Printf("DataCollectionCoordinator: Fetching %s for %s", q.Endpoint, q.Ticker)
 			result, err := dcc.querySystem.GetClient().FetchEndpoint(q.Endpoint, q.Ticker)
-			
+			dcc.recordRequestOutcome(rateLimitTracker, result, err)
+
 			mu.Lock()
 			if err != nil {
-				errors[q] = err
-				log.Printf("DataCollectionCoordinator: Error fetching %s for %s: %v", q.Endpoint, q.Ticker, err)
+				fetchErrors[q] = err
 			} else {
 				results[q] = result
-				fieldCount := 0
-				if result != nil {
-					fieldCount = len(result)
-				}
-				log.Printf("DataCollectionCoordinator: Successfully fetched %s for %s (fields: %d)", q.Endpoint, q.Ticker, fieldCount)
 			}
 			mu.Unlock()
 		}(query)
@@ -315,20 +293,15 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 	wg.Wait()
 
 	// Aggregate results by ticker
-	tickerData := dcc.aggregateResults(plan, results, errors)
+	tickerData := dcc.aggregateResults(plan, results, fetchErrors)
 
 	// Process each ticker's data
-	log.Printf("DataCollectionCoordinator: Processing data for %d tickers", len(tickerData))
 	for ticker, data := range tickerData {
 		if data != nil {
 			dcc.debugPrint(fmt.Sprintf("Processing completed data for %s (fields: %d)", ticker, len(data)), "coordinator")
-			log.Printf("DataCollectionCoordinator: Processing data for %s with %d fields", ticker, len(data))
-			result := dcc.ProcessCompletedTickerData(ticker, data, float64(time.Now().Unix()))
-			log.Printf("DataCollectionCoordinator: Completed processing for %s - timestamp: %.2f, priority: %v, interval: %.2f", 
-				ticker, result["timestamp_seconds"], result["priority"], result["interval"])
+			dcc.ProcessCompletedTickerData(ticker, data, float64(time.Now().Unix()))
 		} else {
 			dcc.debugPrint(fmt.Sprintf("No data collected for %s", ticker), "coordinator")
-			log.Printf("DataCollectionCoordinator: No data collected for %s", ticker)
 		}
 	}
 
@@ -345,11 +318,46 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 	}
 }
 
+// recordRequestOutcome feeds request results into the rate limit tracker.
+// On 429 it activates the global backoff (honoring Retry-After when provided);
+// on success it records the request and any X-RateLimit-* headers.
+func (dcc *DataCollectionCoordinator) recordRequestOutcome(
+	tracker *scheduler.RateLimitTracker,
+	result map[string]interface{},
+	err error,
+) {
+	now := float64(time.Now().Unix())
+
+	if err != nil {
+		var rateLimitErr *api.RateLimitError
+		if errors.As(err, &rateLimitErr) {
+			retryAfter := 0.0
+			if rateLimitErr.RetryAfter != "" {
+				if v, parseErr := strconv.ParseFloat(rateLimitErr.RetryAfter, 64); parseErr == nil {
+					retryAfter = v
+				}
+			}
+			tracker.HandleRateLimitError(retryAfter)
+			utils.Logf("[RATE-LIMIT] 429 rate limit hit (%s) - backing off %.0fs",
+				rateLimitErr.Endpoint, tracker.RetryAfterSeconds())
+		}
+		return
+	}
+
+	var headers map[string]string
+	if result != nil {
+		if h, ok := result["_response_headers"].(map[string]string); ok {
+			headers = h
+		}
+	}
+	tracker.RecordRequest(now, true, headers)
+}
+
 // aggregateResults aggregates API results by ticker
 func (dcc *DataCollectionCoordinator) aggregateResults(
-	plan []QueryPlanItem,
+	plan []api.QueryPlanItem,
 	results map[api.Query]map[string]interface{},
-	errors map[api.Query]error,
+	fetchErrors map[api.Query]error,
 ) map[string]map[string]interface{} {
 	tickerData := make(map[string]map[string]interface{})
 
@@ -380,20 +388,17 @@ func (dcc *DataCollectionCoordinator) aggregateResults(
 	}
 
 	// Log errors
-	for query, err := range errors {
+	for query, err := range fetchErrors {
 		dcc.debugPrint("Error fetching "+query.Endpoint+" for "+query.Ticker+": "+err.Error(), "api")
 	}
 
 	return tickerData
 }
 
-// ProcessCompletedTickerData processes completed ticker data
-func (dcc *DataCollectionCoordinator) ProcessCompletedTickerData(ticker string, data map[string]interface{}, scheduledUpdateTime float64) map[string]interface{} {
-	// Update scheduler state
-	currentTime := float64(time.Now().Unix())
-	dcc.scheduler.RecordFetch(ticker)
-
+// ProcessCompletedTickerData enqueues completed ticker data for writing
+func (dcc *DataCollectionCoordinator) ProcessCompletedTickerData(ticker string, data map[string]interface{}, scheduledUpdateTime float64) {
 	// Calculate timestamp
+	currentTime := float64(time.Now().Unix())
 	var timestampSeconds float64
 	if apiTimestamp, ok := data["timestamp"].(float64); ok {
 		// Check if timestamp is in milliseconds (> 1e10)
@@ -408,7 +413,7 @@ func (dcc *DataCollectionCoordinator) ProcessCompletedTickerData(ticker string, 
 
 	// Check if shutting down
 	if dcc.getShuttingDown() {
-		return map[string]interface{}{"timestamp_seconds": timestampSeconds, "skipped": true}
+		return
 	}
 
 	// Determine priority based on ticker visibility
@@ -425,19 +430,9 @@ func (dcc *DataCollectionCoordinator) ProcessCompletedTickerData(ticker string, 
 	}
 
 	// Enqueue write
-	dcc.debugPrint(fmt.Sprintf("Enqueuing write for %s (timestamp: %.0f, fields: %d, priority: %d)", 
+	dcc.debugPrint(fmt.Sprintf("Enqueuing write for %s (timestamp: %.0f, fields: %d, priority: %d)",
 		ticker, timestampSeconds, len(data), priority), "coordinator")
 	dcc.writeQueue.Enqueue(ticker, timestampSeconds, data, priority)
-	dcc.debugPrint(fmt.Sprintf("Write enqueued for %s", ticker), "coordinator")
-
-	// Calculate interval
-	interval := dcc.scheduler.CalculateInterval(ticker, openCharts)
-
-	return map[string]interface{}{
-		"timestamp_seconds": timestampSeconds,
-		"priority":          priority,
-		"interval":          interval,
-	}
 }
 
 // IsTickerInProgress checks if a ticker is currently being processed

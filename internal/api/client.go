@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"market-terminal/internal/config"
+	"market-terminal/internal/utils"
 )
 
 // Client handles HTTP requests to the GEXBot API
@@ -20,6 +22,11 @@ type Client struct {
 	userAgent  string
 	mu         sync.RWMutex
 	debugPrint func(string, string)
+
+	// Request usage tracking (every HTTP attempt counts against the API quota)
+	requestCount     atomic.Int64 // Total requests this session
+	lastLoggedCount  atomic.Int64 // Count at last usage log line
+	sessionStartTime time.Time
 }
 
 // NewClient creates a new API client with connection pooling
@@ -36,13 +43,46 @@ func NewClient(apiKey string, debugPrint func(string, string)) *Client {
 		Timeout:   30 * time.Second,
 	}
 
-	return &Client{
-		apiKey:     apiKey,
-		baseURL:    config.APIBaseURL,
-		httpClient: httpClient,
-		userAgent:  "MarketTerminalGexbot/1.0",
-		debugPrint: debugPrint,
+	client := &Client{
+		apiKey:           apiKey,
+		baseURL:          config.APIBaseURL,
+		httpClient:       httpClient,
+		userAgent:        "MarketTerminalGexbot/1.0",
+		debugPrint:       debugPrint,
+		sessionStartTime: time.Now(),
 	}
+
+	// Log request usage once a minute so burn rate against the monthly
+	// quota is visible in the log file
+	go client.usageLogger()
+
+	return client
+}
+
+// usageLogger periodically logs API request usage (once a minute, only when
+// requests were made in that window)
+func (c *Client) usageLogger() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		total := c.requestCount.Load()
+		last := c.lastLoggedCount.Load()
+		if total == last {
+			continue
+		}
+		c.lastLoggedCount.Store(total)
+
+		elapsed := time.Since(c.sessionStartTime)
+		perMinute := total - last
+		utils.Logf("[API-USAGE] %d requests this session (%.1fh) | %d in last minute | projected %d/hour",
+			total, elapsed.Hours(), perMinute, perMinute*60)
+	}
+}
+
+// GetRequestCount returns the total number of API requests made this session
+func (c *Client) GetRequestCount() int64 {
+	return c.requestCount.Load()
 }
 
 // getAPIKey returns the current API key in a thread-safe way.
@@ -90,7 +130,8 @@ func (c *Client) FetchEndpoint(endpoint, ticker string) (map[string]interface{},
 		req.Header.Set("User-Agent", c.userAgent)
 		req.Header.Set("Accept", "application/json")
 
-		// Make HTTP request
+		// Make HTTP request (every attempt counts against the API quota)
+		c.requestCount.Add(1)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err

@@ -5,59 +5,45 @@ This package provides scheduling and rate limiting for Market Terminal Gexbot.
 ## Components
 
 ### RateLimitTracker (`rate_limiter.go`)
-- Tracks API rate limits from response headers
-- Monitors 429 error frequency
-- Adaptive light throttling (200ms minimum between same endpoint calls)
-- Thread-safe rate limit tracking
+- Tracks API request history and rate limit info from `X-RateLimit-*` response headers
+- Handles 429 errors: activates a global backoff honoring `Retry-After` (defaults to 60s)
+- `GetMinimumInterval` enforces a rate-limit-aware floor on polling intervals
+- Thread-safe
 
 ### UnifiedAdaptiveScheduler (`scheduler.go`)
 - Priority-based polling intervals:
-  - High priority (in chart): 1-5 seconds
+  - High priority (in chart): 1 second
   - Medium priority (enabled): 6-15 seconds
   - Low priority: 16-30 seconds
 - Intervals scale with ticker count
-- Per-ticker refresh rate override support
-- Per-endpoint throttling (1 second minimum)
+- Per-ticker refresh rate override support (`ticker_configs.{ticker}.refresh_rate_ms`)
 
-### MasterTimerScheduler (`master_timer.go`)
-- Single master timer checks all tickers every 100ms
-- Batches ready tickers together
-- Eliminates timer conflicts and drift
-- More predictable polling timing
-
-## Features
-
-- **Priority-Based Intervals**: Faster polling for visible charts, slower for background collection
-- **Rate Limit Awareness**: Respects API rate limits while maintaining consistent polling
-- **Per-Endpoint Throttling**: Minimum 1 second between calls to same endpoint
-- **Adaptive Throttling**: Automatically enables light throttling if 429 errors are frequent
-- **Thread-Safe**: All operations are protected by locks
+### PerTickerScheduler (`per_ticker_scheduler.go`)
+- One goroutine per enabled ticker
+- Anchored (drift-free) cadence: each fire time is computed from the previous
+  scheduled fire time, so fetch duration does not stretch the polling interval
+- Fetches are dispatched asynchronously; overlapping fetches for the same
+  ticker are skipped rather than stacked
+- Skips fetches while rate limited or when the market is closed
+  (60s re-check interval when closed)
 
 ## Usage
 
 ```go
 // Create scheduler
-scheduler := scheduler.NewUnifiedAdaptiveScheduler(settings, false)
+adaptive := scheduler.NewUnifiedAdaptiveScheduler(settings)
+adaptive.SetEnabledTickers([]string{"SPX", "ES_SPX"})
 
-// Set enabled tickers
-scheduler.SetEnabledTickers([]string{"SPX", "ES_SPX"})
-
-// Check if ticker should be fetched
-if scheduler.ShouldFetchTicker("SPX", openCharts) {
-    // Fetch ticker
-    scheduler.RecordFetch("SPX")
-}
-
-// Create master timer
-masterTimer := scheduler.NewMasterTimerScheduler(
-    scheduler,
+// Create per-ticker scheduler
+pts := scheduler.NewPerTickerScheduler(
+    adaptive,
     getOpenCharts,
-    onTickersReady,
+    onTickerReady, // called asynchronously when a ticker is due
     debugPrint,
+    false, // allowAfterHours
 )
-
-// Start master timer
-masterTimer.Start()
+pts.UpdateTickers([]string{"SPX", "ES_SPX"})
+pts.Start()
 ```
 
 ## Memory Visibility

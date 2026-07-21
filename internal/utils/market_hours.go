@@ -143,20 +143,10 @@ func GetMarketDate() time.Time {
 	
 	if now.Before(rolloverTime) {
 		// Before 8:30 AM ET: use yesterday's date
-		yesterday := now.AddDate(0, 0, -1)
-		// Log for debugging
-		Logf("[GetMarketDate] Before 8:30 AM ET rollover: now=%s, rolloverTime=%s, returning yesterday: %s", 
-			now.Format("2006-01-02 15:04:05 MST"), 
-			rolloverTime.Format("2006-01-02 15:04:05 MST"),
-			yesterday.Format("2006-01-02 15:04:05 MST"))
-		return yesterday
+		return now.AddDate(0, 0, -1)
 	}
-	
+
 	// 8:30 AM ET or later: use today's date
-	Logf("[GetMarketDate] After 8:30 AM ET rollover: now=%s, rolloverTime=%s, returning today: %s", 
-		now.Format("2006-01-02 15:04:05 MST"), 
-		rolloverTime.Format("2006-01-02 15:04:05 MST"),
-		now.Format("2006-01-02 15:04:05 MST"))
 	return now
 }
 

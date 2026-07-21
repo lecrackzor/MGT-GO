@@ -49,6 +49,11 @@ type App struct {
 	chartWindows       map[string]*application.WebviewWindow // Track open chart windows
 	chartWindowsLock   sync.RWMutex
 	mainWindow         *application.WebviewWindow // Main application window
+
+	// Tracks last logged market-open state so the 1s frontend poll
+	// only produces a log line on state changes
+	lastLoggedMarketOpen *bool
+	marketOpenLogLock    sync.Mutex
 }
 
 // NewApp creates a new App instance
@@ -63,9 +68,11 @@ func NewApp() *App {
 		settings = config.GetDefaultSettings()
 	}
 
-	// Debug print function - uses file logger
+	// Debug print function - uses file logger.
+	// Only errors and system events are always logged; everything else
+	// (hot-path scheduler/coordinator/writer chatter) requires EnableDebug.
 	debugPrint := func(msg, category string) {
-		if settings.EnableDebug || category == "error" || category == "system" || category == "writer" || category == "coordinator" || category == "scheduler" || category == "write_queue" || category == "app" {
+		if settings.EnableDebug || category == "error" || category == "system" {
 			// Use file logger for all debug messages
 			utils.Logf("[%s] %s", category, msg)
 		}
@@ -95,7 +102,7 @@ func NewApp() *App {
 	querySystem := api.NewQuerySystem(settings, settings.APITKey, apiClient, debugPrint)
 
 	// Initialize scheduler
-	adaptiveScheduler := scheduler.NewUnifiedAdaptiveScheduler(settings, false)
+	adaptiveScheduler := scheduler.NewUnifiedAdaptiveScheduler(settings)
 	adaptiveScheduler.SetEnabledTickers(enabledTickers)
 
 	// Initialize query planner
@@ -162,7 +169,7 @@ func NewApp() *App {
 		getOpenCharts,
 		func(ticker string) {
 			// Callback when a single ticker is ready to fetch
-			log.Printf("[FETCH-CALLBACK] ===== onTickerReady called for: %s =====", ticker)
+			debugPrint(fmt.Sprintf("onTickerReady called for: %s", ticker), "scheduler")
 			coordinator.ProcessTickerBatch([]string{ticker})
 		},
 		debugPrint,
@@ -438,6 +445,15 @@ func (a *App) ResizeMainWindow(width, height int) {
 	if a.mainWindow != nil {
 		a.mainWindow.SetSize(width, height)
 		utils.Logf("Main window resized to %dx%d", width, height)
+	}
+}
+
+// FocusMainWindow brings the main window to the foreground.
+// Used when a second app instance is launched (single-instance guard).
+func (a *App) FocusMainWindow() {
+	if a.mainWindow != nil {
+		a.mainWindow.Restore()
+		a.mainWindow.Focus()
 	}
 }
 
@@ -1197,28 +1213,20 @@ func (a *App) GetMarketHoursLocal() (string, string) {
 	return openStr, closeStr
 }
 
-// IsMarketOpen checks if the market is currently open
+// IsMarketOpen checks if the market is currently open.
+// Called by the frontend every second, so only log when the state changes.
 func (a *App) IsMarketOpen() bool {
-	// MISSION CRITICAL: Log immediately when function is called
-	log.Printf("=== IsMarketOpen CALLED ===")
-	utils.Logf("[system] === IsMarketOpen CALLED ===")
-
-	nowMarket := utils.NowMarketTime()
-	nowLocal := time.Now()
 	isOpen := utils.IsMarketOpen()
 
-	// MISSION CRITICAL: Show current times - use multiple logging methods
-	log.Printf("[TIME] IsMarketOpen: Current market time (ET)=%s (%s)",
-		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	log.Printf("[TIME] IsMarketOpen: Current local time=%s (%s)",
-		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	log.Printf("[TIME] IsMarketOpen: Market is open=%v", isOpen)
-
-	utils.Logf("[system] IsMarketOpen: Current market time (ET)=%s (%s)",
-		nowMarket.Format("2006-01-02 15:04:05 MST"), nowMarket.Location().String())
-	utils.Logf("[system] IsMarketOpen: Current local time=%s (%s)",
-		nowLocal.Format("2006-01-02 15:04:05 MST"), nowLocal.Location().String())
-	utils.Logf("[system] IsMarketOpen: Market is open=%v", isOpen)
+	a.marketOpenLogLock.Lock()
+	if a.lastLoggedMarketOpen == nil || *a.lastLoggedMarketOpen != isOpen {
+		a.lastLoggedMarketOpen = &isOpen
+		a.marketOpenLogLock.Unlock()
+		utils.Logf("[system] IsMarketOpen: Market open state = %v (ET: %s)",
+			isOpen, utils.NowMarketTime().Format("2006-01-02 15:04:05 MST"))
+	} else {
+		a.marketOpenLogLock.Unlock()
+	}
 
 	return isOpen
 }
