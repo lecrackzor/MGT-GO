@@ -10,27 +10,20 @@ import (
 
 // UnifiedAdaptiveScheduler provides priority-based scheduling for ticker data collection
 type UnifiedAdaptiveScheduler struct {
-	mu                    sync.RWMutex
-	rateLimitTracker      *RateLimitTracker
-	lastFetchTimes        map[string]float64 // ticker -> last fetch time
-	tickerIntervals       map[string]float64 // ticker -> current interval
-	enabledTickers        []string
-	settings              *config.Settings
-	isTestingBranch       bool
-	endpointFetchTimes    map[string]float64 // endpoint -> last fetch time
-	endpointFetchLock     sync.RWMutex
+	mu               sync.RWMutex
+	rateLimitTracker *RateLimitTracker
+	lastFetchTimes   map[string]float64 // ticker -> last fetch time
+	enabledTickers   []string
+	settings         *config.Settings
 }
 
 // NewUnifiedAdaptiveScheduler creates a new unified adaptive scheduler
-func NewUnifiedAdaptiveScheduler(settings *config.Settings, isTestingBranch bool) *UnifiedAdaptiveScheduler {
+func NewUnifiedAdaptiveScheduler(settings *config.Settings) *UnifiedAdaptiveScheduler {
 	return &UnifiedAdaptiveScheduler{
-		rateLimitTracker:   NewRateLimitTracker(),
-		lastFetchTimes:     make(map[string]float64),
-		tickerIntervals:    make(map[string]float64),
-		enabledTickers:     make([]string, 0),
-		settings:           settings,
-		isTestingBranch:    isTestingBranch,
-		endpointFetchTimes: make(map[string]float64),
+		rateLimitTracker: NewRateLimitTracker(),
+		lastFetchTimes:   make(map[string]float64),
+		enabledTickers:   make([]string, 0),
+		settings:         settings,
 	}
 }
 
@@ -101,9 +94,11 @@ func (uas *UnifiedAdaptiveScheduler) CalculateInterval(ticker string, openCharts
 		interval = minInterval
 	}
 
-	// Log interval calculation for debugging
-	log.Printf("[SCHEDULER] %s: priority=%s(%d), tickerCount=%d, baseInterval=%.1fs, refreshOverride=%dms, finalInterval=%.1fs, openCharts=%d",
-		ticker, priorityName, priority, tickerCount, baseInterval, refreshRateMs, interval, len(openCharts))
+	// Log interval calculation only when debugging (hot path - called every cycle)
+	if uas.settings != nil && uas.settings.EnableDebug {
+		log.Printf("[SCHEDULER] %s: priority=%s(%d), tickerCount=%d, baseInterval=%.1fs, refreshOverride=%dms, finalInterval=%.1fs, openCharts=%d",
+			ticker, priorityName, priority, tickerCount, baseInterval, refreshRateMs, interval, len(openCharts))
+	}
 
 	return interval
 }
@@ -174,56 +169,11 @@ func (uas *UnifiedAdaptiveScheduler) getTickerRefreshRate(ticker string) int {
 	return 0 // Default: use priority-based scheduling
 }
 
-// ShouldFetchTicker checks if a ticker should be fetched now
-func (uas *UnifiedAdaptiveScheduler) ShouldFetchTicker(ticker string, openCharts []interface{}) bool {
-	uas.mu.RLock()
-	defer uas.mu.RUnlock()
-
-	currentTime := time.Now().Unix()
-	lastFetch := uas.lastFetchTimes[ticker]
-	interval := uas.CalculateInterval(ticker, openCharts)
-
-	// SAFETY CHECK: Ensure interval is valid
-	if interval <= 0 {
-		interval = 5.0
-	}
-
-	// CRITICAL: If ticker has never been fetched (lastFetch == 0), it should be fetched immediately
-	if lastFetch == 0 {
-		return true
-	}
-
-	// Simple check: has enough time passed since last fetch?
-	timeSinceFetch := float64(currentTime) - lastFetch
-	return timeSinceFetch >= interval
-}
-
 // RecordFetch records that a ticker was fetched
 func (uas *UnifiedAdaptiveScheduler) RecordFetch(ticker string) {
 	uas.mu.Lock()
 	defer uas.mu.Unlock()
 	uas.lastFetchTimes[ticker] = float64(time.Now().Unix())
-}
-
-// CanFetchEndpoint checks if an endpoint can be fetched now (per-endpoint throttling)
-func (uas *UnifiedAdaptiveScheduler) CanFetchEndpoint(endpoint string) bool {
-	uas.endpointFetchLock.RLock()
-	defer uas.endpointFetchLock.RUnlock()
-
-	currentTime := time.Now().Unix()
-	lastFetch := uas.endpointFetchTimes[endpoint]
-	timeSinceLastFetch := float64(currentTime) - lastFetch
-
-	// Minimum 1 second between calls to same endpoint
-	const MIN_ENDPOINT_INTERVAL = 1.0
-	return timeSinceLastFetch >= MIN_ENDPOINT_INTERVAL
-}
-
-// RecordEndpointFetch records that an endpoint was fetched
-func (uas *UnifiedAdaptiveScheduler) RecordEndpointFetch(endpoint string) {
-	uas.endpointFetchLock.Lock()
-	defer uas.endpointFetchLock.Unlock()
-	uas.endpointFetchTimes[endpoint] = float64(time.Now().Unix())
 }
 
 // GetRateLimitTracker returns the rate limit tracker

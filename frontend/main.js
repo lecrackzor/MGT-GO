@@ -28,6 +28,51 @@ const MAG7 = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"];
 const STOCKS = ["AMD", "APP", "AVGO", "BABA", "COIN", "CRWD", "CRWV", "GLD", "GOOG", "GME", "HOOD", "HYG", "IBIT", "INTC", "IONQ", "MSTR", "MU", "NFLX", "PLTR", "SLV", "SMCI", "SNOW", "SOFI", "TLT", "TQQQ", "TSM", "UNH", "USO", "UVXY", "VALE"];
 const ALL_TICKERS = [...FUTURES, ...INDEXES, ...MAG7, ...STOCKS];
 
+// Canonical chart series metadata so plot names, legend names, and color settings stay aligned.
+const CHART_SERIES_METADATA = [
+    { key: 'spot', label: 'Spot Price', defaultColor: '#4CAF50' },
+    { key: 'zero_gamma', label: 'Zero Gamma', defaultColor: '#FF9800' },
+    { key: 'major_pos_vol', label: 'Positive Gamma', defaultColor: '#2196F3' },
+    { key: 'major_neg_vol', label: 'Negative Gamma', defaultColor: '#F44336' },
+    { key: 'net', label: 'Net Gamma', defaultColor: '#00FFFF' },
+    { key: 'major_long_gamma', label: 'Long Gamma', defaultColor: '#9C27B0' },
+    { key: 'major_short_gamma', label: 'Short Gamma', defaultColor: '#00BCD4' },
+    { key: 'major_positive', label: 'Major Positive Strike', defaultColor: '#8BC34A' },
+    { key: 'major_negative', label: 'Major Negative Strike', defaultColor: '#FF5722' },
+    { key: 'major_pos_oi', label: 'Major Positive OI', defaultColor: '#3F51B5' },
+    { key: 'major_neg_oi', label: 'Major Negative OI', defaultColor: '#E91E63' }
+];
+
+function getDefaultChartColors() {
+    return CHART_SERIES_METADATA.reduce((acc, series) => {
+        acc[series.key] = series.defaultColor;
+        return acc;
+    }, {});
+}
+
+const CHART_COLOR_OFF_VALUES = new Set(['off', 'none', 'hidden', 'transparent']);
+
+function isChartColorOffValue(color) {
+    if (!color || typeof color !== 'string') return false;
+    const normalized = color.trim().toLowerCase();
+    return CHART_COLOR_OFF_VALUES.has(normalized) || normalized === '#00000000';
+}
+
+function getChartColorsOffFromSettings(settings) {
+    const off = new Set();
+    if (settings && Array.isArray(settings.ChartColorsOff)) {
+        settings.ChartColorsOff.forEach((key) => {
+            if (typeof key === 'string' && key) off.add(key);
+        });
+    }
+    if (settings && settings.ChartColors && typeof settings.ChartColors === 'object') {
+        Object.entries(settings.ChartColors).forEach(([key, color]) => {
+            if (isChartColorOffValue(color)) off.add(key);
+        });
+    }
+    return off;
+}
+
 // Organize tickers by tier
 function organizeTickersByTier(tickers) {
     const organized = {
@@ -217,20 +262,14 @@ function getDefaultSettings() {
         APISubscriptionTiers: ['classic'],
         TickerConfigs: {},
         UseMarketTime: false,
+        Use24HourTime: true,
         EnableLogging: true,
         HiddenPlots: [],
-        ChartColors: {
-            'spot': '#4CAF50',
-            'zero_gamma': '#FF9800',
-            'major_pos_vol': '#2196F3',
-            'major_neg_vol': '#F44336',
-            'major_long_gamma': '#9C27B0',
-            'major_short_gamma': '#00BCD4',
-            'major_positive': '#8BC34A',
-            'major_negative': '#FF5722',
-            'major_pos_oi': '#3F51B5',
-            'major_neg_oi': '#E91E63'
-        }
+        ChartColors: getDefaultChartColors(),
+        ChartColorsOff: [],
+        ChartZoomFilterPercent: 1.0,
+        AutoFollowBufferPercent: 1.0,
+        PriceAxisLocation: 'left'
     };
 }
 
@@ -357,8 +396,35 @@ let marketCountdownInterval = null;
 
 // Date selector state
 let selectedDate = null; // Stores selected date as "YYYY-MM-DD" string
+// When selectedDate === lastKnownMarketDate, we consider the user to be viewing "today" and will auto-advance when the market date rolls over
+let lastKnownMarketDate = null;
 
-// Update market status and countdown - completely rewritten to be simple and reliable
+// Fetch current market date from backend (cache-bust + no-store so webview never uses cached value)
+async function fetchMarketDate() {
+    const response = await fetch('/api/market-date?t=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.date || null;
+}
+
+// Verification: run from DevTools console to confirm each request hits the server (no caching).
+// Watch the app terminal for "[api/market-date] requested" — you should see 3 lines, one per 2s.
+window.verifyMarketDateNoCache = async function () {
+    for (let i = 0; i < 3; i++) {
+        const date = await fetchMarketDate();
+        console.log('[verifyMarketDateNoCache] fetch', i + 1, '->', date);
+        if (i < 2) await new Promise(r => setTimeout(r, 2000));
+    }
+    console.log('[verifyMarketDateNoCache] Done. Check terminal: 3 "[api/market-date] requested" lines = no cache.');
+};
+
+// Cached next-market-open time: refreshed once a minute instead of calling
+// the backend on every 1s countdown tick
+let cachedNextOpenISO = null;
+let cachedNextOpenFetchedAt = 0;
+const NEXT_OPEN_CACHE_MS = 60000;
+
+// Update market status and countdown (runs every second - keep it quiet)
 async function updateMarketStatus() {
     const marketStatusEl = document.getElementById('market-status');
     if (!marketStatusEl) {
@@ -366,28 +432,10 @@ async function updateMarketStatus() {
         return;
     }
     
-    // Check if App is available
-    console.log('[Market Status] Checking App availability:', {
-        App: typeof App,
-        IsMarketOpen: typeof App?.IsMarketOpen,
-        GetNextMarketOpenLocalTime: typeof App?.GetNextMarketOpenLocalTime,
-        AppKeys: App ? Object.keys(App) : 'App is null/undefined'
-    });
-    
     if (!App || typeof App.IsMarketOpen !== 'function' || typeof App.GetNextMarketOpenLocalTime !== 'function') {
         const errorMsg = '[Market Status] ERROR: App or required methods not available - This is why you see "Checking market status..."';
-        console.error('========================================');
         console.error(errorMsg);
-        console.error('[Market Status] App exists:', !!App);
-        console.error('[Market Status] App type:', typeof App);
-        console.error('[Market Status] IsMarketOpen type:', typeof App?.IsMarketOpen);
-        console.error('[Market Status] GetNextMarketOpenLocalTime type:', typeof App?.GetNextMarketOpenLocalTime);
-        console.error('[Market Status] App keys:', App ? Object.keys(App) : 'N/A');
-        console.error('========================================');
-        
-        // Log to backend terminal
         await logToBackend('ERROR', errorMsg);
-        await logToBackend('ERROR', `App exists: ${!!App}, IsMarketOpen: ${typeof App?.IsMarketOpen}, GetNextMarketOpenLocalTime: ${typeof App?.GetNextMarketOpenLocalTime}`);
         marketStatusEl.textContent = 'Backend not connected';
         marketStatusEl.style.background = 'rgba(244, 67, 54, 0.2)';
         marketStatusEl.style.color = '#f44336';
@@ -395,44 +443,32 @@ async function updateMarketStatus() {
     }
     
     try {
-        // Show browser's local time
-        const browserNow = new Date();
-        const browserTimeStr = browserNow.toLocaleString('en-US', {
-            timeZoneName: 'short',
-            hour12: false
-        });
-        const browserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        console.log('[Market Status] Browser local time:', browserTimeStr, 'Timezone:', browserTZ);
-        console.log('[Market Status] Browser Date object:', browserNow.toString(), 'ISO:', browserNow.toISOString());
-        
         // Check if market is open
         const isOpen = await App.IsMarketOpen();
         
         if (isOpen) {
             // Market is open
+            cachedNextOpenISO = null;
             marketStatusEl.textContent = 'Market Open';
             marketStatusEl.style.background = 'rgba(76, 175, 80, 0.2)';
             marketStatusEl.style.color = '#4CAF50';
             return;
         }
         
-        // Market is closed - get next open time and calculate countdown
-        console.log('[Market Status] === CALLING GetNextMarketOpenLocalTime ===');
-        console.log('[Market Status] App object:', App);
-        console.log('[Market Status] App.GetNextMarketOpenLocalTime type:', typeof App.GetNextMarketOpenLocalTime);
-        
-        let nextOpenISO;
-        try {
-            nextOpenISO = await App.GetNextMarketOpenLocalTime();
-            console.log('[Market Status] SUCCESS: Received nextOpenISO:', nextOpenISO);
-            console.log('[Market Status] nextOpenISO type:', typeof nextOpenISO);
-            console.log('[Market Status] nextOpenISO length:', nextOpenISO?.length);
-        } catch (error) {
-            console.error('[Market Status] ERROR calling GetNextMarketOpenLocalTime:', error);
-            marketStatusEl.textContent = 'Market status error';
-            marketStatusEl.style.background = 'rgba(158, 158, 158, 0.2)';
-            marketStatusEl.style.color = '#9E9E9E';
-            return;
+        // Market is closed - get next open time (cached, refreshed once a minute)
+        let nextOpenISO = cachedNextOpenISO;
+        if (!nextOpenISO || (Date.now() - cachedNextOpenFetchedAt) >= NEXT_OPEN_CACHE_MS) {
+            try {
+                nextOpenISO = await App.GetNextMarketOpenLocalTime();
+                cachedNextOpenISO = nextOpenISO;
+                cachedNextOpenFetchedAt = Date.now();
+            } catch (error) {
+                console.error('[Market Status] ERROR calling GetNextMarketOpenLocalTime:', error);
+                marketStatusEl.textContent = 'Market status error';
+                marketStatusEl.style.background = 'rgba(158, 158, 158, 0.2)';
+                marketStatusEl.style.color = '#9E9E9E';
+                return;
+            }
         }
         
         if (!nextOpenISO) {
@@ -447,48 +483,20 @@ async function updateMarketStatus() {
         const nextOpen = new Date(nextOpenISO);
         const now = new Date();
         
-        console.log('[Market Status] === DATE PARSING DEBUG ===');
-        console.log('[Market Status] nextOpenISO (RFC3339 from backend):', nextOpenISO);
-        console.log('[Market Status] nextOpen (parsed Date object):', nextOpen.toString());
-        console.log('[Market Status] nextOpen.getTime() (milliseconds):', nextOpen.getTime());
-        console.log('[Market Status] nextOpen.toISOString() (UTC):', nextOpen.toISOString());
-        console.log('[Market Status] nextOpen local string:', nextOpen.toLocaleString('en-US', { 
-            timeZoneName: 'short',
-            hour12: false,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }));
-        console.log('[Market Status] now (browser Date object):', now.toString());
-        console.log('[Market Status] now.getTime() (milliseconds):', now.getTime());
-        console.log('[Market Status] now.toISOString() (UTC):', now.toISOString());
-        console.log('[Market Status] now local string:', now.toLocaleString('en-US', { 
-            timeZoneName: 'short',
-            hour12: false,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }));
-        
         // Validate date
         if (isNaN(nextOpen.getTime())) {
             console.error('[Market Status] Invalid date:', nextOpenISO);
+            cachedNextOpenISO = null;
             marketStatusEl.textContent = 'Market Closed';
             return;
         }
         
         // Calculate time difference (both dates are in browser's local timezone)
         const diff = nextOpen.getTime() - now.getTime();
-        console.log('[Market Status] Time difference (ms):', diff);
         
         if (diff <= 0) {
-            // Time has passed, market should be open - re-check
+            // Time has passed, market should be open - invalidate cache and re-check
+            cachedNextOpenISO = null;
             const recheckOpen = await App.IsMarketOpen();
             if (recheckOpen) {
                 marketStatusEl.textContent = 'Market Open';
@@ -508,13 +516,6 @@ async function updateMarketStatus() {
         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((diff % (1000 * 60)) / 1000);
         
-        console.log('[Market Status] Countdown calculation:', {
-            diffMs: diff,
-            hours: hours,
-            minutes: minutes,
-            seconds: seconds
-        });
-        
         // Format next open time based on UseMarketTime setting
         const cached = loadSettingsFromCache();
         const useMarketTime = cached?.settings?.UseMarketTime || false;
@@ -528,8 +529,6 @@ async function updateMarketStatus() {
             timeOptions.timeZone = 'America/New_York';
         }
         const openTimeStr = nextOpen.toLocaleTimeString('en-US', timeOptions);
-        
-        console.log('[Market Status] Formatted open time string:', openTimeStr);
         
         // Format countdown message
         let countdownText;
@@ -545,7 +544,6 @@ async function updateMarketStatus() {
             countdownText = `Market Closed - Opens in ${seconds}s (${openTimeStr})`;
         }
         
-        console.log('[Market Status] Final countdown text:', countdownText);
         marketStatusEl.textContent = countdownText;
         marketStatusEl.style.background = 'rgba(255, 193, 7, 0.2)';
         marketStatusEl.style.color = '#FFC107';
@@ -801,6 +799,33 @@ function getWindowDimensions() {
     return { width, height, source: 'inner+chrome' };
 }
 
+// Function to save window dimensions (reusable)
+async function saveWindowDimensionsNow() {
+    const dims = getWindowDimensions();
+    
+    // Only save if dimensions are valid
+    if (dims.width >= 600 && dims.height >= 400) {
+        if (App && typeof App.SaveWindowSize === 'function') {
+            try {
+                await App.SaveWindowSize(dims.width, dims.height);
+                lastSavedWidth = dims.width;
+                lastSavedHeight = dims.height;
+                console.log('[WindowSize] Saved window size:', dims.width, 'x', dims.height, `(${dims.source})`);
+                await logToBackend('info', `[WindowSize] Saved window size: ${dims.width}x${dims.height} (${dims.source})`);
+                return true;
+            } catch (e) {
+                console.warn('[WindowSize] Failed to save window size:', e);
+                await logToBackend('error', `[WindowSize] Failed to save: ${e.message}`);
+                return false;
+            }
+        } else {
+            console.warn('[WindowSize] App.SaveWindowSize not available');
+            return false;
+        }
+    }
+    return false;
+}
+
 window.addEventListener('resize', () => {
     // Debounce - save 1 second after user stops resizing
     if (resizeTimeout) {
@@ -814,22 +839,25 @@ window.addEventListener('resize', () => {
         
         // Only save if dimensions are valid and changed
         if (dims.width >= 600 && dims.height >= 400 && (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight)) {
-            if (App && typeof App.SaveWindowSize === 'function') {
-                try {
-                    await App.SaveWindowSize(dims.width, dims.height);
-                    lastSavedWidth = dims.width;
-                    lastSavedHeight = dims.height;
-                    console.log('[Resize] Saved window size:', dims.width, 'x', dims.height);
-                    await logToBackend('info', `[Resize] Saved window size: ${dims.width}x${dims.height} (${dims.source})`);
-                } catch (e) {
-                    console.warn('[Resize] Failed to save window size:', e);
-                    await logToBackend('error', `[Resize] Failed to save: ${e.message}`);
-                }
-            } else {
-                console.warn('[Resize] App.SaveWindowSize not available');
-            }
+            await saveWindowDimensionsNow();
         }
     }, 1000);
+});
+
+// Save window dimensions when window is about to close
+window.addEventListener('beforeunload', async (e) => {
+    // Save dimensions synchronously if possible, or use sendBeacon for async
+    const dims = getWindowDimensions();
+    if (dims.width >= 600 && dims.height >= 400 && App && typeof App.SaveWindowSize === 'function') {
+        try {
+            // Try to save synchronously (may not work in all browsers, but worth trying)
+            // For Wails, the backend should handle this
+            await App.SaveWindowSize(dims.width, dims.height);
+            console.log('[BeforeUnload] Saved window size:', dims.width, 'x', dims.height);
+        } catch (e) {
+            console.warn('[BeforeUnload] Failed to save window size:', e);
+        }
+    }
 });
 
 // Connect to backend
@@ -993,6 +1021,7 @@ async function initializeUI() {
         console.log('[InitializeUI] Calling App.GetEnabledTickers()...');
         // Get enabled tickers
         let tickers = await App.GetEnabledTickers();
+        cachedEnabledTickers = tickers; // seed the 1s-loop cache
         console.log('[InitializeUI] Enabled tickers received:', tickers);
         console.log('[InitializeUI] Ticker count:', tickers ? tickers.length : 0);
         
@@ -1062,7 +1091,7 @@ async function initializeUI() {
         console.error('========================================');
         const tbody = document.getElementById('ticker-table-body');
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #f44336;">Error loading tickers: ${error.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #f44336;">Error loading tickers: ${error.message}</td></tr>`;
         } else {
             console.error('[InitializeUI] ERROR: ticker-table-body element not found!');
         }
@@ -1093,6 +1122,7 @@ function initializeTickerTable(tickers) {
             <td id="${ticker}-zero-gamma">-</td>
             <td id="${ticker}-pos-gamma">-</td>
             <td id="${ticker}-neg-gamma">-</td>
+            <td id="${ticker}-net">-</td>
             <td id="${ticker}-last-update">-</td>
             <td><button class="chart-btn" data-ticker="${ticker}">📊 Chart</button></td>
         `;
@@ -1282,6 +1312,13 @@ function loadGeneralSettings(settings) {
             console.log('[General Settings] UseMarketTime:', useMarketTimeCheckbox.checked);
         }
         
+        // Use24HourTime
+        const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
+        if (use24HourTimeCheckbox) {
+            use24HourTimeCheckbox.checked = settings.Use24HourTime !== false;
+            console.log('[General Settings] Use24HourTime:', use24HourTimeCheckbox.checked);
+        }
+        
         // EnableLogging
         const enableLoggingCheckbox = document.getElementById('enable-logging');
         if (enableLoggingCheckbox) {
@@ -1296,6 +1333,27 @@ function loadGeneralSettings(settings) {
             // Default to true if not explicitly set to false
             hideConsoleCheckbox.checked = settings.HideConsole !== false;
             console.log('[General Settings] HideConsole:', hideConsoleCheckbox.checked);
+        }
+        
+        // ChartZoomFilterPercent
+        const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
+        if (chartZoomFilterInput) {
+            chartZoomFilterInput.value = settings.ChartZoomFilterPercent || 1.0;
+            console.log('[General Settings] ChartZoomFilterPercent:', chartZoomFilterInput.value);
+        }
+        
+        // AutoFollowBufferPercent
+        const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
+        if (autoFollowBufferInput) {
+            autoFollowBufferInput.value = settings.AutoFollowBufferPercent || 1.0;
+            console.log('[General Settings] AutoFollowBufferPercent:', autoFollowBufferInput.value);
+        }
+        // PriceAxisLocation
+        const priceAxisLocationSelect = document.getElementById('price-axis-location');
+        if (priceAxisLocationSelect) {
+            const loc = (settings.PriceAxisLocation || 'left').toLowerCase();
+            priceAxisLocationSelect.value = (loc === 'right') ? 'right' : 'left';
+            console.log('[General Settings] PriceAxisLocation:', priceAxisLocationSelect.value);
         }
     } catch (error) {
         console.error('[General Settings] Error loading:', error);
@@ -1332,6 +1390,11 @@ function saveGeneralSettings(settings) {
         settings.UseMarketTime = useMarketTimeCheckbox.checked;
     }
     
+    const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
+    if (use24HourTimeCheckbox) {
+        settings.Use24HourTime = use24HourTimeCheckbox.checked;
+    }
+    
     const enableLoggingCheckbox = document.getElementById('enable-logging');
     if (enableLoggingCheckbox) {
         settings.EnableLogging = enableLoggingCheckbox.checked;
@@ -1342,10 +1405,37 @@ function saveGeneralSettings(settings) {
         settings.HideConsole = hideConsoleCheckbox.checked;
     }
     
+    const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
+    if (chartZoomFilterInput) {
+        const value = parseFloat(chartZoomFilterInput.value);
+        if (!isNaN(value) && value >= 0.01 && value <= 100) {
+            settings.ChartZoomFilterPercent = value;
+        } else {
+            settings.ChartZoomFilterPercent = 1.0; // Default if invalid
+        }
+    }
+    
+    const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
+    if (autoFollowBufferInput) {
+        const value = parseFloat(autoFollowBufferInput.value);
+        if (!isNaN(value) && value >= 0 && value <= 50) {
+            settings.AutoFollowBufferPercent = value;
+        } else {
+            settings.AutoFollowBufferPercent = 1.0; // Default if invalid
+        }
+    }
+    const priceAxisLocationSelect = document.getElementById('price-axis-location');
+    if (priceAxisLocationSelect) {
+        settings.PriceAxisLocation = priceAxisLocationSelect.value === 'right' ? 'right' : 'left';
+    }
     console.log('[General Settings] Saved:', {
         UseMarketTime: settings.UseMarketTime,
+        Use24HourTime: settings.Use24HourTime,
         EnableLogging: settings.EnableLogging,
-        HideConsole: settings.HideConsole
+        HideConsole: settings.HideConsole,
+        ChartZoomFilterPercent: settings.ChartZoomFilterPercent,
+        AutoFollowBufferPercent: settings.AutoFollowBufferPercent,
+        PriceAxisLocation: settings.PriceAxisLocation
     });
 }
 
@@ -1647,21 +1737,11 @@ function loadChartColors(settings) {
         colorsGrid.innerHTML = '';
         
         // Default chart colors
-        const defaultColors = {
-            'spot': '#4CAF50',
-            'zero_gamma': '#FF9800',
-            'major_pos_vol': '#2196F3',
-            'major_neg_vol': '#F44336',
-            'major_long_gamma': '#9C27B0',
-            'major_short_gamma': '#00BCD4',
-            'major_positive': '#8BC34A',
-            'major_negative': '#FF5722',
-            'major_pos_oi': '#3F51B5',
-            'major_neg_oi': '#E91E63'
-        };
+        const defaultColors = getDefaultChartColors();
         
         // Get chart colors from settings, use defaults if not available
         let chartColors = {};
+        const colorsOff = getChartColorsOffFromSettings(settings);
         if (settings && settings.ChartColors) {
             chartColors = settings.ChartColors;
             console.log('[Chart Colors] Using colors from settings:', Object.keys(chartColors));
@@ -1669,24 +1749,56 @@ function loadChartColors(settings) {
             console.log('[Chart Colors] No ChartColors in settings, using defaults');
         }
         
-        Object.keys(defaultColors).forEach(series => {
-            const colorValue = chartColors[series] || defaultColors[series];
+        CHART_SERIES_METADATA.forEach(series => {
+            let colorValue = chartColors[series.key] || defaultColors[series.key];
+            if (isChartColorOffValue(colorValue)) {
+                colorValue = defaultColors[series.key];
+            }
+            const isOff = colorsOff.has(series.key);
             
             const colorItem = document.createElement('div');
             colorItem.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
             
             const label = document.createElement('label');
-            label.textContent = series.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            label.textContent = series.label;
             label.style.cssText = 'font-size: 0.85rem; color: #aaa;';
+            
+            const controlsRow = document.createElement('div');
+            controlsRow.className = 'chart-color-controls';
             
             const colorInput = document.createElement('input');
             colorInput.type = 'color';
-            colorInput.id = `color-${series}`;
+            colorInput.id = `color-${series.key}`;
             colorInput.value = colorValue;
-            colorInput.style.cssText = 'width: 100%; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer;';
+            colorInput.disabled = isOff;
+            colorInput.style.cssText = 'flex: 1; min-width: 0; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer; opacity: ' + (isOff ? '0.45' : '1') + ';';
             
+            const offLabel = document.createElement('label');
+            offLabel.className = 'chart-color-off-label';
+            offLabel.title = 'Hide on chart (data still collected)';
+            
+            const offCheckbox = document.createElement('input');
+            offCheckbox.type = 'checkbox';
+            offCheckbox.id = `color-off-${series.key}`;
+            offCheckbox.checked = isOff;
+            
+            const offText = document.createElement('span');
+            offText.textContent = 'Off';
+            
+            offLabel.appendChild(offCheckbox);
+            offLabel.appendChild(offText);
+            
+            offCheckbox.addEventListener('change', () => {
+                const off = offCheckbox.checked;
+                colorInput.disabled = off;
+                colorInput.style.opacity = off ? '0.45' : '1';
+                colorInput.style.cursor = off ? 'not-allowed' : 'pointer';
+            });
+            
+            controlsRow.appendChild(colorInput);
+            controlsRow.appendChild(offLabel);
             colorItem.appendChild(label);
-            colorItem.appendChild(colorInput);
+            colorItem.appendChild(controlsRow);
             colorsGrid.appendChild(colorItem);
         });
         
@@ -1700,9 +1812,16 @@ function loadChartColors(settings) {
             resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
             
             newResetBtn.addEventListener('click', () => {
-                Object.keys(defaultColors).forEach(series => {
-                    const input = document.getElementById(`color-${series}`);
-                    if (input) input.value = defaultColors[series];
+                CHART_SERIES_METADATA.forEach(series => {
+                    const input = document.getElementById(`color-${series.key}`);
+                    if (input) {
+                        input.value = defaultColors[series.key];
+                        input.disabled = false;
+                        input.style.opacity = '1';
+                        input.style.cursor = 'pointer';
+                    }
+                    const offInput = document.getElementById(`color-off-${series.key}`);
+                    if (offInput) offInput.checked = false;
                 });
             });
         }
@@ -1721,25 +1840,19 @@ function saveChartColors(settings) {
     if (!settings.ChartColors) {
         settings.ChartColors = {};
     }
-    const defaultColors = {
-        'spot': '#4CAF50',
-        'zero_gamma': '#FF9800',
-        'major_pos_vol': '#2196F3',
-        'major_neg_vol': '#F44336',
-        'major_long_gamma': '#9C27B0',
-        'major_short_gamma': '#00BCD4',
-        'major_positive': '#8BC34A',
-        'major_negative': '#FF5722',
-        'major_pos_oi': '#3F51B5',
-        'major_neg_oi': '#E91E63'
-    };
-    Object.keys(defaultColors).forEach(series => {
-        const input = document.getElementById(`color-${series}`);
+    const colorsOff = [];
+    CHART_SERIES_METADATA.forEach(series => {
+        const input = document.getElementById(`color-${series.key}`);
+        const offInput = document.getElementById(`color-off-${series.key}`);
         if (input) {
-            settings.ChartColors[series] = input.value;
+            settings.ChartColors[series.key] = input.value;
+        }
+        if (offInput && offInput.checked) {
+            colorsOff.push(series.key);
         }
     });
-    console.log('[Chart Colors] Chart colors saved to settings object.');
+    settings.ChartColorsOff = colorsOff;
+    console.log('[Chart Colors] Chart colors saved to settings object.', colorsOff.length ? `Off: ${colorsOff.join(', ')}` : '');
 }
 
 // Save settings
@@ -1773,6 +1886,13 @@ async function saveSettings() {
         const dataDirInput = document.getElementById('data-dir');
         if (dataDirInput) {
             settings.DataDirectory = dataDirInput.value || 'Tickers';
+        }
+        
+        // If user entered a new API key in the settings form, include it so it is saved and poller uses it
+        const apiKeyInput = document.getElementById('api-key');
+        if (apiKeyInput && apiKeyInput.value.trim() !== '') {
+            settings.APITKey = apiKeyInput.value.trim();
+            console.log('[Save Settings] New API key provided (length:', settings.APITKey.length, ')');
         }
         
         // Save subscription tiers - read checkboxes carefully
@@ -1916,6 +2036,7 @@ async function saveSettings() {
             try {
                 console.log('[Save Settings] Calling GetEnabledTickers()...');
                 let enabledTickers = await App.GetEnabledTickers();
+                cachedEnabledTickers = enabledTickers; // refresh the 1s-loop cache
                 console.log('[Save Settings] GetEnabledTickers returned:', enabledTickers, 'length:', enabledTickers?.length);
                 
                 if (enabledTickers && enabledTickers.length > 0) {
@@ -1949,6 +2070,19 @@ async function saveSettings() {
 
 // Periodic updates interval
 let periodicUpdateInterval = null;
+// Market date rollover check: when user is viewing "today", advance to new date after rollover (e.g. market open)
+let marketDateRolloverInterval = null;
+
+// Cached enabled-tickers list: seeded at init and refreshed on settings save,
+// so the 1s update loop doesn't ask the backend for it on every tick
+let cachedEnabledTickers = null;
+
+async function getEnabledTickersCached() {
+    if (cachedEnabledTickers === null) {
+        cachedEnabledTickers = await App.GetEnabledTickers();
+    }
+    return cachedEnabledTickers;
+}
 
 // Start periodic updates
 // Monitor window size and save periodically (backup for resize events)
@@ -1968,30 +2102,28 @@ function startWindowSizeMonitor() {
         
         // Only save if size changed and is valid
         if (dims.width >= 600 && dims.height >= 400 && (dims.width !== monitoredWidth || dims.height !== monitoredHeight)) {
-            if (App && typeof App.SaveWindowSize === 'function') {
-                try {
-                    await App.SaveWindowSize(dims.width, dims.height);
-                    monitoredWidth = dims.width;
-                    monitoredHeight = dims.height;
-                    console.log('[WindowMonitor] Saved window size:', dims.width, 'x', dims.height, `(${dims.source})`);
-                } catch (e) {
-                    console.warn('[WindowMonitor] Failed to save:', e);
-                }
+            if (await saveWindowDimensionsNow()) {
+                monitoredWidth = dims.width;
+                monitoredHeight = dims.height;
             }
         }
     }, 5000);
     
-    // Also save initial size after a delay
+    // Also save initial size after a delay (but only if it's different from what we've already saved)
     setTimeout(async () => {
         const dims = getWindowDimensions();
-        if (dims.width >= 600 && dims.height >= 400 && App && typeof App.SaveWindowSize === 'function') {
-            try {
-                await App.SaveWindowSize(dims.width, dims.height);
+        if (dims.width >= 600 && dims.height >= 400) {
+            // Only save if different from what we've already saved (avoid overwriting with same value)
+            if (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight) {
+                if (await saveWindowDimensionsNow()) {
+                    monitoredWidth = dims.width;
+                    monitoredHeight = dims.height;
+                }
+            } else {
+                // Update monitored values even if we don't save (to avoid unnecessary saves)
                 monitoredWidth = dims.width;
                 monitoredHeight = dims.height;
-                console.log('[WindowMonitor] Initial window size saved:', dims.width, 'x', dims.height, `(${dims.source})`);
-            } catch (e) {
-                console.warn('[WindowMonitor] Failed to save initial size:', e);
+                console.log('[WindowMonitor] Initial window size matches saved size:', dims.width, 'x', dims.height);
             }
         }
     }, 2000);
@@ -2003,11 +2135,44 @@ function startPeriodicUpdates() {
         clearInterval(periodicUpdateInterval);
         periodicUpdateInterval = null;
     }
+    if (marketDateRolloverInterval) {
+        clearInterval(marketDateRolloverInterval);
+        marketDateRolloverInterval = null;
+    }
     
     // Update every 1 second to reflect high-priority ticker updates
     periodicUpdateInterval = setInterval(async () => {
         await updateTickerData();
     }, 1000);
+    
+    // Check for market date rollover every 60s (e.g. app started before open; after 8:30 AM ET we should show today)
+    marketDateRolloverInterval = setInterval(async () => {
+        if (selectedDate === null || lastKnownMarketDate === null) return;
+        if (selectedDate !== lastKnownMarketDate) return; // user is viewing a past date, don't auto-advance
+        try {
+            const currentMarketDate = await fetchMarketDate();
+            if (!currentMarketDate) return;
+            if (currentMarketDate === selectedDate) return; // no rollover
+            // Market date rolled over (e.g. new day at 8:30 AM ET); switch to new date and refresh list
+            lastKnownMarketDate = currentMarketDate;
+            selectedDate = currentMarketDate;
+            await loadAvailableDates();
+            // Ensure dropdown and state show the new date (loadAvailableDates may have picked another if new date wasn't in list yet)
+            selectedDate = currentMarketDate;
+            const dateSelector = document.getElementById('date-selector');
+            if (dateSelector) {
+                for (let i = 0; i < dateSelector.options.length; i++) {
+                    if (dateSelector.options[i].value === currentMarketDate) {
+                        dateSelector.selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            await updateTickerData();
+        } catch (e) {
+            // ignore
+        }
+    }, 60000);
     
     // Initial update
     updateTickerData();
@@ -2016,31 +2181,34 @@ function startPeriodicUpdates() {
 // Update ticker data (parallelized for performance)
 async function updateTickerData() {
     try {
-        const tickers = await App.GetEnabledTickers();
-        // Use selected date if available, otherwise use current market date
+        const tickers = await getEnabledTickersCached();
+        // Determine which date to use for loading data
         let dateStr = selectedDate;
+        const viewingToday = (selectedDate === lastKnownMarketDate);
+        const useBackendToday = !dateStr || viewingToday;
+
         if (!dateStr) {
-            // Fallback to current market date
             try {
-                const response = await fetch('/api/market-date');
-                if (response.ok) {
-                    const data = await response.json();
-                    dateStr = data.date;
+                const fetched = await fetchMarketDate();
+                if (fetched) {
+                    dateStr = fetched;
+                    lastKnownMarketDate = fetched;
                 } else {
-                    // Last resort: use today's date
-                    const now = new Date();
-                    dateStr = now.toISOString().split('T')[0];
+                    dateStr = new Date().toISOString().split('T')[0];
                 }
             } catch (error) {
                 console.warn('[UpdateTickerData] Failed to get market date, using today:', error);
-                const now = new Date();
-                dateStr = now.toISOString().split('T')[0];
+                dateStr = new Date().toISOString().split('T')[0];
             }
         }
-        
+        // Note: when viewing "today", market-date rollover is handled by the
+        // 60s marketDateRolloverInterval - no per-second fetch here.
+
+        // When showing "today", pass "" so backend resolves current market date at request time (rollover without restart)
+        const dateStrForRequest = useBackendToday ? '' : dateStr;
         // Fetch all tickers in parallel for better performance
         const promises = tickers.map(ticker => 
-            App.GetTickerData(ticker, dateStr)
+            App.GetTickerData(ticker, dateStrForRequest)
                 .then(data => ({ ticker, data, error: null }))
                 .catch(error => ({ ticker, data: null, error }))
         );
@@ -2063,7 +2231,7 @@ async function updateTickerData() {
                 updateTickerRow(ticker, data);
             } else {
                 // No data available - show placeholder
-                console.log(`No data available for ${ticker} on ${dateStr}`);
+                console.log(`No data available for ${ticker} on ${dateStrForRequest === '' ? 'today' : dateStr}`);
                 const row = document.getElementById(`${ticker}-spot`);
                 if (row) {
                     row.textContent = 'No data';
@@ -2085,6 +2253,11 @@ function updateTickerRow(ticker, data) {
     const zeroGamma = getLatestValue(data, 'zero_gamma');
     const posGamma = getLatestValue(data, 'major_pos_vol');
     const negGamma = getLatestValue(data, 'major_neg_vol');
+    let netGamma = null;
+    if (typeof spot === 'number' && typeof posGamma === 'number' && typeof negGamma === 'number') {
+        // Match NinjaScript Net plot level: spot + ((pos - abs(neg)) / 100)
+        netGamma = spot + ((posGamma - Math.abs(negGamma)) / 100);
+    }
     
     if (spot !== null) {
         document.getElementById(`${ticker}-spot`).textContent = formatNumber(spot);
@@ -2097,6 +2270,9 @@ function updateTickerRow(ticker, data) {
     }
     if (negGamma !== null) {
         document.getElementById(`${ticker}-neg-gamma`).textContent = formatNumber(negGamma);
+    }
+    if (netGamma !== null) {
+        document.getElementById(`${ticker}-net`).textContent = formatNumber(netGamma);
     }
     
     // Get API timestamp from data (when the data was actually collected)
@@ -2147,18 +2323,11 @@ async function openChart(ticker) {
         let dateStr = selectedDate;
         if (!dateStr) {
             try {
-                const response = await fetch('/api/market-date');
-                if (response.ok) {
-                    const data = await response.json();
-                    dateStr = data.date;
-                } else {
-                    const now = new Date();
-                    dateStr = now.toISOString().split('T')[0];
-                }
+                dateStr = await fetchMarketDate();
+                if (!dateStr) dateStr = new Date().toISOString().split('T')[0];
             } catch (error) {
                 console.warn('[OpenChart] Failed to get market date, using today:', error);
-                const now = new Date();
-                dateStr = now.toISOString().split('T')[0];
+                dateStr = new Date().toISOString().split('T')[0];
             }
         }
         
@@ -2224,11 +2393,7 @@ async function loadAvailableDates() {
         // Get current market date for comparison
         let todayStr = null;
         try {
-            const marketDateResponse = await fetch('/api/market-date');
-            if (marketDateResponse.ok) {
-                const marketDateData = await marketDateResponse.json();
-                todayStr = marketDateData.date;
-            }
+            todayStr = await fetchMarketDate();
         } catch (error) {
             console.warn('[Date Selector] Failed to get market date:', error);
         }
@@ -2273,6 +2438,9 @@ async function loadAvailableDates() {
         
         dateSelector.selectedIndex = defaultIndex;
         selectedDate = dates[defaultIndex];
+        // Track "today" so we can auto-advance when market date rolls over (e.g. at market open)
+        // If todayStr is null (fetch failed), treat selected date as "today" so we still use live date when available
+        lastKnownMarketDate = todayStr || selectedDate;
         
         console.log('[Date Selector] Default date selected:', selectedDate);
         
@@ -2298,31 +2466,38 @@ async function onDateChanged(dateStr) {
 // Set date selector to today
 async function setDateToToday() {
     try {
-        const response = await fetch('/api/market-date');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const todayStr = await fetchMarketDate();
+        if (!todayStr) {
+            throw new Error('Failed to get market date');
         }
-        
-        const data = await response.json();
-        const todayStr = data.date;
-        
+        lastKnownMarketDate = todayStr;
+        selectedDate = todayStr;
+
         const dateSelector = document.getElementById('date-selector');
         if (!dateSelector) return;
-        
-        // Find today's date in the dropdown
+
+        // Refresh date list first (backend always includes current market date now)
+        await loadAvailableDates();
+
+        // Ensure today is selected (list may have been rebuilt by loadAvailableDates)
         for (let i = 0; i < dateSelector.options.length; i++) {
             if (dateSelector.options[i].value === todayStr) {
                 dateSelector.selectedIndex = i;
-                await onDateChanged(todayStr);
+                selectedDate = todayStr;
+                await updateTickerData();
                 return;
             }
         }
-        
-        // If today not found, select first item
-        if (dateSelector.options.length > 0) {
-            dateSelector.selectedIndex = 0;
-            await onDateChanged(dateSelector.options[0].value);
-        }
+
+        // If today still not in dropdown, add it and select (fallback)
+        const option = document.createElement('option');
+        option.value = todayStr;
+        const [y, m, d] = todayStr.split('-');
+        option.textContent = `${m}/${d}/${y} (Today)`;
+        dateSelector.insertBefore(option, dateSelector.options[0]);
+        dateSelector.selectedIndex = 0;
+        selectedDate = todayStr;
+        await updateTickerData();
     } catch (error) {
         console.error('[Date Selector] Error setting to today:', error);
     }

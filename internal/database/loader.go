@@ -60,16 +60,22 @@ func NewDataLoader(settings *config.Settings, debugPrint func(string, string)) *
 	}
 }
 
-// LoadChartData loads only the columns needed for chart display
+// LoadChartData loads only the columns needed for chart display.
+// It is READ-ONLY: opens the database with read-only connection and never writes.
+// Chart data requests do not modify the database file.
 // CRITICAL: Skips profiles_blob to prevent massive memory usage (28GB+ issue)
 // Loads: timestamp, spot, zero_gamma, major_pos_vol, major_neg_vol, major_long_gamma, major_short_gamma,
 //        major_positive, major_negative, major_pos_oi, major_neg_oi
 // Does NOT use query cache (chart data changes frequently)
-func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int) (map[string][]interface{}, error) {
+// If since is non-nil, only rows with timestamp > since are returned (incremental load).
+func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int, since *float64) (map[string][]interface{}, error) {
 	dateStr := date.Format("2006-01-02")
-	
+	incStr := "full"
+	if since != nil {
+		incStr = fmt.Sprintf("incremental since=%v", *since)
+	}
+	dl.debugPrint(fmt.Sprintf("LoadChartData: [START] Loading chart data for %s on %s (maxRows=%d, %s)", ticker, dateStr, maxRows, incStr), "loader")
 	dbPath := dl.getDBPath(ticker, date)
-	dl.debugPrint(fmt.Sprintf("LoadChartData: [START] Loading chart data for %s on %s (maxRows=%d)", ticker, dateStr, maxRows), "loader")
 	dl.debugPrint(fmt.Sprintf("LoadChartData: Checking database path for %s on %s: %s", ticker, dateStr, dbPath), "loader")
 
 	// Check if file exists - return empty data if it doesn't
@@ -149,11 +155,16 @@ func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int) 
 	// Build SELECT statement with only existing required columns
 	// NOTE: Embed limit directly in query string (modernc.org/sqlite may not handle LIMIT ? correctly)
 	selectCols := strings.Join(existingRequiredColumns, ", ")
-	query := fmt.Sprintf("SELECT %s FROM ticker_data ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
-	dl.debugPrint(fmt.Sprintf("LoadChartData: Executing query for %s: %s", ticker, query), "loader")
-
-	// Query data with row limit (embedded in query string)
-	rows, err := db.Query(query)
+	var rows *sql.Rows
+	if since != nil {
+		query := fmt.Sprintf("SELECT %s FROM ticker_data WHERE timestamp > ? ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
+		dl.debugPrint(fmt.Sprintf("LoadChartData: Executing incremental query for %s: timestamp > %v", ticker, *since), "loader")
+		rows, err = db.Query(query, *since)
+	} else {
+		query := fmt.Sprintf("SELECT %s FROM ticker_data ORDER BY timestamp ASC LIMIT %d", selectCols, maxRows)
+		dl.debugPrint(fmt.Sprintf("LoadChartData: Executing query for %s: %s", ticker, query), "loader")
+		rows, err = db.Query(query)
+	}
 	if err != nil {
 		dl.debugPrint(fmt.Sprintf("LoadChartData: Query failed for %s: %v", ticker, err), "error")
 		// Check if table exists
@@ -258,6 +269,9 @@ func (dl *DataLoader) LoadTickerData(ticker string, date time.Time) (map[string]
 	}
 	dl.debugPrint(fmt.Sprintf("LoadTickerData: Got database connection for %s", ticker), "loader")
 
+	// No checkpoint needed here: WAL readers always see committed data
+	// (each read starts a fresh snapshot of the latest committed state)
+
 	// Only load columns needed for main window (explicitly exclude profiles_blob)
 	requiredColumns := []string{
 		"timestamp",
@@ -317,8 +331,6 @@ func (dl *DataLoader) LoadTickerData(ticker string, date time.Time) (map[string]
 		}
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
-	defer rows.Close()
-	dl.debugPrint(fmt.Sprintf("LoadTickerData: Query executed successfully for %s, scanning rows...", ticker), "loader")
 
 	// Initialize result map with only required columns
 	result := make(map[string]interface{})
@@ -326,96 +338,99 @@ func (dl *DataLoader) LoadTickerData(ticker string, date time.Time) (map[string]
 		result[col] = []interface{}{}
 	}
 
-	// Scan the latest row
-	if rows.Next() {
-		// Create slice for row values (only existing columns that we're querying)
-		values := make([]interface{}, len(existingRequiredColumns))
+	// Scan the latest row, then CLOSE rows before any follow-up queries.
+	// The connection pool allows one connection per file, so a second query
+	// while rows is still open would deadlock waiting for the connection.
+	var values []interface{}
+	haveRow := rows.Next()
+	if haveRow {
+		values = make([]interface{}, len(existingRequiredColumns))
 		valuePtrs := make([]interface{}, len(existingRequiredColumns))
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
 
 		if err := rows.Scan(valuePtrs...); err != nil {
+			rows.Close()
 			dl.debugPrint(fmt.Sprintf("LoadTickerData: Failed to scan row for %s: %v", ticker, err), "error")
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
+	}
+	iterErr := rows.Err()
+	rows.Close()
+	if iterErr != nil {
+		dl.debugPrint(fmt.Sprintf("LoadTickerData: Error iterating rows for %s: %v", ticker, iterErr), "error")
+		return nil, fmt.Errorf("error iterating rows: %w", iterErr)
+	}
 
-		// Add to result - only for columns that exist and were queried
-		for i, col := range existingRequiredColumns {
-			result[col] = []interface{}{values[i]}
-		}
-		// Missing columns already have empty arrays from initialization above
-		
-		// CRITICAL FIX: For any field that is NULL or missing, query for last known non-null value
-		// This prevents showing "-" or "No data" when we have historical data available
-		// Applies to: spot, zero_gamma, major_pos_vol, major_neg_vol
-		fieldsToCheck := []string{"spot", "zero_gamma", "major_pos_vol", "major_neg_vol"}
-		
-		for _, fieldName := range fieldsToCheck {
-			// Find the index of this field in requiredColumns
-			fieldIdx := -1
-			for i, col := range requiredColumns {
-				if col == fieldName {
-					fieldIdx = i
-					break
-				}
-			}
-			
-			if fieldIdx >= 0 {
-				fieldVal := values[fieldIdx]
-				// Check if field is NULL or missing
-				isNullOrMissing := false
-				if fieldVal == nil {
-					isNullOrMissing = true
-				} else if val, ok := fieldVal.(float64); ok && val == 0.0 && fieldName == "zero_gamma" {
-					// For zero_gamma specifically, also treat 0.0 as missing (needs fallback)
-					isNullOrMissing = true
-				}
-				
-				if isNullOrMissing {
-					dl.debugPrint(fmt.Sprintf("LoadTickerData: Latest %s is NULL/missing for %s, querying for last known value", fieldName, ticker), "app")
-					// Query for last non-null value for this field
-					fieldCol := sanitizeFieldName(fieldName)
-					
-					// Build query - for zero_gamma, exclude 0.0; for others, just check IS NOT NULL
-					var fallbackQuery string
-					if fieldName == "zero_gamma" {
-						fallbackQuery = fmt.Sprintf("SELECT %s FROM ticker_data WHERE %s IS NOT NULL AND %s != 0.0 ORDER BY timestamp DESC LIMIT 1", 
-							fieldCol, fieldCol, fieldCol)
-					} else {
-						fallbackQuery = fmt.Sprintf("SELECT %s FROM ticker_data WHERE %s IS NOT NULL ORDER BY timestamp DESC LIMIT 1", 
-							fieldCol, fieldCol)
-					}
-					
-					fallbackRows, err := db.Query(fallbackQuery)
-					if err == nil {
-						defer fallbackRows.Close()
-						if fallbackRows.Next() {
-							var lastKnownValue float64
-							if err := fallbackRows.Scan(&lastKnownValue); err == nil {
-								result[fieldName] = []interface{}{lastKnownValue}
-								dl.debugPrint(fmt.Sprintf("LoadTickerData: Found last known %s for %s: %.2f", fieldName, ticker, lastKnownValue), "app")
-							}
-						} else {
-							dl.debugPrint(fmt.Sprintf("LoadTickerData: No known %s found in database for %s", fieldName, ticker), "app")
-						}
-					} else {
-						dl.debugPrint(fmt.Sprintf("LoadTickerData: Error querying for last known %s for %s: %v", fieldName, ticker, err), "error")
-					}
-				}
-			}
-		}
-		
-		dl.debugPrint(fmt.Sprintf("LoadTickerData: Successfully loaded latest row for %s on %s (skipped profiles_blob)", ticker, dateStr), "loader")
-	} else {
+	if !haveRow {
 		dl.debugPrint(fmt.Sprintf("LoadTickerData: No rows found for %s on %s", ticker, dateStr), "loader")
+		return result, nil
 	}
 
-	if err := rows.Err(); err != nil {
-		dl.debugPrint(fmt.Sprintf("LoadTickerData: Error iterating rows for %s: %v", ticker, err), "error")
-		return nil, fmt.Errorf("error iterating rows: %w", err)
+	// Add to result - only for columns that exist and were queried
+	for i, col := range existingRequiredColumns {
+		result[col] = []interface{}{values[i]}
 	}
-	
+	// Missing columns already have empty arrays from initialization above
+
+	// For any field that is NULL or missing, query for last known non-null value.
+	// This prevents showing "-" or "No data" when we have historical data available.
+	fieldsToCheck := []string{"spot", "zero_gamma", "major_pos_vol", "major_neg_vol"}
+
+	for _, fieldName := range fieldsToCheck {
+		// Find the index of this field in the queried columns
+		fieldIdx := -1
+		for i, col := range existingRequiredColumns {
+			if col == fieldName {
+				fieldIdx = i
+				break
+			}
+		}
+		if fieldIdx < 0 {
+			continue
+		}
+
+		fieldVal := values[fieldIdx]
+		// Check if field is NULL or missing
+		isNullOrMissing := false
+		if fieldVal == nil {
+			isNullOrMissing = true
+		} else if val, ok := fieldVal.(float64); ok && val == 0.0 && fieldName == "zero_gamma" {
+			// For zero_gamma specifically, also treat 0.0 as missing (needs fallback)
+			isNullOrMissing = true
+		}
+		if !isNullOrMissing {
+			continue
+		}
+
+		// Query for last non-null value for this field
+		fieldCol := sanitizeFieldName(fieldName)
+
+		// Build query - for zero_gamma, exclude 0.0; for others, just check IS NOT NULL
+		var fallbackQuery string
+		if fieldName == "zero_gamma" {
+			fallbackQuery = fmt.Sprintf("SELECT %s FROM ticker_data WHERE %s IS NOT NULL AND %s != 0.0 ORDER BY timestamp DESC LIMIT 1",
+				fieldCol, fieldCol, fieldCol)
+		} else {
+			fallbackQuery = fmt.Sprintf("SELECT %s FROM ticker_data WHERE %s IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+				fieldCol, fieldCol)
+		}
+
+		var lastKnownValue float64
+		err := db.QueryRow(fallbackQuery).Scan(&lastKnownValue)
+		switch {
+		case err == nil:
+			result[fieldName] = []interface{}{lastKnownValue}
+			dl.debugPrint(fmt.Sprintf("LoadTickerData: Found last known %s for %s: %.2f", fieldName, ticker, lastKnownValue), "app")
+		case err == sql.ErrNoRows:
+			dl.debugPrint(fmt.Sprintf("LoadTickerData: No known %s found in database for %s", fieldName, ticker), "app")
+		default:
+			dl.debugPrint(fmt.Sprintf("LoadTickerData: Error querying for last known %s for %s: %v", fieldName, ticker, err), "error")
+		}
+	}
+
+	dl.debugPrint(fmt.Sprintf("LoadTickerData: Successfully loaded latest row for %s on %s (skipped profiles_blob)", ticker, dateStr), "loader")
 	return result, nil
 }
 

@@ -8,6 +8,7 @@ import { Create as $Create } from "@wailsio/runtime";
 
 /**
  * Settings represents the application settings
+ * Concurrent access is protected by SettingsManager.mu, not by the struct itself
  */
 export class Settings {
     /**
@@ -81,12 +82,43 @@ export class Settings {
              */
             this["EnableDebug"] = false;
         }
+        if (!("EnableLogging" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["EnableLogging"] = false;
+        }
         if (!("HideConsole" in $$source)) {
             /**
              * @member
              * @type {boolean}
              */
             this["HideConsole"] = false;
+        }
+        if (!("UseMarketTime" in $$source)) {
+            /**
+             * Display times in ET instead of local time
+             * @member
+             * @type {boolean}
+             */
+            this["UseMarketTime"] = false;
+        }
+        if (!("Use24HourTime" in $$source)) {
+            /**
+             * Chart times: true = 24-hour (14:30), false = 12-hour AM/PM (2:30 PM)
+             * @member
+             * @type {boolean}
+             */
+            this["Use24HourTime"] = false;
+        }
+        if (!("HiddenPlots" in $$source)) {
+            /**
+             * Plots hidden by default on charts
+             * @member
+             * @type {string[]}
+             */
+            this["HiddenPlots"] = [];
         }
         if (!("ShowCrosshair" in $$source)) {
             /**
@@ -293,6 +325,30 @@ export class Settings {
              */
             this["ChartColors"] = {};
         }
+        if (!("ChartColorsOff" in $$source)) {
+            /**
+             * Series hidden on charts via color settings (still collected)
+             * @member
+             * @type {string[]}
+             */
+            this["ChartColorsOff"] = [];
+        }
+        if (!("ChartZoomFilterPercent" in $$source)) {
+            /**
+             * Default Y-axis zoom filter as % of current spot price
+             * @member
+             * @type {number}
+             */
+            this["ChartZoomFilterPercent"] = 0;
+        }
+        if (!("AutoFollowBufferPercent" in $$source)) {
+            /**
+             * Buffer percentage for auto-follow (default 10%)
+             * @member
+             * @type {number}
+             */
+            this["AutoFollowBufferPercent"] = 0;
+        }
         if (!("WindowWidth" in $$source)) {
             /**
              * Last saved window width
@@ -320,49 +376,57 @@ export class Settings {
      */
     static createFrom($$source = {}) {
         const $$createField1_0 = $$createType0;
-        const $$createField29_0 = $$createType1;
-        const $$createField30_0 = $$createType2;
-        const $$createField31_0 = $$createType2;
-        const $$createField32_0 = $$createType2;
-        const $$createField33_0 = $$createType2;
-        const $$createField34_0 = $$createType1;
-        const $$createField35_0 = $$createType1;
-        const $$createField36_0 = $$createType4;
-        const $$createField37_0 = $$createType0;
-        const $$createField38_0 = $$createType5;
+        const $$createField13_0 = $$createType0;
+        const $$createField33_0 = $$createType1;
+        const $$createField34_0 = $$createType2;
+        const $$createField35_0 = $$createType2;
+        const $$createField36_0 = $$createType2;
+        const $$createField37_0 = $$createType2;
+        const $$createField38_0 = $$createType1;
+        const $$createField39_0 = $$createType1;
+        const $$createField40_0 = $$createType4;
+        const $$createField41_0 = $$createType0;
+        const $$createField42_0 = $$createType5;
+        const $$createField43_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("APISubscriptionTiers" in $$parsedSource) {
             $$parsedSource["APISubscriptionTiers"] = $$createField1_0($$parsedSource["APISubscriptionTiers"]);
         }
+        if ("HiddenPlots" in $$parsedSource) {
+            $$parsedSource["HiddenPlots"] = $$createField13_0($$parsedSource["HiddenPlots"]);
+        }
         if ("Alerts" in $$parsedSource) {
-            $$parsedSource["Alerts"] = $$createField29_0($$parsedSource["Alerts"]);
+            $$parsedSource["Alerts"] = $$createField33_0($$parsedSource["Alerts"]);
         }
         if ("ProfileSettings" in $$parsedSource) {
-            $$parsedSource["ProfileSettings"] = $$createField30_0($$parsedSource["ProfileSettings"]);
+            $$parsedSource["ProfileSettings"] = $$createField34_0($$parsedSource["ProfileSettings"]);
         }
         if ("Classic" in $$parsedSource) {
-            $$parsedSource["Classic"] = $$createField31_0($$parsedSource["Classic"]);
+            $$parsedSource["Classic"] = $$createField35_0($$parsedSource["Classic"]);
         }
         if ("State" in $$parsedSource) {
-            $$parsedSource["State"] = $$createField32_0($$parsedSource["State"]);
+            $$parsedSource["State"] = $$createField36_0($$parsedSource["State"]);
         }
         if ("Orderflow" in $$parsedSource) {
-            $$parsedSource["Orderflow"] = $$createField33_0($$parsedSource["Orderflow"]);
+            $$parsedSource["Orderflow"] = $$createField37_0($$parsedSource["Orderflow"]);
         }
         if ("Charts" in $$parsedSource) {
-            $$parsedSource["Charts"] = $$createField34_0($$parsedSource["Charts"]);
+            $$parsedSource["Charts"] = $$createField38_0($$parsedSource["Charts"]);
         }
         if ("Tickers" in $$parsedSource) {
-            $$parsedSource["Tickers"] = $$createField35_0($$parsedSource["Tickers"]);
+            $$parsedSource["Tickers"] = $$createField39_0($$parsedSource["Tickers"]);
         }
         if ("TickerConfigs" in $$parsedSource) {
-            $$parsedSource["TickerConfigs"] = $$createField36_0($$parsedSource["TickerConfigs"]);
+            $$parsedSource["TickerConfigs"] = $$createField40_0($$parsedSource["TickerConfigs"]);
         }
         if ("TickerOrder" in $$parsedSource) {
-            $$parsedSource["TickerOrder"] = $$createField37_0($$parsedSource["TickerOrder"]);
+            $$parsedSource["TickerOrder"] = $$createField41_0($$parsedSource["TickerOrder"]);
         }
         if ("ChartColors" in $$parsedSource) {
-            $$parsedSource["ChartColors"] = $$createField38_0($$parsedSource["ChartColors"]);
+            $$parsedSource["ChartColors"] = $$createField42_0($$parsedSource["ChartColors"]);
+        }
+        if ("ChartColorsOff" in $$parsedSource) {
+            $$parsedSource["ChartColorsOff"] = $$createField43_0($$parsedSource["ChartColorsOff"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }

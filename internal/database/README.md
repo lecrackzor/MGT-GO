@@ -31,7 +31,6 @@ This package provides database operations for Market Terminal Gexbot using pure 
 
 All database operations use `modernc.org/sqlite` (pure Go driver):
 - **No C dependencies** - all memory allocations visible in Go profiler
-- **Full visibility** - use `go tool pprof` to see exact allocations
 - **No hidden memory** - every byte is accounted for
 
 ## Connection Management

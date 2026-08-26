@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"market-terminal/internal/utils"
@@ -26,11 +27,12 @@ type PerTickerScheduler struct {
 
 // TickerGoroutine manages a single ticker's scheduling goroutine
 type TickerGoroutine struct {
-	ticker      string
-	stopChan    chan struct{}
-	timer       *time.Timer
-	mu          sync.Mutex
-	isRunning   bool
+	ticker          string
+	stopChan        chan struct{}
+	timer           *time.Timer
+	mu              sync.Mutex
+	isRunning       bool
+	fetchInProgress atomic.Bool // Guards against overlapping fetches for this ticker
 }
 
 // NewPerTickerScheduler creates a new per-ticker scheduler
@@ -99,6 +101,23 @@ func (pts *PerTickerScheduler) Stop() {
 
 	pts.debugPrint("Per-ticker scheduler stopped", "system")
 	log.Printf("PerTickerScheduler: Stopped")
+}
+
+// TriggerImmediatePolling triggers immediate polling for all enabled tickers
+// This is useful when date rollover occurs and we need to start collecting data for the new date
+func (pts *PerTickerScheduler) TriggerImmediatePolling() {
+	pts.mu.RLock()
+	goroutines := make(map[string]*TickerGoroutine, len(pts.tickerGoroutines))
+	for ticker, goroutine := range pts.tickerGoroutines {
+		goroutines[ticker] = goroutine
+	}
+	pts.mu.RUnlock()
+
+	log.Printf("PerTickerScheduler: Triggering immediate polling for %d tickers after date rollover", len(goroutines))
+
+	for ticker, goroutine := range goroutines {
+		pts.triggerFetch(ticker, goroutine)
+	}
 }
 
 // UpdateTickers updates the list of enabled tickers
@@ -189,47 +208,38 @@ func (pts *PerTickerScheduler) stopTickerGoroutine(ticker string, goroutine *Tic
 	log.Printf("PerTickerScheduler: Stopped goroutine for %s", ticker)
 }
 
-// runTickerGoroutine runs the scheduling loop for a single ticker
+// runTickerGoroutine runs the scheduling loop for a single ticker.
+//
+// The cadence is anchored: each cycle's fire time is computed from the previous
+// scheduled fire time (not from fetch completion), so a 1s interval actually
+// fires every 1s regardless of how long the fetch takes. Fetches run
+// asynchronously; if the previous fetch is still in flight when the next tick
+// fires, that tick is skipped instead of stacking requests.
 func (pts *PerTickerScheduler) runTickerGoroutine(ticker string, goroutine *TickerGoroutine) {
 	// Add panic recovery to prevent goroutine from crashing
 	defer func() {
 		if r := recover(); r != nil {
 			pts.debugPrint(fmt.Sprintf("Ticker %s: ❌ PANIC in goroutine: %v", ticker, r), "error")
-			// Try to restart the goroutine
-			pts.debugPrint(fmt.Sprintf("Ticker %s: Attempting to restart goroutine after panic", ticker), "scheduler")
-			// Don't restart automatically - let health check handle it
 		}
 		pts.debugPrint(fmt.Sprintf("Ticker %s: Goroutine exiting", ticker), "scheduler")
 	}()
 
 	// Check market hours before triggering immediate fetch on startup
-	// Only fetch if market is open (or after-hours is explicitly allowed)
 	marketIsOpen := utils.IsMarketOpen()
-	shouldFetchOnStartup := marketIsOpen || pts.allowAfterHours
-	pts.debugPrint(fmt.Sprintf("Ticker %s: Starting goroutine (market open: %v, after-hours allowed: %v)", 
+	pts.debugPrint(fmt.Sprintf("Ticker %s: Starting goroutine (market open: %v, after-hours allowed: %v)",
 		ticker, marketIsOpen, pts.allowAfterHours), "scheduler")
-	
-	if shouldFetchOnStartup {
-		pts.debugPrint(fmt.Sprintf("Ticker %s: Market is open, triggering immediate fetch", ticker), "scheduler")
-		if pts.onTickerReady != nil {
-			pts.onTickerReady(ticker)
-			pts.debugPrint(fmt.Sprintf("Ticker %s: Immediate fetch triggered", ticker), "scheduler")
-		} else {
-			pts.debugPrint(fmt.Sprintf("Ticker %s: WARNING - onTickerReady callback is nil!", ticker), "error")
-		}
+
+	if marketIsOpen || pts.allowAfterHours {
+		pts.triggerFetch(ticker, goroutine)
 	} else {
 		pts.debugPrint(fmt.Sprintf("Ticker %s: Market is closed, skipping immediate fetch - will wait for market open", ticker), "scheduler")
 	}
 
-	// Track last market state to only log on changes
+	// Anchor for drift-free scheduling
+	nextFire := time.Now()
 	lastMarketState := marketIsOpen
-	loopCount := 0
+
 	for {
-		loopCount++
-		// Only log loop iteration every 10 iterations to reduce noise
-		if loopCount%10 == 0 {
-			pts.debugPrint(fmt.Sprintf("Ticker %s: Loop iteration %d", ticker, loopCount), "scheduler")
-		}
 		// Check if we should stop
 		goroutine.mu.Lock()
 		if !goroutine.isRunning {
@@ -238,20 +248,18 @@ func (pts *PerTickerScheduler) runTickerGoroutine(ticker string, goroutine *Tick
 		}
 		goroutine.mu.Unlock()
 
-		// Check market hours first - if closed, use longer interval to avoid excessive checks
+		// Determine interval for this cycle
 		marketIsOpen := utils.IsMarketOpen()
 		var interval float64
-		
+
 		if !marketIsOpen && !pts.allowAfterHours {
-			// Market is closed - use a longer interval (60 seconds) to check again
+			// Market is closed - check again in 60 seconds
 			interval = 60.0
-			// Only log when market state changes
 			if marketIsOpen != lastMarketState {
 				pts.debugPrint(fmt.Sprintf("Ticker %s: Market is closed, using 60s interval for next check", ticker), "scheduler")
 				lastMarketState = marketIsOpen
 			}
 		} else {
-			// Market is open - calculate normal interval
 			openCharts := pts.getOpenCharts()
 			if openCharts == nil {
 				openCharts = []interface{}{}
@@ -263,8 +271,14 @@ func (pts *PerTickerScheduler) runTickerGoroutine(ticker string, goroutine *Tick
 			}
 		}
 
-		// Record that we're about to fetch (prevents immediate re-fetch)
-		pts.scheduler.RecordFetch(ticker)
+		// Advance the anchor. If we've fallen behind (e.g. system sleep or a
+		// very long cycle), re-anchor to now instead of bursting missed ticks.
+		nextFire = nextFire.Add(time.Duration(interval * float64(time.Second)))
+		wait := time.Until(nextFire)
+		if wait < 0 {
+			nextFire = time.Now()
+			wait = 0
+		}
 
 		// Create timer
 		goroutine.mu.Lock()
@@ -272,66 +286,67 @@ func (pts *PerTickerScheduler) runTickerGoroutine(ticker string, goroutine *Tick
 			goroutine.mu.Unlock()
 			return
 		}
-
-		goroutine.timer = time.NewTimer(time.Duration(interval * float64(time.Second)))
+		goroutine.timer = time.NewTimer(wait)
 		timer := goroutine.timer
 		goroutine.mu.Unlock()
 
-		// Wait for timer or stop signal
-		pts.debugPrint(fmt.Sprintf("Ticker %s: Waiting for timer (interval: %.2fs) or stop signal", ticker, interval), "scheduler")
 		select {
 		case <-timer.C:
 			// Timer fired - check market hours before fetching
 			marketIsOpen := utils.IsMarketOpen()
-			shouldFetch := marketIsOpen || pts.allowAfterHours
-			
-			// Only log timer firing if market state changed or if market is open
-			if marketIsOpen != lastMarketState || marketIsOpen {
-				pts.debugPrint(fmt.Sprintf("Ticker %s: Timer fired (market open: %v, after-hours allowed: %v)", 
-					ticker, marketIsOpen, pts.allowAfterHours), "scheduler")
+			if marketIsOpen != lastMarketState {
+				pts.debugPrint(fmt.Sprintf("Ticker %s: Market open state changed: %v", ticker, marketIsOpen), "scheduler")
 				lastMarketState = marketIsOpen
 			}
-			
-			if !shouldFetch {
-				// Market is closed and after-hours not allowed - skip this fetch
-				// Use a longer interval (60 seconds) to check again when market might be open
-				// Only log if state changed
-				if marketIsOpen != lastMarketState {
-					pts.debugPrint(fmt.Sprintf("Ticker %s: Market closed, skipping fetch - will check again in 60s", ticker), "scheduler")
-					lastMarketState = marketIsOpen
-				}
-				// Continue loop with a longer wait time to avoid excessive checks when market is closed
-				// The next iteration will recalculate the interval, but we'll use a minimum of 60s when closed
+
+			if !marketIsOpen && !pts.allowAfterHours {
+				// Market is closed - skip this fetch; next cycle waits 60s
 				continue
 			}
-			
-			// Market is open - trigger fetch
-			log.Printf("[TICKER-FETCH] %s: Timer fired, triggering fetch (interval was: %.2fs)", ticker, interval)
-			pts.debugPrint(fmt.Sprintf("Ticker %s: Market is open, triggering fetch (interval: %.2fs)", 
-				ticker, interval), "scheduler")
-			if pts.onTickerReady != nil {
-				pts.onTickerReady(ticker)
-				log.Printf("[TICKER-FETCH] %s: Fetch callback completed", ticker)
-				pts.debugPrint(fmt.Sprintf("Ticker %s: Fetch callback completed, continuing loop", ticker), "scheduler")
-			} else {
-				log.Printf("[TICKER-FETCH] %s: ERROR - onTickerReady is nil!", ticker)
-				pts.debugPrint(fmt.Sprintf("Ticker %s: WARNING - onTickerReady is nil, cannot fetch!", ticker), "error")
-			}
-			// Continue loop to schedule next timer
+
+			pts.triggerFetch(ticker, goroutine)
 		case <-goroutine.stopChan:
-			// Stop signal received
 			pts.debugPrint(fmt.Sprintf("Ticker %s: Stop signal received, exiting goroutine", ticker), "scheduler")
 			timer.Stop()
 			return
 		case <-pts.stopChan:
-			// Global stop signal
 			pts.debugPrint(fmt.Sprintf("Ticker %s: Global stop signal received, exiting goroutine", ticker), "scheduler")
 			timer.Stop()
 			return
 		}
-		
-		pts.debugPrint(fmt.Sprintf("Ticker %s: Continuing loop after timer/stop check", ticker), "scheduler")
 	}
+}
+
+// triggerFetch dispatches a fetch for the ticker asynchronously.
+// If a fetch for this ticker is still in flight, the call is skipped so
+// requests never stack behind a slow response.
+func (pts *PerTickerScheduler) triggerFetch(ticker string, goroutine *TickerGoroutine) {
+	if pts.onTickerReady == nil {
+		pts.debugPrint(fmt.Sprintf("Ticker %s: WARNING - onTickerReady callback is nil!", ticker), "error")
+		return
+	}
+
+	// Skip while rate limited - the coordinator would drop the batch anyway
+	if tracker := pts.scheduler.GetRateLimitTracker(); tracker != nil && tracker.IsRateLimited() {
+		return
+	}
+
+	if !goroutine.fetchInProgress.CompareAndSwap(false, true) {
+		pts.debugPrint(fmt.Sprintf("Ticker %s: Previous fetch still in progress, skipping this tick", ticker), "scheduler")
+		return
+	}
+
+	pts.scheduler.RecordFetch(ticker)
+
+	go func() {
+		defer goroutine.fetchInProgress.Store(false)
+		defer func() {
+			if r := recover(); r != nil {
+				pts.debugPrint(fmt.Sprintf("Ticker %s: ❌ PANIC in fetch: %v", ticker, r), "error")
+			}
+		}()
+		pts.onTickerReady(ticker)
+	}()
 }
 
 // IsRunning checks if the scheduler is running

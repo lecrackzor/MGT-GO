@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	_ "net/http/pprof" // Memory profiling
 	"strings"
 	_ "time/tzdata" // Embed IANA timezone database for Windows compatibility
 
@@ -18,24 +17,6 @@ import (
 
 //go:embed all:frontend
 var frontend embed.FS
-
-// appWrapper wraps the application to expose Window field
-type appWrapper struct {
-	app interface {
-		Window() interface {
-			NewWithOptions(options application.WebviewWindowOptions) *application.WebviewWindow
-		}
-	}
-}
-
-func (w *appWrapper) Window() interface {
-	NewWithOptions(options application.WebviewWindowOptions) *application.WebviewWindow
-} {
-	// Use reflection or type assertion to access Window field
-	// Since Window is a field, we need to access it differently
-	// For now, we'll pass the app directly and handle it in app.go
-	return nil // This will be handled differently
-}
 
 func main() {
 	// Load settings first to check EnableLogging
@@ -56,19 +37,6 @@ func main() {
 	} else {
 		log.Printf("File logging disabled by user setting")
 	}
-
-	// Start memory profiler (for debugging)
-	go func() {
-		// Try to start profiler, but don't fail if port is in use
-		addr := "localhost:6060"
-		utils.Logf("Memory profiler starting on http://%s/debug/pprof/", addr)
-		utils.Logf("  - Heap: http://%s/debug/pprof/heap", addr)
-		utils.Logf("  - Allocs: http://%s/debug/pprof/allocs", addr)
-		utils.Logf("  - Goroutine: http://%s/debug/pprof/goroutine", addr)
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			utils.Logf("Memory profiler unavailable (port 6060 may be in use): %v", err)
-		}
-	}()
 
 	// Create app instance
 	appInstance := NewApp()
@@ -105,12 +73,20 @@ func main() {
 				http.Error(w, "Invalid JSON", http.StatusBadRequest)
 				return
 			}
-			// Log to terminal (stdout) - uppercase format for visibility
-			logMsg := fmt.Sprintf("[FRONTEND-%s] %s", strings.ToUpper(logData.Level), logData.Message)
-			log.Println(logMsg)
-			// Log to file via utils.Logf - writes to both console and log file
-			// Format: [frontend-{level}] {message} - matches other file log entries
-			utils.Logf("[frontend-%s] %s", strings.ToLower(logData.Level), logData.Message)
+			// Always log warnings/errors; info/debug chatter only when EnableDebug is set
+			level := strings.ToLower(logData.Level)
+			logIt := level == "warn" || level == "warning" || level == "error"
+			if !logIt {
+				if s := appInstance.GetSettings(); s != nil && s.EnableDebug {
+					logIt = true
+				}
+			}
+			if logIt {
+				// Log to terminal (stdout) - uppercase format for visibility
+				log.Println(fmt.Sprintf("[FRONTEND-%s] %s", strings.ToUpper(logData.Level), logData.Message))
+				// Log to file via utils.Logf - writes to both console and log file
+				utils.Logf("[frontend-%s] %s", level, logData.Message)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 			return
@@ -118,9 +94,13 @@ func main() {
 
 		// Handle API routes
 		if r.URL.Path == "/api/market-date" {
-			// Get current market date
+			// Get current market date (never cache - date rolls over at 8:30 AM ET)
 			marketDate := appInstance.GetCurrentMarketDate()
+			nowET := utils.NowMarketTime()
+			log.Printf("[api/market-date] requested -> %s (now ET: %s)", marketDate, nowET.Format("2006-01-02 15:04:05 MST"))
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
 			json.NewEncoder(w).Encode(map[string]string{"date": marketDate})
 			return
 		}
@@ -142,46 +122,48 @@ func main() {
 		}
 
 		if r.URL.Path == "/api/available-dates" {
-			// Get available dates
+			// Get available dates (includes current market date so "Today" is always selectable)
 			dates := appInstance.GetAvailableDates()
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			json.NewEncoder(w).Encode(dates)
 			return
 		}
 
 		if strings.HasPrefix(r.URL.Path, "/api/chart-data/") {
-			utils.Logf("[HTTP] Received chart-data request: %s", r.URL.Path)
+			// Per-request logging only when debugging - chart windows poll this
+			// endpoint every 1.5s and the log lines add up fast
+			httpDebug := false
+			if s := appInstance.GetSettings(); s != nil {
+				httpDebug = s.EnableDebug
+			}
 
 			// Parse path: /api/chart-data/{ticker}/{date}
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/chart-data/"), "/")
 			if len(parts) >= 2 {
 				ticker := parts[0]
 				dateStr := parts[1]
+				sinceStr := r.URL.Query().Get("since")
 
-				utils.Logf("[HTTP] Parsed ticker=%s, date=%s", ticker, dateStr)
+				if httpDebug {
+					utils.Logf("[HTTP] chart-data request: ticker=%s, date=%s, since=%s", ticker, dateStr, sinceStr)
+				}
 
-				// Call GetChartData method
-				utils.Logf("[HTTP] Calling GetChartData for %s on %s", ticker, dateStr)
-				data, err := appInstance.GetChartData(ticker, dateStr)
+				// Call GetChartData method (since optional for incremental load)
+				data, err := appInstance.GetChartData(ticker, dateStr, sinceStr)
 				if err != nil {
 					utils.Logf("[HTTP] ERROR: GetChartData failed for %s: %v", ticker, err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 
-				// Log response data summary
-				timestampCount := 0
-				if timestamps, ok := data["timestamp"].([]interface{}); ok {
-					timestampCount = len(timestamps)
-					// Debug: Log first and last timestamp values to diagnose TZ issues
-					if len(timestamps) > 0 {
-						utils.Logf("[HTTP] First timestamp for %s: %v (type: %T)", ticker, timestamps[0], timestamps[0])
-						if len(timestamps) > 1 {
-							utils.Logf("[HTTP] Last timestamp for %s: %v (type: %T)", ticker, timestamps[len(timestamps)-1], timestamps[len(timestamps)-1])
-						}
+				if httpDebug {
+					timestampCount := 0
+					if timestamps, ok := data["timestamp"].([]interface{}); ok {
+						timestampCount = len(timestamps)
 					}
+					utils.Logf("[HTTP] GetChartData succeeded for %s: %d timestamps", ticker, timestampCount)
 				}
-				utils.Logf("[HTTP] GetChartData succeeded for %s: %d timestamps, sending JSON response", ticker, timestampCount)
 
 				// Return JSON
 				w.Header().Set("Content-Type", "application/json")
@@ -190,7 +172,6 @@ func main() {
 					http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 					return
 				}
-				utils.Logf("[HTTP] Successfully sent JSON response for %s", ticker)
 				return
 			}
 			utils.Logf("[HTTP] ERROR: Invalid API path format: %s (expected /api/chart-data/{ticker}/{date})", r.URL.Path)
@@ -214,6 +195,15 @@ func main() {
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		// Prevent a second app instance from silently doubling API usage.
+		// A second launch focuses the existing window and exits.
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.market-terminal.gexbot",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				utils.Logf("Second instance launch detected - focusing existing window")
+				appInstance.FocusMainWindow()
+			},
 		},
 	})
 

@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Market Terminal Gexbot</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <!-- Loading overlay - shown until first-run check completes -->
@@ -172,7 +170,7 @@
                             <div id="chart-colors-grid">
                                 <!-- Color pickers will be inserted here -->
                             </div>
-                            <small style="display: block; margin-top: 0.5rem;">Customize colors for each data series in charts</small>
+                            <small style="display: block; margin-top: 0.5rem;">Customize colors for each data series in charts. Check <strong>Off</strong> to hide a series on the chart while data collection continues.</small>
                             <button id="reset-colors" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #3a3a3a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#4a4a4a'" onmouseout="this.style.background='#3a3a3a'">Reset to Defaults</button>
                         </div>
                     </div>
@@ -197,6 +195,10 @@
                                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
                                     <input type="checkbox" id="plot-major_neg_vol" data-plot="major_neg_vol" checked>
                                     <span>Negative Gamma</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                    <input type="checkbox" id="plot-net" data-plot="net" checked>
+                                    <span>Net Gamma</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
                                     <input type="checkbox" id="plot-major_long_gamma" data-plot="major_long_gamma" checked>
@@ -239,6 +241,13 @@
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                <input type="checkbox" id="use-24-hour-time" checked>
+                                <span>Chart times: 24-hour (14:30)</span>
+                            </label>
+                            <small style="display: block; margin-left: 1.5rem; color: #888;">Uncheck for 12-hour AM/PM (2:30 PM)</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
                                 <input type="checkbox" id="enable-logging" checked>
                                 <span>Enable file logging</span>
                             </label>
@@ -250,6 +259,31 @@
                                 <span>Hide console window</span>
                             </label>
                             <small style="display: block; margin-left: 1.5rem; color: #888;">Hide the terminal/console window on startup (requires restart)</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="chart-zoom-filter">Chart Y-Axis Zoom Filter (%):</label>
+                            <input type="number" id="chart-zoom-filter" min="0.01" max="100" step="0.01" value="1.0" style="width: 100px;">
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">
+                                Default zoom level for Y-axis viewport. Shows ±(percentage) of current spot price. 
+                                Example: 1% with spot=5000 shows range 4950-5050. All data points are still plotted;
+                                this only controls the initial visible range. You can zoom/pan to see other points.
+                            </small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="auto-follow-buffer">Auto-Follow Buffer (%):</label>
+                            <input type="number" id="auto-follow-buffer" min="0" max="50" step="0.5" value="1.0" style="width: 100px;">
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">
+                                Buffer space on the right side of the chart when auto-follow is enabled. 
+                                Example: 10% means the chart will show 10% extra time range beyond the latest data point.
+                            </small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="price-axis-location">Price axis (Y) location:</label>
+                            <select id="price-axis-location" style="width: 120px; padding: 0.35rem; background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0;">
+                                <option value="left">Left</option>
+                                <option value="right">Right</option>
+                            </select>
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">Side of the chart where the price axis is shown. Axis labels use the Spot color from Chart Colors.</small>
                         </div>
                     </div>
                     
@@ -272,6 +306,7 @@
                             <th>Zero Gamma</th>
                             <th>Pos Gamma</th>
                             <th>Neg Gamma</th>
+                            <th>Net</th>
                             <th>Last Update</th>
                             <th>Chart</th>
                         </tr>

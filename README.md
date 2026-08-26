@@ -58,5 +58,3 @@ This creates a single executable in `build/bin/market-terminal.exe` that you can
 ## Memory Profiling
 
 The app includes built-in memory profiling. While running, access:
-- `http://localhost:6060/debug/pprof/heap` - Heap profile
-- Use `go tool pprof http://localhost:6060/debug/pprof/heap` to analyze

@@ -375,6 +375,28 @@ main {
     border-color: #4CAF50;
 }
 
+#chart-colors-grid .chart-color-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#chart-colors-grid .chart-color-off-label {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: #888;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    margin-bottom: 0;
+}
+
+#chart-colors-grid .chart-color-off-label input[type="checkbox"] {
+    cursor: pointer;
+}
+
 /* Polling preferences inputs */
 #ticker-selection input[type="number"],
 #ticker-selection select {
