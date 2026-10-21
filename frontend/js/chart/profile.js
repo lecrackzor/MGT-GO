@@ -96,6 +96,16 @@ function readProfileLayers(ticker, dateStr) {
     return profileLayersFrom(readChartPrefs(ticker, dateStr));
 }
 
+function readProfileDte(ticker, dateStr) {
+    const saved = readChartPrefs(ticker, dateStr).profileDte;
+    if (saved === 'zero' || saved === 'one' || saved === 'full') return saved;
+    try {
+        const shared = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+        if (shared.dte === 'one' || shared.dte === 'full' || shared.dte === 'zero') return shared.dte;
+    } catch (err) {}
+    return 'zero';
+}
+
 function paintLayerChecks(box, layers) {
     if (!box) return;
     for (const input of box.querySelectorAll('input[data-layer]')) {
@@ -357,7 +367,7 @@ export function installProfile(live) {
             preferredOpen = true;
         }
     } catch (err) {}
-    let dte = prefs.dte;
+    let dte = readProfileDte(live.ticker, live.dateFromURL || '');
     const layersOn = readProfileLayers(live.ticker, live.dateFromURL || '');
     let pendingAt = null;
     let followCrosshair = prefs.follow === true;
@@ -382,6 +392,7 @@ export function installProfile(live) {
     dteSelect.value = dte;
     modeSelect.value = mode;
     paintLayerChecks(layersBox, layersOn);
+    seedPriceTickMode(live.ticker, live.dateFromURL || '');
 
     function profileDate() {
         return live.currentChartDateStr || live.dateFromURL || '';
@@ -411,7 +422,6 @@ export function installProfile(live) {
             const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
             saved.open = preferredOpen;
             saved.mode = mode;
-            saved.dte = dte;
             saved.follow = followCrosshair;
             localStorage.setItem(PREF_KEY, JSON.stringify(saved));
         } catch (err) {}
@@ -444,12 +454,10 @@ export function installProfile(live) {
     live.applyProfileSettings = applyProfileSettings;
 
     function band() {
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        let width = Number(stored.bar_width_percent);
-        if (!Number.isFinite(width) || width <= 0) width = 22;
+        const view = windowProfileSettings();
+        let width = view.barWidth;
         width = clamp(width, 8, 70) / 100;
-        let center = Number(stored.profile_x_percent);
-        if (!Number.isFinite(center)) center = 62;
+        let center = view.center;
         center = clamp(center, 0, 100) / 100;
         return { width: width, center: center };
     }
@@ -459,16 +467,12 @@ export function installProfile(live) {
     }
 
     function showDots() {
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        return stored.show_priors !== false && stored.show_priors !== 'false' && stored.show_priors !== 0;
+        return windowProfileSettings().showPriors;
     }
 
     function setShowDots(on) {
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        stored.show_priors = !!on;
-        if (live.globalChartSettings) live.globalChartSettings.ProfileSettings = stored;
+        writeChartPrefs(live.ticker, profileDate(), { showPriors: !!on });
         draw();
-        postProfile('/api/profile-priors', { show_priors: !!on });
     }
     live.profileDotsOn = showDots;
     live.setProfileDots = setShowDots;
@@ -967,12 +971,36 @@ export function installProfile(live) {
         settleChart();
     }
 
-    function sidePane() {
+    let previewSideWidth = null;
+    function windowProfileSettings() {
+        const prefs = readChartPrefs(live.ticker, profileDate());
         const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        let width = Number(stored.side_width_percent);
-        if (!Number.isFinite(width) || width <= 0) width = 28;
+        const sideWidth = Number(prefs.sideWidthPercent);
+        const barWidth = Number(prefs.barWidthPercent);
+        const center = Number(prefs.profileXPercent);
+        return {
+            side: prefs.profileSide === 'left' || prefs.profileSide === 'right' ? prefs.profileSide : (stored.profile_side === 'left' ? 'left' : 'right'),
+            sideWidth: Number.isFinite(sideWidth) && sideWidth > 0 ? sideWidth : (Number(stored.side_width_percent) > 0 ? Number(stored.side_width_percent) : 28),
+            barWidth: Number.isFinite(barWidth) && barWidth > 0 ? barWidth : (Number(stored.bar_width_percent) > 0 ? Number(stored.bar_width_percent) : 22),
+            center: Number.isFinite(center) ? center : (Number.isFinite(Number(stored.profile_x_percent)) ? Number(stored.profile_x_percent) : 62),
+            showPriors: typeof prefs.showPriors === 'boolean' ? prefs.showPriors : !(stored.show_priors === false || stored.show_priors === 'false' || stored.show_priors === 0),
+        };
+    }
+    live.profileLayout = function () {
+        const view = windowProfileSettings();
+        return {
+            profile_side: view.side,
+            side_width_percent: view.sideWidth,
+            bar_width_percent: view.barWidth,
+            profile_x_percent: view.center,
+        };
+    };
+
+    function sidePane() {
+        const view = windowProfileSettings();
+        let width = previewSideWidth != null ? previewSideWidth : view.sideWidth;
         width = clamp(width, 12, 50);
-        return { width: width, side: stored.profile_side === 'left' ? 'left' : 'right' };
+        return { width: width, side: view.side };
     }
 
     let metricsWasShown = null;
@@ -1274,24 +1302,16 @@ export function installProfile(live) {
     }
 
     function saveProfileLayout(partial) {
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        Object.assign(stored, partial);
-        if (live.globalChartSettings) live.globalChartSettings.ProfileSettings = stored;
+        const patch = {};
+        if (partial.profile_side === 'left' || partial.profile_side === 'right') patch.profileSide = partial.profile_side;
+        if (partial.side_width_percent != null) patch.sideWidthPercent = partial.side_width_percent;
+        if (partial.bar_width_percent != null) patch.barWidthPercent = partial.bar_width_percent;
+        if (partial.profile_x_percent != null) patch.profileXPercent = partial.profile_x_percent;
+        writeChartPrefs(live.ticker, profileDate(), patch);
+        if (live.currentChartPrefs) Object.assign(live.currentChartPrefs, patch);
+        previewSideWidth = null;
         placeSidePane();
         if (open) draw();
-        fetch('/api/profile-layout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(partial),
-        }).then(function () { return fetch('/api/settings'); }).then(function (res) {
-            return res.json();
-        }).then(function (settings) {
-            try {
-                const channel = new BroadcastChannel('market-terminal-settings');
-                channel.postMessage({ type: 'settings-updated', settings: settings });
-                channel.close();
-            } catch (err) {}
-        }).catch(function () {});
     }
 
     const splitHandle = document.getElementById('profile-split');
@@ -1325,9 +1345,7 @@ export function installProfile(live) {
             }
             function paintDrag() {
                 dragFrame = 0;
-                const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-                stored.side_width_percent = dragPercent;
-                if (live.globalChartSettings) live.globalChartSettings.ProfileSettings = stored;
+                previewSideWidth = dragPercent;
                 placeSidePane();
                 nudgeChart();
                 try { primitive.requestUpdate(); } catch (err) {}
@@ -1521,13 +1539,18 @@ export function installProfile(live) {
     live.priceTickMode = priceTickMode;
     live.setPriceTickMode = function (mode) {
         setPriceTickMode(mode);
+        writeChartPrefs(live.ticker, profileDate(), { priceTickMode: priceTickMode() });
         if (open) draw();
     };
     live.profileDocked = function () { return docked; };
     live.detachProfile = detachProfile;
     live.attachProfile = attachProfile;
     live.saveProfileLayout = saveProfileLayout;
+    let drawOver = null;
     function profileOver() {
+        if (drawOver === true || drawOver === false) return drawOver;
+        const saved = readChartPrefs(live.ticker, profileDate()).profileDrawOrder;
+        if (saved === 'over' || saved === 'under') return saved === 'over';
         try { return localStorage.getItem('profile-draw-order') === 'over'; }
         catch (err) { return false; }
     }
@@ -1535,8 +1558,8 @@ export function installProfile(live) {
     live.ladderAlign = function () { return ladderAlign; };
     live.profileOver = profileOver;
     live.setProfileOver = function (over) {
-        try { localStorage.setItem('profile-draw-order', over ? 'over' : 'under'); }
-        catch (err) {}
+        drawOver = !!over;
+        writeChartPrefs(live.ticker, profileDate(), { profileDrawOrder: drawOver ? 'over' : 'under' });
         if (primitive._series && typeof primitive._series.detachPrimitive === 'function') {
             try { primitive._series.detachPrimitive(primitive); } catch (err) {}
         }
@@ -1553,9 +1576,25 @@ export function installProfile(live) {
     let appliedProfileKey = '';
     let appliedAlertKey = '';
     let appliedLevelKey = '';
+    let appliedViewKey = '';
+    function viewKeyNow() {
+        seedPriceTickMode(live.ticker, profileDate());
+        const order = readChartPrefs(live.ticker, profileDate()).profileDrawOrder;
+        if (order === 'over' || order === 'under') drawOver = order === 'over';
+        const view = windowProfileSettings();
+        return [view.side, view.sideWidth, view.barWidth, view.center, view.showPriors ? '1' : '0', priceTickMode(), drawOver ? '1' : '0'].join('|');
+    }
     function levelKeyOf(stored) {
         return PROFILE_LEVELS.map((level) => stored.profileLevels[level.id] ? '1' : '0').join('') + '|' + stored.levelLabelX;
     }
+    function syncDteFromPrefs() {
+        const next = readProfileDte(live.ticker, profileDate());
+        if (next === dte) return false;
+        dte = next;
+        dteSelect.value = dte;
+        return true;
+    }
+
     function noteProfilePrefs() {
         const stored = chartProfileFields(readChartPrefs(live.ticker, profileDate()));
         appliedProfileKey = [stored.ladderAlign, stored.metricsVisible ? '1' : '0', stored.metricsSide, stored.profileAxis].join('|');
@@ -1564,6 +1603,10 @@ export function installProfile(live) {
     }
     function applyChartProfilePrefs() {
         const layersChanged = syncLayersFromPrefs();
+        const dteChanged = syncDteFromPrefs();
+        const nextView = viewKeyNow();
+        const viewChanged = nextView !== appliedViewKey;
+        appliedViewKey = nextView;
         const stored = chartProfileFields(readChartPrefs(live.ticker, profileDate()));
         const key = [stored.ladderAlign, stored.metricsVisible ? '1' : '0', stored.metricsSide, stored.profileAxis].join('|');
         const alertKey = [stored.alerts.call, stored.alerts.put, stored.alerts.long, stored.alerts.short].map((on) => on ? '1' : '0').join('');
@@ -1573,7 +1616,11 @@ export function installProfile(live) {
         const rawDock = readChartPrefs(live.ticker, profileDate()).profileDocked;
         const dockChanged = (rawDock === true || rawDock === false) && rawDock !== docked;
         if (!layoutChanged && alertKey === appliedAlertKey && !levelsChanged && !dockChanged) {
-            if (layersChanged && profileShown()) schedule();
+            if ((layersChanged || dteChanged) && profileShown()) schedule();
+            else if (viewChanged && profileShown()) {
+                placeSidePane();
+                draw();
+            }
             return;
         }
         appliedProfileKey = key;
@@ -1600,13 +1647,7 @@ export function installProfile(live) {
     live.applyChartProfilePrefs = applyChartProfilePrefs;
     // Same-window edits already call schedule() and setLadderAlign(). The storage
     // event only reaches other windows, so this must not write localStorage again.
-    live.applyStoredProfileView = function () {
-        const prefs = loadPrefs();
-        const dteChanged = prefs.dte !== dte;
-        dte = prefs.dte;
-        dteSelect.value = dte;
-        if (dteChanged && profileShown()) schedule();
-    };
+    live.applyStoredProfileView = function () {};
 
     try {
         const dockChannel = new BroadcastChannel('market-terminal-profile');
@@ -1631,7 +1672,7 @@ export function installProfile(live) {
     });
     dteSelect.addEventListener('change', () => {
         dte = dteSelect.value === 'one' || dteSelect.value === 'full' ? dteSelect.value : 'zero';
-        savePrefs();
+        writeChartPrefs(live.ticker, profileDate(), { profileDte: dte });
         schedule();
     });
     layersBox.addEventListener('change', (ev) => {
@@ -3064,14 +3105,25 @@ export function priceAxisTicks(strikes, lo, hi, mode, yOf, minGap, top, bottom) 
     return ticks;
 }
 
+let windowPriceTickMode = '';
+
 function priceTickMode() {
-    try { return localStorage.getItem('profile-price-ticks') === 'true' ? 'true' : 'aligned'; }
-    catch (err) { return 'aligned'; }
+    return windowPriceTickMode === 'true' ? 'true' : 'aligned';
 }
 
 function setPriceTickMode(mode) {
-    try { localStorage.setItem('profile-price-ticks', mode === 'true' ? 'true' : 'aligned'); }
-    catch (err) {}
+    windowPriceTickMode = mode === 'true' ? 'true' : 'aligned';
+}
+
+function seedPriceTickMode(ticker, dateStr) {
+    const saved = readChartPrefs(ticker, dateStr).priceTickMode;
+    if (saved === 'true' || saved === 'aligned') {
+        windowPriceTickMode = saved;
+        return;
+    }
+    if (windowPriceTickMode === 'true' || windowPriceTickMode === 'aligned') return;
+    try { windowPriceTickMode = localStorage.getItem('profile-price-ticks') === 'true' ? 'true' : 'aligned'; }
+    catch (err) { windowPriceTickMode = 'aligned'; }
 }
 
 function collectPrices(layers, spot, zero) {
@@ -3481,7 +3533,7 @@ export function installStandaloneProfile() {
     const followSession = !params.get('date');
     let date = params.get('date') || '';
     const prefs = loadPrefs();
-    let dte = prefs.dte;
+    let dte = readProfileDte(ticker, date);
     const layersOn = readProfileLayers(ticker, date);
     let pendingAt = null;
     let liveMode = true;
@@ -3504,7 +3556,12 @@ export function installStandaloneProfile() {
     let drag = null;
     let lastLayout = null;
     let priceTags = true;
-    try { priceTags = localStorage.getItem('profile-axis-price') !== '0'; } catch (err) {}
+    priceTags = readChartPrefs(ticker, date).profileAxisPrice;
+    if (priceTags !== true && priceTags !== false) {
+        try { priceTags = localStorage.getItem('profile-axis-price') !== '0'; }
+        catch (err) { priceTags = true; }
+    }
+    seedPriceTickMode(ticker, date);
 
     if (title) title.textContent = ticker ? (ticker + ' Profile') : 'Profile';
     document.title = title ? title.textContent : 'Profile';
@@ -3514,19 +3571,24 @@ export function installStandaloneProfile() {
     if (priceToggle) priceToggle.checked = priceTags;
 
     function sideSpec() {
+        const prefs = readChartPrefs(ticker, date);
         const stored = settings.ProfileSettings || {};
-        let width = Number(stored.side_width_percent);
+        const prefWidth = Number(prefs.sideWidthPercent);
+        let width = Number.isFinite(prefWidth) && prefWidth > 0 ? prefWidth : Number(stored.side_width_percent);
         if (!Number.isFinite(width) || width <= 0) width = 28;
-        return { width: clamp(width, 12, 50), side: stored.profile_side === 'left' ? 'left' : 'right' };
+        const side = prefs.profileSide === 'left' || prefs.profileSide === 'right' ? prefs.profileSide : (stored.profile_side === 'left' ? 'left' : 'right');
+        return { width: clamp(width, 12, 50), side: side };
+    }
+
+    function showDots() {
+        const saved = readChartPrefs(ticker, date).showPriors;
+        if (saved === true || saved === false) return saved;
+        const stored = settings.ProfileSettings || {};
+        return stored.show_priors !== false && stored.show_priors !== 'false' && stored.show_priors !== 0;
     }
 
     function profileDate() {
         return date;
-    }
-
-    function showDots() {
-        const stored = settings.ProfileSettings || {};
-        return stored.show_priors !== false && stored.show_priors !== 'false' && stored.show_priors !== 0;
     }
 
     function zeroGammaColor() {
@@ -3739,6 +3801,14 @@ export function installStandaloneProfile() {
                     const next = typeof body === 'string' ? body : (body.date || body.market_date || '');
                     if (next && next !== date) {
                         date = next;
+                        dte = readProfileDte(ticker, date);
+                        dteSelect.value = dte;
+                        seedPriceTickMode(ticker, date);
+                        const tagged = readChartPrefs(ticker, date).profileAxisPrice;
+                        if (tagged === true || tagged === false) {
+                            priceTags = tagged;
+                            if (priceToggle) priceToggle.checked = priceTags;
+                        }
                         const nextLayers = readProfileLayers(ticker, date);
                         for (const spec of LAYER_SPECS) layersOn[spec.id] = !!nextLayers[spec.id];
                         paintLayerChecks(layersBox, layersOn);
@@ -3880,11 +3950,7 @@ export function installStandaloneProfile() {
 
     dteSelect.addEventListener('change', () => {
         dte = dteSelect.value === 'one' || dteSelect.value === 'full' ? dteSelect.value : 'zero';
-        try {
-            const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-            saved.dte = dte;
-            localStorage.setItem(PREF_KEY, JSON.stringify(saved));
-        } catch (err) {}
+        writeChartPrefs(ticker, profileDate(), { profileDte: dte });
         schedule();
     });
     layersBox.addEventListener('change', (ev) => {
@@ -3897,7 +3963,7 @@ export function installStandaloneProfile() {
     if (priceToggle) {
         priceToggle.addEventListener('change', () => {
             priceTags = !!priceToggle.checked;
-            try { localStorage.setItem('profile-axis-price', priceTags ? '1' : '0'); } catch (err) {}
+            writeChartPrefs(ticker, profileDate(), { profileAxisPrice: priceTags });
             draw();
         });
     }
@@ -3961,16 +4027,22 @@ export function installStandaloneProfile() {
                 layersOn[spec.id] = !!next[spec.id];
             }
             paintLayerChecks(layersBox, layersOn);
-            if (layersChanged) schedule();
+            const nextDte = readProfileDte(ticker, date);
+            const dteChanged = nextDte !== dte;
+            if (dteChanged) {
+                dte = nextDte;
+                dteSelect.value = dte;
+            }
+            seedPriceTickMode(ticker, date);
+            const tagged = readChartPrefs(ticker, date).profileAxisPrice;
+            if ((tagged === true || tagged === false) && tagged !== priceTags) {
+                priceTags = tagged;
+                if (priceToggle) priceToggle.checked = priceTags;
+            }
+            if (layersChanged || dteChanged) schedule();
             else draw();
             return;
         }
-        if (event.key !== null && event.key !== PREF_KEY) return;
-        const prefs = loadPrefs();
-        if (prefs.dte === dte) return;
-        dte = prefs.dte;
-        dteSelect.value = dte;
-        schedule();
     });
     try {
         const settingsChannel = new BroadcastChannel('market-terminal-settings');
@@ -4009,15 +4081,6 @@ export function installStandaloneProfile() {
             item.appendChild(span);
             item.appendChild(control);
             profileMenu.appendChild(item);
-        }
-        function saveLayout(partial) {
-            settings.ProfileSettings = Object.assign({}, settings.ProfileSettings || {}, partial);
-            draw();
-            fetch('/api/profile-layout', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(partial),
-            }).catch(() => {});
         }
         const section = document.createElement('div');
         section.className = 'ctx-section';
@@ -4125,6 +4188,7 @@ export function installStandaloneProfile() {
         tickSelect.value = priceTickMode();
         tickSelect.addEventListener('change', () => {
             setPriceTickMode(tickSelect.value);
+            writeChartPrefs(ticker, date, { priceTickMode: priceTickMode() });
             draw();
         });
         field('Prices', tickSelect);
@@ -4137,7 +4201,7 @@ export function installStandaloneProfile() {
             e.stopPropagation();
             priceTags = priceBox.checked;
             if (priceToggle) priceToggle.checked = priceTags;
-            try { localStorage.setItem('profile-axis-price', priceTags ? '1' : '0'); } catch (err) {}
+            writeChartPrefs(ticker, date, { profileAxisPrice: priceTags });
             draw();
         });
         priceItem.appendChild(priceBox);
@@ -4153,11 +4217,8 @@ export function installStandaloneProfile() {
         dotsBox.checked = showDots();
         dotsBox.addEventListener('click', (e) => {
             e.stopPropagation();
-            const stored = settings.ProfileSettings || {};
-            stored.show_priors = dotsBox.checked;
-            settings.ProfileSettings = stored;
+            writeChartPrefs(ticker, date, { showPriors: dotsBox.checked });
             draw();
-            postProfile('/api/profile-priors', { show_priors: dotsBox.checked });
         });
         dotsItem.appendChild(dotsBox);
         const dotsLabel = document.createElement('span');

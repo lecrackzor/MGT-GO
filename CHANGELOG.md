@@ -16,6 +16,7 @@ This build is meant to be left running through a normal session.
 
 - A profile can sit beside a chart or open in its own window. Layers are Classic, State, Gamma, Delta, Vanna, and Charm, for 0 DTE, 1 DTE, and 90 DTE.
 - Those layer checkboxes belong to the window. Turning Classic on in one chart or profile does not change the others. The checkboxes in Settings still choose which ladders are collected.
+- Average or Scatter, DTE, price ticks, lookback dots, and the profile side and width stay with that window too. Settings still sets the default for a window that has not chosen its own.
 - Option ladders are stored in a file next to the chart database. If that write fails, the same sample is tried again. The chart row is kept.
 - A new sample that reuses the last chart timestamp replaces that point. It no longer stays invisible until the chart is reloaded.
 - The main table ignores a slow poll that finishes after a newer one, so an older quote cannot paint over a fresh row.

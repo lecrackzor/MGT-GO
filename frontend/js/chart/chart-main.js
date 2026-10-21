@@ -252,19 +252,19 @@ function captureWindow() {
             let chartUpdateId = 0; // Guard: only the latest updateChart() run may modify the chart (prevents doubled series on date change)
             const CHART_PREFS_KEY_PREFIX = 'chartPrefs_';
             function loadChartPrefs(tickerKey, dateStr) {
+                const empty = { seriesTitleVisible: {}, priceLabelsFollowCrosshair: false, hiddenSeries: [], infoBoxCollapsed: false };
                 try {
                     const key = CHART_PREFS_KEY_PREFIX + (tickerKey || '') + '_' + (dateStr || '');
                     const raw = localStorage.getItem(key);
-                    const empty = { seriesTitleVisible: {}, priceLabelsFollowCrosshair: false, hiddenSeries: [], infoBoxCollapsed: false };
-                    if (!raw) return Object.assign(empty, chartProfileFields(null));
-                    const p = JSON.parse(raw);
-                    return Object.assign({
+                    const p = raw ? JSON.parse(raw) : null;
+                    if (!p || typeof p !== 'object') return Object.assign(empty, chartProfileFields(null));
+                    return Object.assign({}, p, {
                         seriesTitleVisible: p.seriesTitleVisible && typeof p.seriesTitleVisible === 'object' ? p.seriesTitleVisible : (p.lastValueVisible && typeof p.lastValueVisible === 'object' ? p.lastValueVisible : {}),
                         priceLabelsFollowCrosshair: !!p.priceLabelsFollowCrosshair,
                         hiddenSeries: Array.isArray(p.hiddenSeries) ? p.hiddenSeries : [],
                         infoBoxCollapsed: p.infoBoxCollapsed === true
                     }, chartProfileFields(p));
-                } catch (e) { return Object.assign({ seriesTitleVisible: {}, priceLabelsFollowCrosshair: false, hiddenSeries: [], infoBoxCollapsed: false }, chartProfileFields(null)); }
+                } catch (e) { return Object.assign(empty, chartProfileFields(null)); }
             }
             function saveChartPrefs(tickerKey, dateStr, prefs) {
                 try {
@@ -415,13 +415,10 @@ function captureWindow() {
                 get isMouseOverChart() { return isMouseOverChart; },
                 set isMouseOverChart(v) { isMouseOverChart = v; },
                 applySeriesAppearance: function (endpoint, opts) { applySeriesAppearance(endpoint, opts); },
-                levelHistoryStyle: function () {
-                    try { return localStorage.getItem('level-history-style') === 'scatter' ? 'scatter' : 'average'; }
-                    catch (err) { return 'average'; }
-                },
+                levelHistoryStyle: function () { return levelHistoryStyle(); },
                 setLevelHistoryStyle: function (style) {
-                    try { localStorage.setItem('level-history-style', style === 'scatter' ? 'scatter' : 'average'); }
-                    catch (err) {}
+                    currentChartPrefs.levelHistoryStyle = style === 'scatter' ? 'scatter' : 'average';
+                    saveChartPrefs(ticker, currentChartDateStr || dateFromURL || '', currentChartPrefs);
                     paintLevelHistory();
                 },
                 get lastValueByEndpoint() { return lastValueByEndpoint; },
@@ -947,6 +944,8 @@ function captureWindow() {
             const LEVEL_HISTORY_ENDPOINTS = { zero_gamma: true, major_pos_vol: true, major_neg_vol: true };
 
             function levelHistoryStyle() {
+                const saved = currentChartPrefs && currentChartPrefs.levelHistoryStyle;
+                if (saved === 'scatter' || saved === 'average') return saved;
                 try { return localStorage.getItem('level-history-style') === 'scatter' ? 'scatter' : 'average'; }
                 catch (err) { return 'average'; }
             }
@@ -2206,8 +2205,8 @@ function captureWindow() {
                     syncInfoBoxCollapsed();
                     if (live && typeof live.applyChartProfilePrefs === 'function') live.applyChartProfilePrefs();
                 }
-                if (event.key !== null && event.key !== 'level-history-style' && event.key !== 'profile-view') return;
-                if (event.key === null || event.key === 'level-history-style') paintLevelHistory();
+                if (event.key === prefsKey) paintLevelHistory();
+                if (event.key !== null && event.key !== 'profile-view') return;
                 if ((event.key === null || event.key === 'profile-view') && live && typeof live.applyStoredProfileView === 'function') {
                     live.applyStoredProfileView();
                 }

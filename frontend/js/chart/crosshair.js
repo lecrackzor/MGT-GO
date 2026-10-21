@@ -447,7 +447,9 @@ function openChartContextMenu(clientX, clientY, view) {
             chartContextMenu.appendChild(levelMenu);
         }
 
-        const layout = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
+        const layout = typeof live.profileLayout === 'function'
+            ? live.profileLayout()
+            : ((live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {});
         function layoutControl(labelText, control) {
             const item = document.createElement('div');
             item.className = 'ctx-item';
