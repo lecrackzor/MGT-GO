@@ -1,5 +1,9 @@
 # Market Terminal
 
+<div align="center">
+  <img src="MGT.png" alt="Market Terminal">
+</div>
+
 Desktop market-data terminal. Go backend, web frontend, SQLite storage, scheduled collection from the Gexbot API.
 
 This software is not affiliated with Gexbot, is provided as is, and is not financial advice. See [DISCLAIMER.md](DISCLAIMER.md).

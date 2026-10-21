@@ -61,6 +61,54 @@ export function chartProfileFields(source) {
     };
 }
 
+function defaultProfileLayers() {
+    return {
+        classic: true,
+        state: false,
+        gamma: false,
+        delta: false,
+        vanna: false,
+        charm: false,
+    };
+}
+
+function profileLayersFrom(source) {
+    const layers = defaultProfileLayers();
+    const raw = source && source.profileLayers;
+    if (raw && typeof raw === 'object') {
+        for (const spec of LAYER_SPECS) {
+            if (typeof raw[spec.id] === 'boolean') layers[spec.id] = raw[spec.id];
+        }
+        return layers;
+    }
+    try {
+        const shared = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+        if (shared.layers && typeof shared.layers === 'object') {
+            for (const spec of LAYER_SPECS) {
+                if (typeof shared.layers[spec.id] === 'boolean') layers[spec.id] = shared.layers[spec.id];
+            }
+        }
+    } catch (err) {}
+    return layers;
+}
+
+function readProfileLayers(ticker, dateStr) {
+    return profileLayersFrom(readChartPrefs(ticker, dateStr));
+}
+
+function paintLayerChecks(box, layers) {
+    if (!box) return;
+    for (const input of box.querySelectorAll('input[data-layer]')) {
+        input.checked = !!layers[input.dataset.layer];
+    }
+}
+
+function copyProfileLayers(layers) {
+    const next = {};
+    for (const spec of LAYER_SPECS) next[spec.id] = !!layers[spec.id];
+    return next;
+}
+
 function resolvedAxis(ticker, dateStr, paneSide) {
     const stored = readChartPrefs(ticker, dateStr).profileAxis;
     if (stored === 'off' || stored === 'left' || stored === 'right') return stored;
@@ -310,7 +358,7 @@ export function installProfile(live) {
         }
     } catch (err) {}
     let dte = prefs.dte;
-    const layersOn = prefs.layers;
+    const layersOn = readProfileLayers(live.ticker, live.dateFromURL || '');
     let pendingAt = null;
     let followCrosshair = prefs.follow === true;
     let ladderAlign = prefs.align;
@@ -333,9 +381,7 @@ export function installProfile(live) {
 
     dteSelect.value = dte;
     modeSelect.value = mode;
-    for (const input of layersBox.querySelectorAll('input[data-layer]')) {
-        input.checked = !!layersOn[input.dataset.layer];
-    }
+    paintLayerChecks(layersBox, layersOn);
 
     function profileDate() {
         return live.currentChartDateStr || live.dateFromURL || '';
@@ -362,49 +408,38 @@ export function installProfile(live) {
 
     function savePrefs() {
         try {
-            localStorage.setItem(PREF_KEY, JSON.stringify({
-                open: preferredOpen,
-                mode: mode,
-                dte: dte,
-                layers: layersOn,
-                follow: followCrosshair,
-            }));
+            const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+            saved.open = preferredOpen;
+            saved.mode = mode;
+            saved.dte = dte;
+            saved.follow = followCrosshair;
+            localStorage.setItem(PREF_KEY, JSON.stringify(saved));
         } catch (err) {}
     }
 
-    function persistLayers() {
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        stored.layers = {
-            classic: !!layersOn.classic,
-            state: !!layersOn.state,
-            gamma: !!layersOn.gamma,
-            delta: !!layersOn.delta,
-            vanna: !!layersOn.vanna,
-            charm: !!layersOn.charm,
-        };
-        if (live.globalChartSettings) live.globalChartSettings.ProfileSettings = stored;
-        postProfile('/api/profile-layers', stored.layers);
+    function saveLayerPrefs() {
+        writeChartPrefs(live.ticker, profileDate(), { profileLayers: copyProfileLayers(layersOn) });
+    }
+
+    function syncLayersFromPrefs() {
+        const next = readProfileLayers(live.ticker, profileDate());
+        let changed = false;
+        for (const spec of LAYER_SPECS) {
+            if (!!layersOn[spec.id] !== !!next[spec.id]) changed = true;
+            layersOn[spec.id] = !!next[spec.id];
+        }
+        paintLayerChecks(layersBox, layersOn);
+        return changed;
     }
 
     function applyProfileSettings() {
         const on = profileOn();
         btn.hidden = !on;
-        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
-        const raw = stored.layers;
-        if (raw && typeof raw === 'object') {
-            for (const spec of LAYER_SPECS) {
-                if (typeof raw[spec.id] === 'boolean') layersOn[spec.id] = raw[spec.id];
-            }
-        }
-        for (const input of layersBox.querySelectorAll('input[data-layer]')) {
-            input.checked = !!layersOn[input.dataset.layer];
-        }
         if (!on) open = false;
         else open = preferredOpen;
         applyChrome();
         if (on && open && docked) schedule();
         else if (!on || !docked) draw();
-        if (on && !(raw && typeof raw === 'object')) persistLayers();
     }
     live.applyProfileSettings = applyProfileSettings;
 
@@ -1528,6 +1563,7 @@ export function installProfile(live) {
         appliedLevelKey = levelKeyOf(stored);
     }
     function applyChartProfilePrefs() {
+        const layersChanged = syncLayersFromPrefs();
         const stored = chartProfileFields(readChartPrefs(live.ticker, profileDate()));
         const key = [stored.ladderAlign, stored.metricsVisible ? '1' : '0', stored.metricsSide, stored.profileAxis].join('|');
         const alertKey = [stored.alerts.call, stored.alerts.put, stored.alerts.long, stored.alerts.short].map((on) => on ? '1' : '0').join('');
@@ -1536,7 +1572,10 @@ export function installProfile(live) {
         const levelsChanged = nextLevel !== appliedLevelKey;
         const rawDock = readChartPrefs(live.ticker, profileDate()).profileDocked;
         const dockChanged = (rawDock === true || rawDock === false) && rawDock !== docked;
-        if (!layoutChanged && alertKey === appliedAlertKey && !levelsChanged && !dockChanged) return;
+        if (!layoutChanged && alertKey === appliedAlertKey && !levelsChanged && !dockChanged) {
+            if (layersChanged && profileShown()) schedule();
+            return;
+        }
         appliedProfileKey = key;
         appliedAlertKey = alertKey;
         appliedLevelKey = nextLevel;
@@ -1599,8 +1638,7 @@ export function installProfile(live) {
         const input = ev.target;
         if (!input || !input.dataset || !input.dataset.layer) return;
         layersOn[input.dataset.layer] = !!input.checked;
-        savePrefs();
-        persistLayers();
+        saveLayerPrefs();
         schedule();
     });
     modeSelect.addEventListener('change', () => {
@@ -3444,7 +3482,7 @@ export function installStandaloneProfile() {
     let date = params.get('date') || '';
     const prefs = loadPrefs();
     let dte = prefs.dte;
-    const layersOn = prefs.layers;
+    const layersOn = readProfileLayers(ticker, date);
     let pendingAt = null;
     let liveMode = true;
     let playing = false;
@@ -3471,9 +3509,7 @@ export function installStandaloneProfile() {
     if (title) title.textContent = ticker ? (ticker + ' Profile') : 'Profile';
     document.title = title ? title.textContent : 'Profile';
     dteSelect.value = dte;
-    for (const input of layersBox.querySelectorAll('input[data-layer]')) {
-        input.checked = !!layersOn[input.dataset.layer];
-    }
+    paintLayerChecks(layersBox, layersOn);
     const priceToggle = document.getElementById('profile-axis-price');
     if (priceToggle) priceToggle.checked = priceTags;
 
@@ -3703,6 +3739,9 @@ export function installStandaloneProfile() {
                     const next = typeof body === 'string' ? body : (body.date || body.market_date || '');
                     if (next && next !== date) {
                         date = next;
+                        const nextLayers = readProfileLayers(ticker, date);
+                        for (const spec of LAYER_SPECS) layersOn[spec.id] = !!nextLayers[spec.id];
+                        paintLayerChecks(layersBox, layersOn);
                         times = [];
                         cached = null;
                         lastLiveTs = null;
@@ -3852,12 +3891,7 @@ export function installStandaloneProfile() {
         const input = ev.target;
         if (!input || !input.dataset || !input.dataset.layer) return;
         layersOn[input.dataset.layer] = !!input.checked;
-        try {
-            const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-            saved.layers = layersOn;
-            localStorage.setItem(PREF_KEY, JSON.stringify(saved));
-        } catch (err) {}
-        postProfile('/api/profile-layers', layersOn);
+        writeChartPrefs(ticker, profileDate(), { profileLayers: copyProfileLayers(layersOn) });
         schedule();
     });
     if (priceToggle) {
@@ -3920,7 +3954,15 @@ export function installStandaloneProfile() {
     window.addEventListener('storage', function (event) {
         if (!event) return;
         if (event.key === 'chartPrefs_' + (ticker || '') + '_' + (date || '')) {
-            draw();
+            const next = readProfileLayers(ticker, date);
+            let layersChanged = false;
+            for (const spec of LAYER_SPECS) {
+                if (!!layersOn[spec.id] !== !!next[spec.id]) layersChanged = true;
+                layersOn[spec.id] = !!next[spec.id];
+            }
+            paintLayerChecks(layersBox, layersOn);
+            if (layersChanged) schedule();
+            else draw();
             return;
         }
         if (event.key !== null && event.key !== PREF_KEY) return;
@@ -3935,20 +3977,7 @@ export function installStandaloneProfile() {
         settingsChannel.onmessage = (event) => {
             if (!event.data || event.data.type !== 'settings-updated' || !event.data.settings) return;
             settings = event.data.settings;
-            const raw = (settings.ProfileSettings || {}).layers;
-            let layersChanged = false;
-            if (raw && typeof raw === 'object') {
-                for (const spec of LAYER_SPECS) {
-                    if (typeof raw[spec.id] !== 'boolean') continue;
-                    if (!!layersOn[spec.id] !== raw[spec.id]) layersChanged = true;
-                    layersOn[spec.id] = raw[spec.id];
-                }
-                for (const input of layersBox.querySelectorAll('input[data-layer]')) {
-                    input.checked = !!layersOn[input.dataset.layer];
-                }
-            }
-            if (layersChanged) schedule();
-            else draw();
+            draw();
         };
     } catch (err) {}
 
