@@ -22,10 +22,6 @@
                 <div id="market-status" style="padding: 0.5rem 1rem; background: rgba(255, 193, 7, 0.2); border-radius: 4px; font-size: 0.9rem;">
                     Checking market status...
                 </div>
-                <script>
-                    // Log when market-status element is created
-                    console.log('[HTML] market-status element created with text: "Checking market status..."');
-                </script>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                     <label for="date-selector" style="font-size: 0.9rem; color: #e0e0e0;">Date:</label>
                     <select id="date-selector" style="padding: 0.5rem; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; color: #e0e0e0; min-width: 150px; cursor: pointer;">
@@ -34,6 +30,7 @@
                     <button id="today-btn" style="padding: 0.5rem 1rem; background: #3a3a3a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#4a4a4a'" onmouseout="this.style.background='#3a3a3a'">Today</button>
                 </div>
                 <div id="status">Initializing...</div>
+                <button id="log-btn" class="settings-btn" title="Open the session log">Log</button>
                 <button id="settings-btn" class="settings-btn" title="Settings">⚙️ Settings</button>
             </div>
         </header>
@@ -50,7 +47,7 @@
                     <div class="setting-group">
                         <label for="wizard-api-key">API Key:</label>
                         <input type="password" id="wizard-api-key" placeholder="Enter your GEXBot API key">
-                        <small>Your API key will be saved securely</small>
+                        <small>Your API key is stored in the local app config on this PC.</small>
                     </div>
                     
                     <div class="setting-group">
@@ -119,15 +116,30 @@
                             <label>Data Collection Mode:</label>
                             <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
                                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
-                                    <input type="radio" name="data-collection-mode" id="collect-all" value="all" checked>
+                                    <input type="radio" name="data-collection-mode" id="collect-all" value="all" checked onchange="updateProfileCollectOptions()">
                                     <span>Collect all available data (recommended)</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
-                                    <input type="radio" name="data-collection-mode" id="collect-charts" value="charts">
+                                    <input type="radio" name="data-collection-mode" id="collect-charts" value="charts" onchange="updateProfileCollectOptions()">
                                     <span>Collect chart data only (less storage)</span>
                                 </label>
                             </div>
-                            <small>Choose whether to collect all endpoints available in your tier, or only what's needed for charts</small>
+                            <small>All data saves every ladder for the tiers you checked. Chart data saves the lines, and profile ladders only when the profile is on.</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
+                                <input type="checkbox" id="profile-enabled" onchange="updateProfileCollectOptions()">
+                                <span>Show profile</span>
+                            </label>
+                            <small style="display: block; margin-left: 1.5rem; color: #888;">Stays off until you turn it on, then stays on for later sessions. With chart data only, the ladders checked below are the ones requested.</small>
+                            <div id="profile-layer-options" style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.5rem 0 0 1.5rem;">
+                                <label><input type="checkbox" id="profile-layer-classic" checked onchange="updateProfileCollectOptions()"> Classic</label>
+                                <label><input type="checkbox" id="profile-layer-state" onchange="updateProfileCollectOptions()"> State</label>
+                                <label><input type="checkbox" id="profile-layer-gamma" onchange="updateProfileCollectOptions()"> Gamma</label>
+                                <label><input type="checkbox" id="profile-layer-delta" onchange="updateProfileCollectOptions()"> Delta</label>
+                                <label><input type="checkbox" id="profile-layer-vanna" onchange="updateProfileCollectOptions()"> Vanna</label>
+                                <label><input type="checkbox" id="profile-layer-charm" onchange="updateProfileCollectOptions()"> Charm</label>
+                            </div>
                         </div>
                     </div>
                     
@@ -179,52 +191,7 @@
                     <div class="settings-section" id="default-plots-section">
                         <div class="settings-section-header">📈 Default Chart Plots</div>
                         <div class="setting-group">
-                            <div id="hidden-plots-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-spot" data-plot="spot" checked>
-                                    <span>Spot Price</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-zero_gamma" data-plot="zero_gamma" checked>
-                                    <span>Zero Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_pos_vol" data-plot="major_pos_vol" checked>
-                                    <span>Positive Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_neg_vol" data-plot="major_neg_vol" checked>
-                                    <span>Negative Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-net" data-plot="net" checked>
-                                    <span>Net Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_long_gamma" data-plot="major_long_gamma" checked>
-                                    <span>Long Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_short_gamma" data-plot="major_short_gamma" checked>
-                                    <span>Short Gamma</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_positive" data-plot="major_positive" checked>
-                                    <span>Major Positive Strike</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_negative" data-plot="major_negative" checked>
-                                    <span>Major Negative Strike</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_pos_oi" data-plot="major_pos_oi" checked>
-                                    <span>Major Positive OI</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                    <input type="checkbox" id="plot-major_neg_oi" data-plot="major_neg_oi" checked>
-                                    <span>Major Negative OI</span>
-                                </label>
-                            </div>
+                            <div id="hidden-plots-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;"></div>
                             <small style="display: block; margin-top: 0.5rem;">Select which plots are visible by default when opening charts. <strong>Note:</strong> When "Collect chart data only" is selected, disabled plots will not be collected from the API.</small>
                         </div>
                     </div>
@@ -254,11 +221,7 @@
                             <small style="display: block; margin-left: 1.5rem; color: #888;">Write debug logs to files (requires restart)</small>
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">
-                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;">
-                                <input type="checkbox" id="hide-console" checked>
-                                <span>Hide console window</span>
-                            </label>
-                            <small style="display: block; margin-left: 1.5rem; color: #888;">Hide the terminal/console window on startup (requires restart)</small>
+                            <small style="display: block; color: #888;">The console window stays hidden. Use Log in the header to read this session.</small>
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">
                             <label for="chart-zoom-filter">Chart Y-Axis Zoom Filter (%):</label>
@@ -270,12 +233,26 @@
                             </small>
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">
-                            <label for="auto-follow-buffer">Auto-Follow Buffer (%):</label>
-                            <input type="number" id="auto-follow-buffer" min="0" max="50" step="0.5" value="1.0" style="width: 100px;">
+                            <label for="auto-follow-buffer">Right edge (px):</label>
+                            <input type="number" id="auto-follow-buffer" min="0" max="400" step="1" value="16" style="width: 100px;">
                             <small style="display: block; margin-top: 0.25rem; color: #888;">
-                                Buffer space on the right side of the chart when auto-follow is enabled. 
-                                Example: 10% means the chart will show 10% extra time range beyond the latest data point.
+                                Empty space after the latest bar, in pixels. Reset and auto-follow both keep this gap.
+                                It stays the same width when the chart window changes size.
                             </small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="profile-side">Profile beside the chart:</label>
+                            <select id="profile-side" style="width: 120px; padding: 0.35rem; background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 4px; color: #e0e0e0;">
+                                <option value="right">Right</option>
+                                <option value="left">Left</option>
+                            </select>
+                            <label for="profile-side-width" style="margin-left: 0.75rem;">Width (%):</label>
+                            <input type="number" id="profile-side-width" min="12" max="50" step="1" value="28" style="width: 100px;">
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">Used when the profile placement is Side. The ladder is its own column on that edge and keeps this share of the window.</small>
+                        </div>
+                        <div class="setting-group" style="margin-top: 0.75rem;">
+                            <label for="profile-show-priors"><input type="checkbox" id="profile-show-priors" checked> Show lookback dots</label>
+                            <small style="display: block; margin-top: 0.25rem; color: #888;">Dots on classic and state ladders for 1, 5, 10, 15, and 30 minutes earlier.</small>
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">
                             <label for="price-axis-location">Price axis (Y) location:</label>
@@ -287,10 +264,6 @@
                         </div>
                     </div>
                     
-                    <!-- Save Button -->
-                    <div class="setting-group" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #3a3a3a;">
-                        <button id="save-settings" class="save-btn">💾 Save Settings</button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -308,7 +281,7 @@
                             <th>Neg Gamma</th>
                             <th>Net</th>
                             <th>Last Update</th>
-                            <th>Chart</th>
+                            <th>Open</th>
                         </tr>
                     </thead>
                     <tbody id="ticker-table-body">
@@ -319,52 +292,15 @@
         </main>
     </div>
     
-    <!-- Simple logging setup - uses HTTP endpoint -->
     <script>
-        // This runs IMMEDIATELY, before any module scripts
-        (function() {
-            try {
-                console.log('===== HTML SCRIPT BLOCK EXECUTING =====');
-                console.log('[HTML] This script runs BEFORE main.js module loads');
-                console.log('[HTML] Timestamp:', new Date().toISOString());
-            } catch(e) {
-                alert('CRITICAL: HTML script block failed: ' + e);
-            }
-            
-            // Initialize window._app for compatibility
-            window._app = null;
-            window._appReady = false;
-            
-            // Simple test: Call HTTP endpoint to verify frontend is executing
-            fetch('/api/frontend-test')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('[HTML] Frontend test endpoint response:', data);
-                })
-                .catch(err => {
-                    console.error('[HTML] Frontend test endpoint failed:', err);
-                });
-            
-            // Test the new logging endpoint
-            fetch('/api/frontend-log', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ level: 'INFO', message: '[HTML] Frontend JavaScript executing - HTML script block' })
-            }).catch(() => {}); // Ignore errors
-        })();
+        window._app = null;
+        window._appReady = false;
     </script>
     
     <!-- Try to use real Wails runtime if available, otherwise use shim -->
     <script>
         // Check if Wails has injected its runtime
-        if (window._wails && window._wails.runtime) {
-            console.log('[HTML] Wails runtime detected - using real runtime');
-            // Map @wailsio/runtime to the real runtime
-            window.__wailsRuntimeAvailable = true;
-        } else {
-            console.log('[HTML] Wails runtime not detected - will use shim');
-            window.__wailsRuntimeAvailable = false;
-        }
+        window.__wailsRuntimeAvailable = !!(window._wails && window._wails.runtime);
     </script>
     
     <!-- Import map to map @wailsio/runtime to our shim -->
@@ -379,33 +315,23 @@
     <script>
         // Add error handler for unhandled errors (non-module script)
         window.addEventListener('error', (event) => {
-            console.error('===== GLOBAL ERROR =====');
-            console.error('Error:', event.error);
-            console.error('Message:', event.message);
-            console.error('Filename:', event.filename);
-            console.error('Line:', event.lineno);
-            console.error('Col:', event.colno);
+            console.error(event.message, event.filename, event.lineno);
             const statusEl = document.getElementById('status');
             if (statusEl) {
-                statusEl.textContent = 'JavaScript Error: ' + (event.error?.message || event.message || 'Unknown error');
+                statusEl.textContent = 'Something in the window failed to run.';
                 statusEl.style.color = '#f44336';
             }
         });
         
         // Add unhandled promise rejection handler
         window.addEventListener('unhandledrejection', (event) => {
-            console.error('===== UNHANDLED PROMISE REJECTION =====');
-            console.error('Reason:', event.reason);
-            console.error('Promise:', event.promise);
+            console.error(event.reason);
             const statusEl = document.getElementById('status');
             if (statusEl) {
-                statusEl.textContent = 'Promise Error: ' + (event.reason?.message || String(event.reason) || 'Unknown error');
+                statusEl.textContent = 'A background task failed.';
                 statusEl.style.color = '#f44336';
             }
         });
-        
-        // Log when DOM is ready
-        console.log('[HTML] Script loaded, waiting for DOMContentLoaded...');
     </script>
 </body>
 </html>

@@ -114,6 +114,14 @@ main {
     background-color: #3d8b40;
 }
 
+.open-cell {
+    white-space: nowrap;
+}
+
+.open-cell .chart-btn + .chart-btn {
+    margin-left: 6px;
+}
+
 #chart-container {
     flex: 1;
     padding: 1rem;

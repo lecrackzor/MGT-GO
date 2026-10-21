@@ -11,45 +11,28 @@ function checkForWailsRuntime() {
     // Check multiple possible locations for Wails runtime
     // Wails v3 may inject it at different locations
     if (window._wails) {
-        // Log what we actually have
         const wailsKeys = Object.keys(window._wails || {});
-        console.log('[Shim] window._wails exists, keys:', wailsKeys);
-        
-        // Check if Call is directly on _wails
         if (window._wails.Call && typeof window._wails.Call.ByID === 'function') {
-            console.log('[Shim] ✓ Found real Wails runtime at window._wails.Call');
             useRealRuntime = true;
             realCall = window._wails.Call;
             return true;
         }
-        
-        // Check if runtime exists and has Call
-        if (window._wails.runtime) {
-            const runtimeKeys = Object.keys(window._wails.runtime || {});
-            console.log('[Shim] window._wails.runtime exists, keys:', runtimeKeys);
-            
-            if (window._wails.runtime.Call && typeof window._wails.runtime.Call.ByID === 'function') {
-                console.log('[Shim] ✓ Found real Wails runtime at window._wails.runtime.Call');
-                useRealRuntime = true;
-                realCall = window._wails.runtime.Call;
-                return true;
-            }
+        if (window._wails.runtime && window._wails.runtime.Call && typeof window._wails.runtime.Call.ByID === 'function') {
+            useRealRuntime = true;
+            realCall = window._wails.runtime.Call;
+            return true;
         }
-        
-        // Check for any Call property anywhere in _wails
         for (const key of wailsKeys) {
             const value = window._wails[key];
             if (value && typeof value === 'object' && value.Call && typeof value.Call.ByID === 'function') {
-                console.log('[Shim] ✓ Found real Wails runtime at window._wails.' + key + '.Call');
                 useRealRuntime = true;
                 realCall = value.Call;
                 return true;
             }
         }
     }
-    
+
     if (window.Wails && window.Wails.Call && typeof window.Wails.Call.ByID === 'function') {
-        console.log('[Shim] ✓ Found real Wails runtime at window.Wails.Call');
         useRealRuntime = true;
         realCall = window.Wails.Call;
         return true;
@@ -58,59 +41,7 @@ function checkForWailsRuntime() {
     return false;
 }
 
-// Initial check - but Wails runtime may not be injected yet
-console.log('[Shim] ===== Initial Wails runtime check =====');
-console.log('[Shim] window._wails:', window._wails);
-console.log('[Shim] window._wails type:', typeof window._wails);
-if (window._wails) {
-    console.log('[Shim] window._wails keys:', Object.keys(window._wails));
-    console.log('[Shim] window._wails.runtime:', window._wails.runtime);
-    console.log('[Shim] window._wails.Call:', window._wails.Call);
-    // Try to stringify to see structure (but be careful with circular refs)
-    try {
-        console.log('[Shim] window._wails structure:', JSON.stringify(window._wails, (key, value) => {
-            if (typeof value === 'function') return '[Function]';
-            if (typeof value === 'object' && value !== null) {
-                if (Object.keys(value).length > 10) return '[Object with ' + Object.keys(value).length + ' keys]';
-            }
-            return value;
-        }, 2));
-    } catch (e) {
-        console.log('[Shim] Could not stringify window._wails:', e.message);
-    }
-}
-console.log('[Shim] window.Wails:', window.Wails);
-console.log('[Shim] =======================================');
-
-if (!checkForWailsRuntime()) {
-    console.log('[Shim] Real runtime not found initially - Wails may inject it later');
-    console.log('[Shim] Will check again when methods are called');
-    // Set up a more aggressive periodic check for the real runtime
-    let checkCount = 0;
-    const checkInterval = setInterval(() => {
-        checkCount++;
-        if (checkForWailsRuntime()) {
-            console.log('[Shim] ✓ Real Wails runtime detected after', checkCount * 50, 'ms! Switching to real runtime');
-            clearInterval(checkInterval);
-        } else if (checkCount % 20 === 0) {
-            // Log every second what we're seeing
-            console.log('[Shim] Still checking... window._wails:', !!window._wails, 
-                       'runtime:', !!window._wails?.runtime, 
-                       'Call:', !!window._wails?.Call,
-                       'runtime.Call:', !!window._wails?.runtime?.Call);
-        }
-    }, 50); // Check every 50ms
-    // Stop checking after 10 seconds (Wails should inject it by then)
-    setTimeout(() => {
-        clearInterval(checkInterval);
-        if (!useRealRuntime) {
-            console.error('[Shim] WARNING: Real Wails runtime still not found after 10 seconds!');
-            console.error('[Shim] Final check - window._wails:', window._wails);
-            console.error('[Shim] Final check - window._wails keys:', window._wails ? Object.keys(window._wails) : 'N/A');
-            console.error('[Shim] This may cause binding calls to fail');
-        }
-    }, 10000);
-}
+checkForWailsRuntime();
 
 // Get runtime URL - Wails v3 uses a specific endpoint
 // Check runtime-debug.js for the actual endpoint Wails uses
@@ -120,17 +51,13 @@ let runtimeURL = null;
 if (window._wails) {
     if (window._wails.runtimeURL) {
         runtimeURL = window._wails.runtimeURL;
-        console.log('[Shim] Using runtime URL from window._wails.runtimeURL:', runtimeURL);
     } else if (window._wails.runtime && window._wails.runtime.runtimeURL) {
         runtimeURL = window._wails.runtime.runtimeURL;
-        console.log('[Shim] Using runtime URL from window._wails.runtime.runtimeURL:', runtimeURL);
     }
 }
 
-// Default fallback - Wails v3 uses /wails/runtime (confirmed from runtime-debug.js)
 if (!runtimeURL) {
     runtimeURL = window.location.origin + '/wails/runtime';
-    console.log('[Shim] Using default runtime URL:', runtimeURL);
 }
 let clientId = '';
 
@@ -145,21 +72,11 @@ function generateClientId() {
 // Runtime caller implementation
 async function runtimeCallWithID(objectID, methodID, args, callId = null) {
     // ALWAYS check for real runtime first (it might have been injected since last check)
-    const runtimeFound = checkForWailsRuntime();
-    
-    console.log('[Shim] runtimeCallWithID called - objectID:', objectID, 'methodID:', methodID, 'args:', args);
-    console.log('[Shim] useRealRuntime:', useRealRuntime, 'realCall:', realCall);
-    console.log('[Shim] window._wails:', window._wails);
-    console.log('[Shim] window._wails?.runtime:', window._wails?.runtime);
-    console.log('[Shim] window._wails?.runtime?.Call:', window._wails?.runtime?.Call);
-    
-    // If real runtime is available, use it
+    checkForWailsRuntime();
+
     if (useRealRuntime && realCall && typeof realCall.ByID === 'function') {
-        console.log('[Shim] Using real Wails runtime to call method', methodID);
         try {
-            const result = await realCall.ByID(methodID, ...(args || []));
-            console.log('[Shim] Real runtime call succeeded for method', methodID, 'result:', result);
-            return result;
+            return await realCall.ByID(methodID, ...(args || []));
         } catch (error) {
             console.error('[Shim] Error calling real Wails runtime:', error);
             console.error('[Shim] Error details:', error.message, error.stack);
@@ -168,8 +85,7 @@ async function runtimeCallWithID(objectID, methodID, args, callId = null) {
         }
     }
     
-    // If we get here, real runtime is not available - use shim with call-id
-    console.log('[Shim] Using shim implementation for method', methodID, 'with call-id:', callId);
+    // Real runtime is not available. Match its request shape from here.
     
     // Use shim implementation - match the real Wails format exactly
     // Real Wails runtime does NOT include call-id in body, only {object, method, args}
@@ -188,16 +104,12 @@ async function runtimeCallWithID(objectID, methodID, args, callId = null) {
     };
     
     
-    console.log('[Shim] Calling runtime at', url.toString(), 'with body:', JSON.stringify(body));
-    
     try {
         const response = await fetch(url, {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(body)
         });
-        
-        console.log('[Shim] Runtime call response status:', response.status, 'for method', methodID);
         
         if (!response.ok) {
             const errorText = await response.text();
@@ -212,7 +124,6 @@ async function runtimeCallWithID(objectID, methodID, args, callId = null) {
         } else {
             result = await response.text();
         }
-        console.log('[Shim] Runtime call succeeded for method', methodID, 'result:', result);
         return result;
     } catch (error) {
         console.error('[Shim] Runtime call exception for method', methodID, ':', error);
@@ -263,7 +174,6 @@ async function bindingCallWithID(objectID, methodID, args, callId) {
     }
     
     if (useRealRuntime && realCall && typeof realCall.ByID === 'function') {
-        console.log('[Shim] Using real Wails runtime for binding call', methodID);
         try {
             const result = await realCall.ByID(methodID, ...(args || []));
             return result;
@@ -276,8 +186,6 @@ async function bindingCallWithID(objectID, methodID, args, callId) {
     // Use shim - match real Wails format exactly
     // Real Wails calls: runtimeCallWithID(0, 0, "", { "call-id": id, methodID: ..., args: [...] })
     // So the body should be: { object: 0, method: 0, args: { "call-id": id, methodID: ..., args: [...] } }
-    console.log('[Shim] Using shim for binding call', methodID, 'with call-id:', callId);
-    
     const url = new URL(runtimeURL);
     
     // Real Wails format: the options object (with call-id) becomes the args parameter
@@ -295,18 +203,6 @@ async function bindingCallWithID(objectID, methodID, args, callId) {
         'x-wails-client-id': generateClientId(),
         'Content-Type': 'application/json'
     };
-    
-    // Log to backend terminal
-    try {
-        await fetch('/api/frontend-log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                level: 'INFO', 
-                message: `[Shim] Binding call body: ${JSON.stringify(body).substring(0, 250)}` 
-            })
-        }).catch(() => {});
-    } catch (e) {}
     
     try {
         const response = await fetch(url, {
@@ -333,10 +229,7 @@ async function bindingCallWithID(objectID, methodID, args, callId) {
 }
 
 Call.ByID = function(methodID, ...args) {
-    console.log('[Shim] Call.ByID called with methodID:', methodID, 'args:', args);
-    const result = Call({ methodID, args });
-    console.log('[Shim] Call.ByID returning promise for methodID:', methodID);
-    return result;
+    return Call({ methodID, args });
 };
 
 Call.ByName = function(methodName, ...args) {

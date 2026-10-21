@@ -16,11 +16,12 @@ import (
 type Settings struct {
 	// API Key is loaded from environment variable GEXBOT_API_KEY first, then from config file
 	// Note: omitempty is removed so API key is always written when present
-	APITKey                            string                  `yaml:"api_key"`
+	APITKey                            string                  `yaml:"api_key" json:"APITKey,omitempty"`
+	HasAPIKey                          bool                    `yaml:"-" json:"HasAPIKey"`
 	APISubscriptionTiers               []string                `yaml:"api_subscription_tiers"`
-	CollectAllEndpoints                bool                    `yaml:"collect_all_endpoints"` // true = collect all available data, false = chart data only
-	ActiveTickerRefreshRateMs          int                     `yaml:"active_ticker_refresh_rate_ms"`
-	DataCollectionRefreshRateMs        int                     `yaml:"data_collection_refresh_rate_ms"`
+	CollectAllEndpoints                bool                    `yaml:"collect_all_endpoints"`           // true = collect all available data, false = chart data only
+	ActiveTickerRefreshRateMs          int                     `yaml:"active_ticker_refresh_rate_ms"`   // saved with settings; not the live poll
+	DataCollectionRefreshRateMs        int                     `yaml:"data_collection_refresh_rate_ms"` // saved with settings; not the live poll
 	DataDirectory                      string                  `yaml:"data_directory"`
 	TrimDataStartTime                  string                  `yaml:"trim_data_start_time"`
 	TrimDataEndTime                    string                  `yaml:"trim_data_end_time"`
@@ -57,13 +58,13 @@ type Settings struct {
 	Charts                             []interface{}           `yaml:"charts"`
 	Tickers                            []interface{}           `yaml:"tickers"`
 	TickerConfigs                      map[string]TickerConfig `yaml:"ticker_configs"`
-	TickerOrder                        []string                `yaml:"ticker_order,omitempty"`     // User-defined ticker display order
-	ChartColors                        map[string]string       `yaml:"chart_colors"`               // Color preferences for chart data series
-	ChartColorsOff                     []string                `yaml:"chart_colors_off"`           // Series hidden on charts via color settings (still collected)
-	ChartZoomFilterPercent             float64                 `yaml:"chart_zoom_filter_percent"`  // Default Y-axis zoom filter as % of current spot price
-	AutoFollowBufferPercent            float64                 `yaml:"auto_follow_buffer_percent"` // Buffer percentage for auto-follow (default 10%)
-	WindowWidth                        int                     `yaml:"window_width,omitempty"`     // Last saved window width
-	WindowHeight                       int                     `yaml:"window_height,omitempty"`    // Last saved window height
+	TickerOrder                        []string                `yaml:"ticker_order,omitempty"`    // User-defined ticker display order
+	ChartColors                        map[string]string       `yaml:"chart_colors"`              // Color preferences for chart data series
+	ChartColorsOff                     []string                `yaml:"chart_colors_off"`          // Series hidden on charts via color settings (still collected)
+	ChartZoomFilterPercent             float64                 `yaml:"chart_zoom_filter_percent"` // Default Y-axis zoom filter as % of current spot price
+	AutoFollowBufferPx                 float64                 `yaml:"auto_follow_buffer_px"`     // Empty pixels after the latest bar. Reset and auto-follow both use it.
+	WindowWidth                        int                     `yaml:"window_width,omitempty"`    // Last saved window width
+	WindowHeight                       int                     `yaml:"window_height,omitempty"`   // Last saved window height
 }
 
 // SettingsManager manages loading and saving settings
@@ -177,7 +178,7 @@ func (sm *SettingsManager) detectAndMigrateDuplicateConfig() {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			continue
 		}
-		if err := os.WriteFile(canonicalAbs, data, 0644); err != nil {
+		if err := os.WriteFile(canonicalAbs, data, 0600); err != nil {
 			continue
 		}
 		log.Printf("Config: migrated config from duplicate at %s to canonical %s. You can remove the duplicate.", alt, canonicalAbs)
@@ -222,19 +223,22 @@ func (sm *SettingsManager) LoadSettings() (*Settings, error) {
 	if err := yaml.Unmarshal(data, &settings); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	var raw map[string]interface{}
+	if yaml.Unmarshal(data, &raw) == nil {
+		if _, ok := raw["auto_follow_buffer_px"]; !ok || settings.AutoFollowBufferPx < 0 {
+			settings.AutoFollowBufferPx = 16
+		}
+	}
 
 	// Load API key from environment variable first, fallback to config file
 	apiKey := os.Getenv(APIKeyEnvVar)
 	if apiKey == "" {
 		// Use API key from config file
 		apiKey = settings.APITKey
-		if apiKey != "" {
-			log.Printf("API key loaded from config file (length: %d)", len(apiKey))
-		} else {
+		if apiKey == "" {
 			log.Printf("WARNING: API key is empty in both environment variable and config file")
 		}
 	} else {
-		log.Printf("API key loaded from environment variable (length: %d)", len(apiKey))
 		// If env var is set, use it but also preserve the one from config file for fallback
 		if settings.APITKey != "" && settings.APITKey != apiKey {
 			log.Printf("NOTE: Environment variable API key differs from config file, using env var")
@@ -276,8 +280,6 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 	// Create a copy for saving
 	saveSettings := *settings
 
-	log.Printf("SaveSettingsWithOptions: Input settings API key length: %d, saveAPIKey: %v", len(settings.APITKey), saveAPIKey)
-
 	if !saveAPIKey {
 		// For normal saves, preserve existing API key from file if it exists
 		// This prevents wiping the API key when user changes other settings
@@ -288,9 +290,6 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 				if err := yaml.Unmarshal(existingData, &existingSettings); err == nil {
 					if existingSettings.APITKey != "" {
 						saveSettings.APITKey = existingSettings.APITKey
-						log.Printf("SaveSettingsWithOptions: Preserved existing API key from file (length: %d)", len(saveSettings.APITKey))
-					} else {
-						log.Printf("SaveSettingsWithOptions: No API key in existing file")
 					}
 				} else {
 					log.Printf("SaveSettingsWithOptions: Failed to parse existing file: %v", err)
@@ -298,20 +297,10 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 			} else {
 				log.Printf("SaveSettingsWithOptions: Could not read existing file: %v", err)
 			}
-		} else {
-			// Settings already has API key - preserve it even for normal saves
-			log.Printf("SaveSettingsWithOptions: Preserving API key from input settings (length: %d)", len(saveSettings.APITKey))
 		}
-	} else {
-		// saveAPIKey=true: Save the API key to file (for first-time setup)
-		if saveSettings.APITKey == "" {
-			log.Printf("ERROR: SaveSettingsWithOptions called with saveAPIKey=true but API key is empty!")
-		} else {
-			log.Printf("SaveSettingsWithOptions: Saving API key to file (length: %d)", len(saveSettings.APITKey))
-		}
+	} else if saveSettings.APITKey == "" {
+		log.Printf("ERROR: SaveSettingsWithOptions called with saveAPIKey=true but API key is empty!")
 	}
-
-	log.Printf("SaveSettingsWithOptions: Final saveSettings API key length: %d", len(saveSettings.APITKey))
 
 	// Marshal to YAML
 	data, err := yaml.Marshal(&saveSettings)
@@ -335,11 +324,7 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 				settingsMap["api_key"] = saveSettings.APITKey
 				if newData, err := yaml.Marshal(&settingsMap); err == nil {
 					data = newData
-					log.Printf("SaveSettingsWithOptions: Forced API key into YAML data (length: %d)", len(saveSettings.APITKey))
-					// Verify it's actually there now
-					if strings.Contains(string(newData), "api_key:") && !strings.Contains(string(newData), "api_key: \"\"") {
-						log.Printf("SaveSettingsWithOptions: Verified API key is now in YAML data")
-					} else {
+					if !strings.Contains(string(newData), "api_key:") || strings.Contains(string(newData), "api_key: \"\"") {
 						log.Printf("ERROR: SaveSettingsWithOptions: API key still not properly in YAML after forcing!")
 					}
 				} else {
@@ -348,13 +333,11 @@ func (sm *SettingsManager) SaveSettingsWithOptions(settings *Settings, saveAPIKe
 			} else {
 				log.Printf("ERROR: SaveSettingsWithOptions: Failed to unmarshal data to map: %v", err)
 			}
-		} else {
-			log.Printf("SaveSettingsWithOptions: API key verified in marshaled YAML data")
 		}
 	}
 
-	// Write to file
-	if err := os.WriteFile(sm.configFile, data, 0644); err != nil {
+	// Write to file. 0600 keeps the API key in the user profile from other accounts.
+	if err := os.WriteFile(sm.configFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -383,17 +366,53 @@ func (sm *SettingsManager) SetSettings(settings *Settings) {
 	// Preserve API key if new settings don't have one
 	if settings.APITKey == "" && sm.settings != nil && sm.settings.APITKey != "" {
 		settings.APITKey = sm.settings.APITKey
-		log.Printf("SetSettings: Preserved existing API key (length: %d)", len(settings.APITKey))
 	}
 
 	sm.settings = settings
 }
 
-// GetSettings returns current settings (thread-safe)
+// GetSettings returns current settings (thread-safe).
+// Callers that write maps must CloneSettings first. This pointer is shared
+// with the collector until the next save publishes a new object.
 func (sm *SettingsManager) GetSettings() *Settings {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.settings
+}
+
+// CloneSettings deep-copies settings so a mutator can edit maps without
+// racing readers that still hold the published pointer.
+func CloneSettings(settings *Settings) (*Settings, error) {
+	if settings == nil {
+		return nil, fmt.Errorf("settings are not ready")
+	}
+	data, err := yaml.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("clone settings: %w", err)
+	}
+	var out Settings
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("clone settings: %w", err)
+	}
+	if out.TickerConfigs == nil {
+		out.TickerConfigs = map[string]TickerConfig{}
+	}
+	return &out, nil
+}
+
+// RedactedSettings is the copy sent to the webview and /api/settings.
+// The API key stays in the config file and on the published settings object.
+func RedactedSettings(settings *Settings) *Settings {
+	if settings == nil {
+		return &Settings{}
+	}
+	out, err := CloneSettings(settings)
+	if err != nil {
+		return &Settings{HasAPIKey: strings.TrimSpace(settings.APITKey) != ""}
+	}
+	out.HasAPIKey = strings.TrimSpace(settings.APITKey) != ""
+	out.APITKey = ""
+	return out
 }
 
 // SaveWindowDimensions saves only window dimensions without full settings reload
@@ -434,7 +453,7 @@ func (sm *SettingsManager) SaveWindowDimensions(width, height int) error {
 				return fmt.Errorf("failed to marshal settings: %w", err)
 			}
 
-			if err := os.WriteFile(sm.configFile, data, 0644); err != nil {
+			if err := os.WriteFile(sm.configFile, data, 0600); err != nil {
 				return fmt.Errorf("failed to write config file: %w", err)
 			}
 
@@ -460,7 +479,7 @@ func (sm *SettingsManager) SaveWindowDimensions(width, height int) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	if err := os.WriteFile(sm.configFile, data, 0644); err != nil {
+	if err := os.WriteFile(sm.configFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -510,14 +529,16 @@ func getDefaultSettings() *Settings {
 		PriceAxisLocation:                  "left",
 		ChartTimezone:                      "market",
 		ChartZoomFilterPercent:             1.0, // Default 1% of current spot price
-		AutoFollowBufferPercent:            1.0, // Default 1% buffer on the right
+		AutoFollowBufferPx:                 16,  // Default 16px after the latest bar
 		Alerts:                             []interface{}{},
 		ProfileSettings: map[string]interface{}{
 			"center_x":             0.5,
-			"bar_width_percent":    30.0,
+			"bar_width_percent":    22.0,
+			"profile_x_percent":    62.0,
 			"bar_direction":        "both",
 			"show_priors":          true,
 			"show_reference_lines": true,
+			"enabled":              false,
 		},
 		Classic: map[string]interface{}{
 			"colors": map[string]interface{}{
@@ -560,9 +581,9 @@ func getDefaultSettings() *Settings {
 			},
 			"symbols": map[string]interface{}{},
 		},
-		Charts:        []interface{}{},
-		Tickers:       []interface{}{},
-		TickerConfigs: make(map[string]TickerConfig),
+		Charts:         []interface{}{},
+		Tickers:        []interface{}{},
+		TickerConfigs:  make(map[string]TickerConfig),
 		ChartColorsOff: []string{},
 		ChartColors: map[string]string{
 			"spot":              "#4CAF50",

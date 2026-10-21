@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "@wailsio/runtime": "/wails-runtime-shim.js"
+        }
+    }
+    </script>
+    <link rel="stylesheet" href="chart.css">
+</head>
+<body class="profile-only">
+    <h1 id="profile-title">Profile</h1>
+    <div id="profile-stage">
+        <canvas id="profile-canvas"></canvas>
+        <aside id="profile-metrics"></aside>
+        <div id="profile-hover" hidden></div>
+    </div>
+    <div id="profile-toolbar" class="window-toolbar">
+        <div class="toolbar-left">
+            <select id="profile-dte" aria-label="Profile expiration">
+                <option value="zero">0 DTE</option>
+                <option value="one">1 DTE</option>
+                <option value="full">90 DTE</option>
+            </select>
+            <span id="profile-layers">
+                <label><input type="checkbox" data-layer="classic" checked>Classic</label>
+                <label><input type="checkbox" data-layer="state">State</label>
+                <label><input type="checkbox" data-layer="gamma">Gamma</label>
+                <label><input type="checkbox" data-layer="delta">Delta</label>
+                <label><input type="checkbox" data-layer="vanna">Vanna</label>
+                <label><input type="checkbox" data-layer="charm">Charm</label>
+            </span>
+            <label title="Show spot, zero gamma, and the price under the pointer on the axis, the way the chart does"><input type="checkbox" id="profile-axis-price" checked> Price labels</label>
+        </div>
+        <span id="profile-note" class="toolbar-note"></span>
+        <div class="toolbar-right">
+            <button id="profile-axis-reset" type="button" title="Fit the price scale and put the zero line back in the middle">Reset axes</button>
+            <button id="profile-attach-btn" type="button" title="Dock this profile on the side of its chart">Attach to chart</button>
+        </div>
+    </div>
+    <div id="profile-replay">
+        <div class="toolbar-left">
+            <button type="button" id="profile-replay-live">Live</button>
+            <button type="button" id="profile-replay-play">Play</button>
+            <button type="button" id="profile-replay-back" title="Previous sample">Prev</button>
+            <button type="button" id="profile-replay-forward" title="Next sample">Next</button>
+            <select id="profile-replay-speed" aria-label="Replay speed">
+                <option value="1">1×</option>
+                <option value="4">4×</option>
+                <option value="16" selected>16×</option>
+                <option value="64">64×</option>
+            </select>
+        </div>
+        <span id="profile-replay-time">Live</span>
+        <input id="profile-replay-range" type="range" min="0" max="0" value="0" aria-label="Profile time">
+    </div>
+    <div id="chart-context-menu" aria-hidden="true"></div>
+    <script type="module" src="js/chart/profile-window.js"></script>
+</body>
+</html>

@@ -3,16 +3,16 @@ package scheduler
 import (
 	"log"
 	"sync"
-	"time"
 
+	"market-terminal/internal/api"
 	"market-terminal/internal/config"
 )
 
-// UnifiedAdaptiveScheduler provides priority-based scheduling for ticker data collection
+// UnifiedAdaptiveScheduler is the poll-interval policy and rate-limit holder.
+// The actual per-ticker loops live in PerTickerScheduler.
 type UnifiedAdaptiveScheduler struct {
 	mu               sync.RWMutex
 	rateLimitTracker *RateLimitTracker
-	lastFetchTimes   map[string]float64 // ticker -> last fetch time
 	enabledTickers   []string
 	settings         *config.Settings
 }
@@ -21,7 +21,6 @@ type UnifiedAdaptiveScheduler struct {
 func NewUnifiedAdaptiveScheduler(settings *config.Settings) *UnifiedAdaptiveScheduler {
 	return &UnifiedAdaptiveScheduler{
 		rateLimitTracker: NewRateLimitTracker(),
-		lastFetchTimes:   make(map[string]float64),
 		enabledTickers:   make([]string, 0),
 		settings:         settings,
 	}
@@ -49,11 +48,14 @@ func (uas *UnifiedAdaptiveScheduler) CalculateInterval(ticker string, openCharts
 
 	// Determine priority based on ticker visibility
 	priority := uas.getTickerPriority(ticker, openCharts)
-	
+
 	// Get ticker count
 	tickerCount := len(uas.enabledTickers)
 
-	// Calculate interval based on priority and ticker count
+	// Live intervals are the values in this switch: an open chart stays at 1s,
+	// and the other tiers stay at 6/10/15s and 16/22/30s. Settings fields
+	// ActiveTickerRefreshRateMs and DataCollectionRefreshRateMs are not the
+	// live poll. A per-ticker RefreshRateMs still overrides below.
 	var interval float64
 	var priorityName string
 	switch priority {
@@ -88,8 +90,10 @@ func (uas *UnifiedAdaptiveScheduler) CalculateInterval(ticker string, openCharts
 		interval = float64(refreshRateMs) / 1000.0
 	}
 
-	// Ensure minimum interval based on rate limits
-	minInterval := uas.rateLimitTracker.GetMinimumInterval(tickerCount)
+	// Ensure minimum interval based on rate limits. Scale by the calls one
+	// ticker poll actually makes, or collect-all bursts the quota.
+	callsPerTicker := api.PlannedEndpointsPerTicker(uas.settings)
+	minInterval := uas.rateLimitTracker.GetMinimumInterval(tickerCount, callsPerTicker)
 	if minInterval > 0 && interval < minInterval {
 		interval = minInterval
 	}
@@ -147,12 +151,12 @@ func (uas *UnifiedAdaptiveScheduler) getTickerRefreshRate(ticker string) int {
 	if uas.settings == nil {
 		return 0
 	}
-	
+
 	// Access ticker configs directly from settings
 	if uas.settings.TickerConfigs == nil {
 		return 0
 	}
-	
+
 	if tickerConfig, exists := uas.settings.TickerConfigs[ticker]; exists {
 		if tickerConfig.RefreshRateMs != nil {
 			rate := *tickerConfig.RefreshRateMs
@@ -165,15 +169,8 @@ func (uas *UnifiedAdaptiveScheduler) getTickerRefreshRate(ticker string) int {
 			return rate
 		}
 	}
-	
-	return 0 // Default: use priority-based scheduling
-}
 
-// RecordFetch records that a ticker was fetched
-func (uas *UnifiedAdaptiveScheduler) RecordFetch(ticker string) {
-	uas.mu.Lock()
-	defer uas.mu.Unlock()
-	uas.lastFetchTimes[ticker] = float64(time.Now().Unix())
+	return 0 // Default: use priority-based scheduling
 }
 
 // GetRateLimitTracker returns the rate limit tracker

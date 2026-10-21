@@ -1,60 +1,31 @@
-# Market Terminal Gexbot - Go/Wails Version
+# Market Terminal
 
-<div align="center">
-  <img src="MGT.png" alt="Market Terminal Gexbot Screenshot">
-</div>
+Desktop market-data terminal. Go backend, web frontend, SQLite storage, scheduled collection from the Gexbot API.
 
-> **⚠️ IMPORTANT**: Please read the [DISCLAIMER.md](DISCLAIMER.md) before using this software. This software is not affiliated with Gexbot, is provided "as is" without warranty, and is not financial advice.
+This software is not affiliated with Gexbot, is provided as is, and is not financial advice. See [DISCLAIMER.md](DISCLAIMER.md).
 
-## Prerequisites
+## Run
 
-### Install Go
-1. Download Go from https://go.dev/dl/
-2. Install Go (default location: `C:\Program Files\Go`)
-3. Verify installation:
-   ```bash
-   go version
-   ```
-   Should show: `go version go1.21.x windows/amd64` or similar
+Requires Go 1.25 and the Wails v3 CLI (`go install github.com/wailsapp/wails/v3/cmd/wails3@latest`).
 
-### Install Wails CLI
 ```bash
-go install github.com/wailsapp/wails/v3/cmd/wails3@latest
-```
-
-Verify installation:
-```bash
-wails3 version
-```
-
-## Running the Application
-
-### Development Mode (with hot reload)
-```bash
-cd GO
 wails3 dev
-```
-This is similar to running `python Market_Terminal_Gexbot.py` - it starts the app and automatically reloads on changes.
-
-### Production Build
-```bash
-cd GO
 wails3 build
 ```
-This creates a single executable in `build/bin/market-terminal.exe` that you can double-click to run.
 
-### Running the Built App
-- **Windows**: Double-click `build/bin/market-terminal.exe`
-- The executable is standalone - no Python or other dependencies needed
+`wails3 build` writes `build/bin/market-terminal.exe`. A windowed copy can also be built in this folder:
 
-## Project Structure
+```bash
+go build -ldflags="-H=windowsgui" -o market-terminal.exe .
+```
 
-- `main.go` - Application entry point
-- `app.go` - Main application struct
-- `internal/` - Go packages (backend logic)
-- `frontend/` - Web frontend (HTML/JS/CSS)
-- `build/` - Build output (generated)
+The API key is stored in `%AppData%\market-terminal\config.yaml` on Windows (the user config directory on other systems). That file is not committed.
 
-## Memory Profiling
+## Layout
 
-The app includes built-in memory profiling. While running, access:
+- `main.go`, `app.go` — process entry and the Wails app
+- `internal/api` — HTTP client and the query list
+- `internal/coordinator` — collection and merging
+- `internal/database` — chart rows and the sibling profile files
+- `internal/scheduler` — polling
+- `frontend/` — the window UI

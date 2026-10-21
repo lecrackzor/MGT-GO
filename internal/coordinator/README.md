@@ -4,16 +4,6 @@ This package coordinates data collection operations, tying together API calls, d
 
 ## Components
 
-### SmartQueryPlanner (`query_planner.go`)
-- Builds optimized query plans for tickers
-- Filters by subscription tiers
-- Data hoarding mode (all tickers get all endpoints)
-
-### PriorityWriteQueue (`write_queue.go`)
-- Priority-based write queue (high/medium/low)
-- Non-blocking writes
-- Automatic batching
-
 ### DataCollectionCoordinator (`data_collection.go`)
 - Coordinates API calls, database writes, and scheduling
 - Aggregates API results by ticker
@@ -35,8 +25,7 @@ coordinator := coordinator.NewDataCollectionCoordinator(
     querySystem,
     dataWriter,
     scheduler,
-    queryPlanner,
-    writeQueue,
+    enabledTickers,
     getShuttingDown,
     getOpenCharts,
     debugPrint,

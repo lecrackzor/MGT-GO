@@ -54,6 +54,8 @@ logs/
 # Settings (may contain sensitive data like API keys)
 settings.yaml
 settings.yml
+config.yaml
+config.yml
 *.yaml.bak
 *.yml.bak
 

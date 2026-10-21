@@ -26,8 +26,9 @@ func NewRateLimitTracker() *RateLimitTracker {
 	}
 }
 
-// RecordRequest records an API request
-func (rlt *RateLimitTracker) RecordRequest(requestTime float64, success bool, headers map[string]string) {
+// RecordRequest records a successful API request and any rate-limit headers.
+// The rate-limited flag is set only by HandleRateLimitError (HTTP 429).
+func (rlt *RateLimitTracker) RecordRequest(requestTime float64, headers map[string]string) {
 	rlt.mu.Lock()
 	defer rlt.mu.Unlock()
 
@@ -43,15 +44,8 @@ func (rlt *RateLimitTracker) RecordRequest(requestTime float64, success bool, he
 		rlt.requestTimes = rlt.requestTimes[firstValid:]
 	}
 
-	// Update from headers if available
 	if headers != nil {
 		rlt.updateFromHeaders(headers)
-	}
-
-	// Note: the rate-limited flag is only set by HandleRateLimitError (429s),
-	// not inferred from request counts - the counts feed GetMinimumInterval.
-	if !success {
-		rlt.isRateLimited = true
 	}
 }
 
@@ -124,20 +118,23 @@ func (rlt *RateLimitTracker) RetryAfterSeconds() float64 {
 	return remaining
 }
 
-// GetMinimumInterval calculates minimum interval to respect rate limits
-func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount int) float64 {
+// GetMinimumInterval is the gap that keeps tickerCount tickers, each firing
+// callsPerTicker endpoint calls, inside the known rate-limit window.
+// callsPerTicker below 1 counts as one call. The 429 backoff is separate.
+func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount, callsPerTicker int) float64 {
 	rlt.mu.RLock()
 	defer rlt.mu.RUnlock()
 
 	if rlt.rateLimitMaxRequests <= 0 {
 		return 0.0 // No rate limit known
 	}
+	if callsPerTicker < 1 {
+		callsPerTicker = 1
+	}
 
-	// Calculate minimum interval based on rate limit and ticker count
-	// Ensure we don't exceed rate limit even with all tickers polling
+	// One poll fires every planned endpoint, not one call per ticker.
 	minInterval := rlt.rateLimitWindow / float64(rlt.rateLimitMaxRequests)
-	
-	// Scale by ticker count to ensure we don't exceed limit
+	minInterval *= float64(callsPerTicker)
 	if tickerCount > 0 {
 		minInterval *= float64(tickerCount)
 	}

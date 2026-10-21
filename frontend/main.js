@@ -1,5 +1,13 @@
 // Main JavaScript entry point for Market Terminal Gexbot
 
+import {
+    CHART_SERIES_METADATA,
+    getDefaultChartColors,
+    isChartColorOffValue,
+    getChartColorsOffFromSettings,
+    computeNetGamma
+} from './js/shared/series.js';
+
 // Import App bindings and Events - the import map will route @wailsio/runtime to our shim
 // We'll use dynamic import to handle any timing issues
 let App = null;
@@ -8,6 +16,7 @@ let initialized = false;
 
 // Simple frontend logging function - sends logs to backend via HTTP endpoint
 // This works immediately, no dependency on Wails runtime
+
 async function logToBackend(level, message) {
     try {
         await fetch('/api/frontend-log', {
@@ -28,50 +37,27 @@ const MAG7 = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"];
 const STOCKS = ["AMD", "APP", "AVGO", "BABA", "COIN", "CRWD", "CRWV", "GLD", "GOOG", "GME", "HOOD", "HYG", "IBIT", "INTC", "IONQ", "MSTR", "MU", "NFLX", "PLTR", "SLV", "SMCI", "SNOW", "SOFI", "TLT", "TQQQ", "TSM", "UNH", "USO", "UVXY", "VALE"];
 const ALL_TICKERS = [...FUTURES, ...INDEXES, ...MAG7, ...STOCKS];
 
-// Canonical chart series metadata so plot names, legend names, and color settings stay aligned.
-const CHART_SERIES_METADATA = [
-    { key: 'spot', label: 'Spot Price', defaultColor: '#4CAF50' },
-    { key: 'zero_gamma', label: 'Zero Gamma', defaultColor: '#FF9800' },
-    { key: 'major_pos_vol', label: 'Positive Gamma', defaultColor: '#2196F3' },
-    { key: 'major_neg_vol', label: 'Negative Gamma', defaultColor: '#F44336' },
-    { key: 'net', label: 'Net Gamma', defaultColor: '#00FFFF' },
-    { key: 'major_long_gamma', label: 'Long Gamma', defaultColor: '#9C27B0' },
-    { key: 'major_short_gamma', label: 'Short Gamma', defaultColor: '#00BCD4' },
-    { key: 'major_positive', label: 'Major Positive Strike', defaultColor: '#8BC34A' },
-    { key: 'major_negative', label: 'Major Negative Strike', defaultColor: '#FF5722' },
-    { key: 'major_pos_oi', label: 'Major Positive OI', defaultColor: '#3F51B5' },
-    { key: 'major_neg_oi', label: 'Major Negative OI', defaultColor: '#E91E63' }
-];
-
-function getDefaultChartColors() {
-    return CHART_SERIES_METADATA.reduce((acc, series) => {
-        acc[series.key] = series.defaultColor;
-        return acc;
-    }, {});
+function renderHiddenPlotCheckboxes() {
+    const grid = document.getElementById('hidden-plots-grid');
+    if (!grid || grid.dataset.ready === '1') return;
+    grid.dataset.ready = '1';
+    grid.replaceChildren();
+    CHART_SERIES_METADATA.forEach((series) => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = `plot-${series.key}`;
+        input.dataset.plot = series.key;
+        input.checked = true;
+        const span = document.createElement('span');
+        span.textContent = series.label;
+        label.append(input, span);
+        grid.appendChild(label);
+    });
 }
 
-const CHART_COLOR_OFF_VALUES = new Set(['off', 'none', 'hidden', 'transparent']);
-
-function isChartColorOffValue(color) {
-    if (!color || typeof color !== 'string') return false;
-    const normalized = color.trim().toLowerCase();
-    return CHART_COLOR_OFF_VALUES.has(normalized) || normalized === '#00000000';
-}
-
-function getChartColorsOffFromSettings(settings) {
-    const off = new Set();
-    if (settings && Array.isArray(settings.ChartColorsOff)) {
-        settings.ChartColorsOff.forEach((key) => {
-            if (typeof key === 'string' && key) off.add(key);
-        });
-    }
-    if (settings && settings.ChartColors && typeof settings.ChartColors === 'object') {
-        Object.entries(settings.ChartColors).forEach(([key, color]) => {
-            if (isChartColorOffValue(color)) off.add(key);
-        });
-    }
-    return off;
-}
+renderHiddenPlotCheckboxes();
 
 // Organize tickers by tier
 function organizeTickersByTier(tickers) {
@@ -105,15 +91,12 @@ async function waitForWailsRuntime(maxAttempts = 100, delayMs = 100) {
     for (let i = 0; i < maxAttempts; i++) {
         // Check multiple possible locations for Wails runtime
         if (window._wails && window._wails.runtime && window._wails.runtime.Call) {
-            console.log('[Runtime] Wails runtime detected at window._wails.runtime.Call after', i * delayMs, 'ms');
             return true;
         }
         if (window._wails && window._wails.Call) {
-            console.log('[Runtime] Wails runtime detected at window._wails.Call after', i * delayMs, 'ms');
             return true;
         }
         if (window.Wails && window.Wails.Call) {
-            console.log('[Runtime] Wails runtime detected at window.Wails.Call after', i * delayMs, 'ms');
             return true;
         }
         await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -128,50 +111,16 @@ async function waitForWailsRuntime(maxAttempts = 100, delayMs = 100) {
 // Note: Window is only created after backend is ready, so bindings should always be available
 async function loadAppBindings() {
     try {
-        console.log('[Bindings] ===== Loading App bindings =====');
-        console.log('[Bindings] Step 1: Checking Wails runtime availability...');
-        console.log('[Bindings] window._wails:', !!window._wails, window._wails);
-        console.log('[Bindings] window.Wails:', !!window.Wails, window.Wails);
-        console.log('[Bindings] window.wails:', !!window.wails, window.wails);
-        console.log('[Bindings] window.location:', window.location.href);
         
         // Wait for Wails runtime (should be ready since window is created after backend init)
-        console.log('[Bindings] Step 2: Waiting for Wails runtime...');
-        console.log('[Bindings] Current runtime state - window._wails:', window._wails);
-        console.log('[Bindings] Current runtime state - window.Wails:', window.Wails);
-        const runtimeReady = await waitForWailsRuntime(50, 100); // Wait up to 5 seconds
-        console.log('[Bindings] Runtime ready:', runtimeReady);
-        if (runtimeReady) {
-            console.log('[Bindings] Runtime details - window._wails.runtime:', window._wails?.runtime);
-            console.log('[Bindings] Runtime details - window._wails.runtime.Call:', window._wails?.runtime?.Call);
-        }
-        
-        if (!runtimeReady) {
-            console.warn('[Bindings] WARNING: Wails runtime not detected after waiting');
-            console.warn('[Bindings] Continuing anyway - bindings might still work...');
-        }
-        
-        console.log('[Bindings] Step 3: Importing bindings module...');
-        // Import bindings (they will use the shim via import map)
         const appModule = await import('./bindings/market-terminal/app.js');
-        console.log('[Bindings] Module imported:', appModule);
-        console.log('[Bindings] Module keys:', Object.keys(appModule));
-        console.log('[Bindings] Module has LogFrontend?', 'LogFrontend' in appModule);
-        console.log('[Bindings] typeof appModule.LogFrontend:', typeof appModule.LogFrontend);
         
         App = appModule;
-        console.log('[Bindings] Step 4: App bindings assigned');
-        console.log('[Bindings] App object:', App);
-        console.log('[Bindings] App type:', typeof App);
-        console.log('[Bindings] Available methods:', App ? Object.keys(App) : 'App is null');
-        console.log('[Bindings] App.LogFrontend exists?', App && 'LogFrontend' in App);
-        console.log('[Bindings] App.LogFrontend type:', App ? typeof App.LogFrontend : 'N/A');
         
         if (!App) {
             throw new Error('App module is null or undefined after import');
         }
         
-        console.log('[Bindings] Step 5: Verifying critical methods...');
         // Verify critical methods exist
         if (typeof App.IsMarketOpen !== 'function') {
             console.error('[Bindings] ERROR: IsMarketOpen method not found');
@@ -179,27 +128,21 @@ async function loadAppBindings() {
             console.error('[Bindings] App keys:', Object.keys(App || {}));
             throw new Error('IsMarketOpen method not found in App bindings');
         }
-        console.log('[Bindings] ✓ IsMarketOpen found');
         
         if (typeof App.GetNextMarketOpenLocalTime !== 'function') {
             console.error('[Bindings] ERROR: GetNextMarketOpenLocalTime method not found');
             throw new Error('GetNextMarketOpenLocalTime method not found in App bindings');
         }
-        console.log('[Bindings] ✓ GetNextMarketOpenLocalTime found');
         
-        if (typeof App.Greet !== 'function') {
-            console.error('[Bindings] ERROR: Greet method not found');
-            throw new Error('Greet method not found in App bindings');
+        if (typeof App.GetVersion !== 'function') {
+            console.error('[Bindings] ERROR: GetVersion method not found');
+            throw new Error('GetVersion method not found in App bindings');
         }
-        console.log('[Bindings] ✓ Greet found');
         
-        console.log('[Bindings] ===== SUCCESS: All critical methods found =====');
         
         // Make App available globally for HTML script block IMMEDIATELY
         window._app = App;
         window._appReady = true;
-        console.log('[Bindings] App made available globally - window._app set');
-        console.log('[Bindings] App methods:', App ? Object.keys(App) : 'App is null');
         
         // Log successful binding load using HTTP endpoint
         await logToBackend('INFO', 'App bindings loaded successfully');
@@ -228,12 +171,39 @@ let tickerData = {};
 // Settings cache in localStorage
 const SETTINGS_CACHE_KEY = 'market-terminal-settings-cache';
 
+// Drop the API key before anything is written to localStorage or another window.
+function settingsWithoutKey(settings) {
+    if (!settings || typeof settings !== 'object') {
+        return settings;
+    }
+    const copy = { ...settings };
+    if (typeof copy.APITKey === 'string' && copy.APITKey.length > 0) {
+        copy.HasAPIKey = true;
+    }
+    delete copy.APITKey;
+    return copy;
+}
+
+function setAppStatus(message, isError) {
+    const status = document.getElementById('status');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? '#f44336' : '';
+}
+
 // Load settings from localStorage cache
 function loadSettingsFromCache() {
     try {
         const cached = localStorage.getItem(SETTINGS_CACHE_KEY);
         if (cached) {
-            return JSON.parse(cached);
+            const parsed = JSON.parse(cached);
+            if (parsed && parsed.settings && typeof parsed.settings.APITKey === 'string' && parsed.settings.APITKey.length > 0) {
+                parsed.settings = settingsWithoutKey(parsed.settings);
+                localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(parsed));
+            } else if (parsed && parsed.settings) {
+                parsed.settings = settingsWithoutKey(parsed.settings);
+            }
+            return parsed;
         }
     } catch (error) {
         console.warn('[Settings Cache] Failed to load from cache:', error);
@@ -245,11 +215,10 @@ function loadSettingsFromCache() {
 function saveSettingsToCache(settings) {
     try {
         const cacheData = {
-            settings: settings,
+            settings: settingsWithoutKey(settings),
             lastUpdated: new Date().toISOString()
         };
         localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(cacheData));
-        console.log('[Settings Cache] Saved to cache');
     } catch (error) {
         console.warn('[Settings Cache] Failed to save to cache:', error);
     }
@@ -268,8 +237,9 @@ function getDefaultSettings() {
         ChartColors: getDefaultChartColors(),
         ChartColorsOff: [],
         ChartZoomFilterPercent: 1.0,
-        AutoFollowBufferPercent: 1.0,
-        PriceAxisLocation: 'left'
+        AutoFollowBufferPx: 16,
+        PriceAxisLocation: 'left',
+        ProfileSettings: { bar_width_percent: 22, profile_x_percent: 62, side_width_percent: 28, profile_side: 'right', show_priors: true, enabled: false }
     };
 }
 
@@ -320,19 +290,91 @@ function formatDateTimeForDisplay(date) {
 }
 
 // Initialize settings immediately (doesn't require backend)
+let settingsFormLoading = false;
+let settingsSaveTimer = 0;
+let pendingTickerRefresh = false;
+
+function scheduleSettingsSave(refreshTickers) {
+    if (settingsFormLoading) return;
+    if (refreshTickers) pendingTickerRefresh = true;
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(() => {
+        flushSettingsSave();
+    }, 200);
+}
+
+function flushSettingsSave() {
+    if (!settingsSaveTimer && !pendingTickerRefresh) return;
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = 0;
+    const refreshTickers = pendingTickerRefresh;
+    pendingTickerRefresh = false;
+    saveSettings({ refreshTickers: refreshTickers }).catch((error) => {
+        console.error('Error saving settings:', error);
+        setAppStatus('Settings were not saved', true);
+    });
+}
+
+function settingsChangeNeedsTickerRefresh(target) {
+    if (!target || !target.id) return false;
+    return target.id.startsWith('ticker-') || target.id.startsWith('refresh-rate-') || target.id.startsWith('priority-');
+}
+
+function trapModalFocus(modal, onEscape) {
+    if (!modal || modal.dataset.focusTrap === '1') return;
+    modal.dataset.focusTrap = '1';
+    modal.addEventListener('keydown', (e) => {
+        if (modal.style.display === 'none' || modal.hasAttribute('hidden')) return;
+        if (e.key === 'Escape') {
+            if (typeof onEscape === 'function') {
+                e.preventDefault();
+                onEscape();
+            }
+            return;
+        }
+        if (e.key !== 'Tab') return;
+        const items = [...modal.querySelectorAll('button, [href], input, select, textarea')]
+            .filter((el) => !el.disabled && el.tabIndex >= 0);
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    });
+}
+
 function initializeSettingsImmediate() {
     const settingsBtn = document.getElementById('settings-btn');
     const settingsModal = document.getElementById('settings-modal');
     const settingsClose = document.getElementById('settings-close');
-    const saveBtn = document.getElementById('save-settings');
     
-    if (!settingsBtn || !settingsModal || !settingsClose || !saveBtn) {
+    if (!settingsBtn || !settingsModal || !settingsClose) {
         console.error('Settings elements not found');
         return;
     }
     
+    const logBtn = document.getElementById('log-btn');
+    if (logBtn) {
+        logBtn.addEventListener('click', async () => {
+            if (!App || typeof App.OpenLogWindow !== 'function') {
+                return;
+            }
+            try {
+                await App.OpenLogWindow();
+            } catch (err) {
+                console.error('Failed to open log window:', err);
+            }
+        });
+    }
+
     settingsBtn.addEventListener('click', async () => {
         settingsModal.style.display = 'block';
+        settingsClose.focus();
         // Wait a bit for modal to be visible
         await new Promise(resolve => setTimeout(resolve, 100));
         
@@ -341,7 +383,6 @@ function initializeSettingsImmediate() {
         const defaultSettings = getDefaultSettings();
         const initialSettings = cachedSettings?.settings || defaultSettings;
         
-        console.log('[Settings] Loading from cache/defaults first');
         loadSettingsUI(initialSettings);
         
         // Then try to load from backend in background
@@ -353,24 +394,20 @@ function initializeSettingsImmediate() {
         }
     });
     
-    settingsClose.addEventListener('click', () => {
+    function closeSettings() {
+        flushSettingsSave();
         settingsModal.style.display = 'none';
-    });
+    }
+
+    settingsClose.addEventListener('click', closeSettings);
+    trapModalFocus(settingsModal, closeSettings);
     
     window.addEventListener('click', (e) => {
-        if (e.target === settingsModal) {
-            settingsModal.style.display = 'none';
-        }
+        if (e.target === settingsModal) closeSettings();
     });
-    
-    saveBtn.addEventListener('click', async () => {
-        try {
-            await saveSettings();
-            settingsModal.style.display = 'none';
-        } catch (error) {
-            console.error('Error saving settings:', error);
-            alert('Error saving settings: ' + error.message);
-        }
+
+    settingsModal.addEventListener('change', (e) => {
+        scheduleSettingsSave(settingsChangeNeedsTickerRefresh(e.target));
     });
     
     // Reset polling defaults button
@@ -384,11 +421,10 @@ function initializeSettingsImmediate() {
                 if (refreshInput) refreshInput.value = 0;
                 if (prioritySelect) prioritySelect.value = 'medium';
             });
-            console.log('[Settings] Reset all polling settings to defaults (0=auto, medium priority)');
+            scheduleSettingsSave(true);
         });
     }
     
-    console.log('Settings button initialized');
 }
 
 // Market countdown timer
@@ -406,17 +442,6 @@ async function fetchMarketDate() {
     const data = await response.json();
     return data.date || null;
 }
-
-// Verification: run from DevTools console to confirm each request hits the server (no caching).
-// Watch the app terminal for "[api/market-date] requested" — you should see 3 lines, one per 2s.
-window.verifyMarketDateNoCache = async function () {
-    for (let i = 0; i < 3; i++) {
-        const date = await fetchMarketDate();
-        console.log('[verifyMarketDateNoCache] fetch', i + 1, '->', date);
-        if (i < 2) await new Promise(r => setTimeout(r, 2000));
-    }
-    console.log('[verifyMarketDateNoCache] Done. Check terminal: 3 "[api/market-date] requested" lines = no cache.');
-};
 
 // Cached next-market-open time: refreshed once a minute instead of calling
 // the backend on every 1s countdown tick
@@ -558,26 +583,20 @@ async function updateMarketStatus() {
 
 // Start market countdown timer - simple and clean
 function startMarketCountdown() {
-    console.log('[Market Countdown] Starting market countdown...');
     logToBackend('INFO', '[Market Countdown] Starting market countdown timer');
-    console.log('[Market Countdown] App available:', !!App);
-    console.log('[Market Countdown] App.IsMarketOpen available:', typeof App?.IsMarketOpen);
     
     // Clear existing interval if any
     if (marketCountdownInterval) {
-        console.log('[Market Countdown] Clearing existing interval');
         clearInterval(marketCountdownInterval);
     }
     
     // Update immediately
-    console.log('[Market Countdown] Calling updateMarketStatus() immediately...');
     updateMarketStatus();
     
     // Update every second
     marketCountdownInterval = setInterval(() => {
         updateMarketStatus();
     }, 1000);
-    console.log('[Market Countdown] Interval set, will update every second');
 }
 
 // Stop market countdown timer
@@ -633,20 +652,12 @@ async function initializeUIWithCache() {
 // Main initialization function - called when backend is ready
 async function initializeApplication() {
     if (initialized) {
-        console.log('[Init] Already initialized, skipping');
         return true;
     }
     
-    console.log('========================================');
-    console.log('[Init] ===== Starting application initialization =====');
-    console.log('[Init] Timestamp:', new Date().toISOString());
-    console.log('[Init] Window location:', window.location.href);
-    console.log('[Init] Document ready state:', document.readyState);
-    console.log('========================================');
     
     try {
         // Load bindings - should always succeed since backend is ready
-        console.log('[Init] Step 1: Loading App bindings...');
         const bindingsLoaded = await loadAppBindings();
         
         if (!bindingsLoaded) {
@@ -667,12 +678,10 @@ async function initializeApplication() {
             return false;
         }
         
-        console.log('[Init] Step 1 SUCCESS: Bindings loaded');
         
         // Log successful binding load using HTTP endpoint
         await logToBackend('INFO', '[Init] App bindings loaded successfully');
         
-        console.log('[Init] Step 2: Connecting to backend...');
         
         // Connect to backend (bindings are ready, so this should work)
         await connectToBackend();
@@ -680,8 +689,6 @@ async function initializeApplication() {
         // Log successful connection using HTTP endpoint
         await logToBackend('INFO', '[Init] Backend connection successful');
         
-        console.log('[Init] Step 2 SUCCESS: Backend connected');
-        console.log('[Init] Step 3: Starting market countdown...');
         
         // Mark as initialized only after successful connection
         initialized = true;
@@ -689,9 +696,6 @@ async function initializeApplication() {
         // Start countdown after backend is connected
         startMarketCountdown();
         
-        console.log('========================================');
-        console.log('[Init] ===== Initialization complete =====');
-        console.log('========================================');
         return true;
     } catch (error) {
         console.error('========================================');
@@ -707,46 +711,49 @@ async function initializeApplication() {
 
 // CRITICAL: Initialize immediately when script loads (before DOMContentLoaded)
 // This ensures we start trying to connect as soon as possible
-console.log('===== Market Terminal Gexbot - Script loaded =====');
-console.log('[Init] Script execution started at:', new Date().toISOString());
-console.log('[Init] This is main.js module - if you see this, the module loaded successfully');
-
-// IMMEDIATE TEST: Try to log to backend using HTTP endpoint
-console.log('[Init] Frontend JavaScript is executing - this message should appear in backend logs');
-logToBackend('INFO', '[Init] Frontend JavaScript executing - main.js module loaded');
-logToBackend('ERROR', '[Init] ERROR test - this should appear in backend logs');
-logToBackend('WARN', '[Init] WARN test - this should appear in backend logs');
 
 // Wait for DOM to be ready
 window.addEventListener('DOMContentLoaded', async () => {
-    console.log('[Init] DOMContentLoaded fired at:', new Date().toISOString());
     
     // Initialize settings button immediately (doesn't need backend)
     initializeSettingsImmediate();
+    watchProfileChoices();
+    try {
+        const settingsChannel = new BroadcastChannel('market-terminal-settings');
+        settingsChannel.onmessage = (event) => {
+            const settings = event.data && event.data.settings;
+            if (!event.data || event.data.type !== 'settings-updated' || !settings || !settings.ProfileSettings) return;
+            const profile = settings.ProfileSettings;
+            const side = document.getElementById('profile-side');
+            if (side && (profile.profile_side === 'left' || profile.profile_side === 'right')) side.value = profile.profile_side;
+            const sideWidth = document.getElementById('profile-side-width');
+            if (sideWidth && profile.side_width_percent != null) sideWidth.value = profile.side_width_percent;
+            const bandWidth = document.getElementById('profile-band-width');
+            if (bandWidth && profile.bar_width_percent != null) bandWidth.value = profile.bar_width_percent;
+            const bandX = document.getElementById('profile-band-x');
+            if (bandX && profile.profile_x_percent != null) bandX.value = profile.profile_x_percent;
+            applyProfileChoiceFields(profile);
+        };
+    } catch (e) {}
     
     // Since window is created AFTER backend is ready, we can initialize directly
     // Window creation happens in ServiceStartup() after all backend initialization
-    console.log('[Init] Window was created after backend ready - initializing now...');
     
     // Try initialization with retries (in case Wails runtime needs a moment)
     let retryCount = 0;
     const maxRetries = 15; // More retries
-    const retryDelay = 1000; // 1 second between retries
+    const retryDelay = 200; // Short backoff only after a failed call
     
     async function tryInitialize() {
         if (initialized) {
-            console.log('[Init] Already initialized, stopping retries');
             return;
         }
         
-        console.log(`[Init] ===== Attempt ${retryCount + 1}/${maxRetries} =====`);
         const success = await initializeApplication();
         
         if (success) {
-            console.log('[Init] ===== SUCCESS! Initialization complete =====');
         } else if (retryCount < maxRetries - 1) {
             retryCount++;
-            console.log(`[Init] Failed, will retry in ${retryDelay}ms (attempt ${retryCount + 1}/${maxRetries})`);
             setTimeout(tryInitialize, retryDelay);
         } else {
             console.error('[Init] ===== All initialization attempts failed =====');
@@ -760,110 +767,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Start first attempt immediately (window is already created after backend is ready)
-    console.log('[Init] Starting initialization immediately...');
     tryInitialize();
 });
 
-// Clean up on page unload
+// Clean up on page unload. A settings edit still inside the 200ms debounce
+// is written now; the request itself can still be cut off if the process exits.
 window.addEventListener('beforeunload', () => {
+    flushSettingsSave();
     stopMarketCountdown();
-});
-
-// Save window size on resize (debounced)
-let resizeTimeout = null;
-let lastSavedWidth = 0;
-let lastSavedHeight = 0;
-
-// Get reliable window dimensions
-// In Wails, we need to account for the fact that Width/Height in WebviewWindowOptions
-// are the outer window dimensions, while innerWidth/innerHeight are content dimensions.
-// We add a small offset to approximate the outer dimensions.
-function getWindowDimensions() {
-    // Try outerWidth/outerHeight first (works in some environments)
-    let width = window.outerWidth;
-    let height = window.outerHeight;
-    
-    // If outer dimensions are available and valid, use them
-    if (width && width >= 100 && height && height >= 100) {
-        return { width, height, source: 'outer' };
-    }
-    
-    // Fall back to inner dimensions + estimated chrome
-    // Windows title bar is typically ~30-40px, borders ~2px each side
-    const chromeWidth = 4;  // Left + right borders
-    const chromeHeight = 40; // Title bar + top/bottom borders
-    
-    width = (window.innerWidth || document.documentElement.clientWidth) + chromeWidth;
-    height = (window.innerHeight || document.documentElement.clientHeight) + chromeHeight;
-    
-    return { width, height, source: 'inner+chrome' };
-}
-
-// Function to save window dimensions (reusable)
-async function saveWindowDimensionsNow() {
-    const dims = getWindowDimensions();
-    
-    // Only save if dimensions are valid
-    if (dims.width >= 600 && dims.height >= 400) {
-        if (App && typeof App.SaveWindowSize === 'function') {
-            try {
-                await App.SaveWindowSize(dims.width, dims.height);
-                lastSavedWidth = dims.width;
-                lastSavedHeight = dims.height;
-                console.log('[WindowSize] Saved window size:', dims.width, 'x', dims.height, `(${dims.source})`);
-                await logToBackend('info', `[WindowSize] Saved window size: ${dims.width}x${dims.height} (${dims.source})`);
-                return true;
-            } catch (e) {
-                console.warn('[WindowSize] Failed to save window size:', e);
-                await logToBackend('error', `[WindowSize] Failed to save: ${e.message}`);
-                return false;
-            }
-        } else {
-            console.warn('[WindowSize] App.SaveWindowSize not available');
-            return false;
-        }
-    }
-    return false;
-}
-
-window.addEventListener('resize', () => {
-    // Debounce - save 1 second after user stops resizing
-    if (resizeTimeout) {
-        clearTimeout(resizeTimeout);
-    }
-    resizeTimeout = setTimeout(async () => {
-        // Use the centralized dimension getter for consistency
-        const dims = getWindowDimensions();
-        
-        console.log('[Resize] Detected dimensions:', dims.width, 'x', dims.height, `(${dims.source})`, '- raw outer:', window.outerWidth, 'x', window.outerHeight, ', inner:', window.innerWidth, 'x', window.innerHeight);
-        
-        // Only save if dimensions are valid and changed
-        if (dims.width >= 600 && dims.height >= 400 && (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight)) {
-            await saveWindowDimensionsNow();
-        }
-    }, 1000);
-});
-
-// Save window dimensions when window is about to close
-window.addEventListener('beforeunload', async (e) => {
-    // Save dimensions synchronously if possible, or use sendBeacon for async
-    const dims = getWindowDimensions();
-    if (dims.width >= 600 && dims.height >= 400 && App && typeof App.SaveWindowSize === 'function') {
-        try {
-            // Try to save synchronously (may not work in all browsers, but worth trying)
-            // For Wails, the backend should handle this
-            await App.SaveWindowSize(dims.width, dims.height);
-            console.log('[BeforeUnload] Saved window size:', dims.width, 'x', dims.height);
-        } catch (e) {
-            console.warn('[BeforeUnload] Failed to save window size:', e);
-        }
-    }
 });
 
 // Connect to backend
 // Note: App bindings should already be loaded before this is called
 async function connectToBackend() {
-    console.log('[Connect] ===== Starting backend connection =====');
     const statusEl = document.getElementById('status');
     if (!statusEl) {
         console.error('[Connect] CRITICAL ERROR: Status element not found!');
@@ -873,7 +789,6 @@ async function connectToBackend() {
     try {
         statusEl.textContent = 'Connecting...';
         statusEl.style.color = '#ff9800';
-        console.log('[Connect] Status set to "Connecting..."');
         
         // App should already be loaded, but verify
         if (!App) {
@@ -885,45 +800,21 @@ async function connectToBackend() {
             throw new Error('App bindings not loaded. App is: ' + typeof App);
         }
         
-        console.log('[Connect] App is loaded, checking methods...');
-        console.log('[Connect] App.Greet type:', typeof App.Greet);
-        console.log('[Connect] App methods:', Object.keys(App || {}));
-        
-        if (typeof App.Greet !== 'function') {
-            console.error('========================================');
-            console.error('[Connect] CRITICAL ERROR: App.Greet is not a function!');
-            console.error('[Connect] App.Greet type:', typeof App.Greet);
-            console.error('[Connect] App object:', App);
-            console.error('[Connect] Available App methods:', Object.keys(App || {}));
-            console.error('========================================');
-            throw new Error('Backend service not available. App.Greet is: ' + typeof App.Greet);
+        if (typeof App.GetVersion !== 'function') {
+            throw new Error('Backend service not available.');
         }
-        
-        console.log('[Connect] Calling App.Greet("Market Terminal")...');
-        // Test greeting
-        const greeting = await App.Greet('Market Terminal');
-        console.log('[Connect] Greeting received:', greeting);
-        
-        // Log successful connection using HTTP endpoint
-        await logToBackend('INFO', 'Backend connection successful - Greet test passed');
-        
-        console.log('[Connect] Calling App.GetVersion()...');
-        // Get version
         const version = await App.GetVersion();
-        console.log(`[Connect] Version received: ${version}`);
+        await logToBackend('INFO', 'Backend connected, version ' + version);
         
         // Update status
         statusEl.textContent = 'Connected';
         statusEl.style.color = '#4CAF50';
-        console.log('[Connect] Status set to "Connected"');
         
         // Check if first run
         let isFirstRun = false;
         try {
             if (typeof App.CheckFirstRun === 'function') {
-                console.log('[Connect] Calling App.CheckFirstRun()...');
                 isFirstRun = await App.CheckFirstRun();
-                console.log('[Connect] CheckFirstRun result:', isFirstRun);
             } else {
                 console.warn('[Connect] CheckFirstRun method not available, assuming not first run');
             }
@@ -933,22 +824,18 @@ async function connectToBackend() {
         }
         
         if (isFirstRun) {
-            console.log('[Connect] First run detected, clearing cached settings and showing startup wizard');
             // Clear any cached settings from previous installations
             try {
                 localStorage.removeItem(SETTINGS_CACHE_KEY);
-                console.log('[Connect] Cleared cached settings');
             } catch (e) {
                 console.warn('[Connect] Failed to clear cached settings:', e);
             }
             showStartupWizard();
         } else {
-            console.log('[Connect] Not first run, initializing UI...');
             // Initialize UI
             await initializeUI();
         }
         
-        console.log('[Connect] ===== Backend connection successful =====');
         await logToBackend('INFO', 'Backend connection completed successfully');
     } catch (error) {
         console.error('========================================');
@@ -967,7 +854,6 @@ async function connectToBackend() {
         await logToBackend('ERROR', `Backend connection failed: ${error.message || 'Unknown error'}`);
         
         // Try to load from cache as fallback
-        console.log('[Connect] Backend connection failed, trying to load from cache...');
         await initializeUIWithCache();
         throw error; // Re-throw so caller knows it failed
     }
@@ -975,7 +861,6 @@ async function connectToBackend() {
 
 // Initialize UI components
 async function initializeUI() {
-    console.log('[InitializeUI] ===== Starting UI initialization =====');
     await logToBackend('INFO', '[InitializeUI] Starting UI initialization');
     
     // Hide loading overlay and show app
@@ -990,10 +875,6 @@ async function initializeUI() {
     
     try {
         // Check if App is available (should always be available since window is created after backend is ready)
-        console.log('[InitializeUI] Checking App availability...');
-        console.log('[InitializeUI] App exists:', !!App);
-        console.log('[InitializeUI] App type:', typeof App);
-        console.log('[InitializeUI] App.GetEnabledTickers type:', typeof App?.GetEnabledTickers);
         
         if (!App || typeof App.GetEnabledTickers !== 'function') {
             const errorMsg = '[InitializeUI] CRITICAL ERROR: App.GetEnabledTickers not available - This is why tickers are not showing!';
@@ -1018,12 +899,9 @@ async function initializeUI() {
             return;
         }
         
-        console.log('[InitializeUI] Calling App.GetEnabledTickers()...');
         // Get enabled tickers
         let tickers = await App.GetEnabledTickers();
         cachedEnabledTickers = tickers; // seed the 1s-loop cache
-        console.log('[InitializeUI] Enabled tickers received:', tickers);
-        console.log('[InitializeUI] Ticker count:', tickers ? tickers.length : 0);
         
         // Sort tickers by saved order if available
         if (tickers && tickers.length > 0) {
@@ -1032,7 +910,6 @@ async function initializeUI() {
                 if (settings && settings.TickerOrder && settings.TickerOrder.length > 0) {
                     const tickerOrder = settings.TickerOrder;
                     tickers = sortTickersByOrder(tickers, tickerOrder);
-                    console.log('[InitializeUI] Tickers sorted by saved order');
                 }
             } catch (e) {
                 console.warn('[InitializeUI] Could not load ticker order, using default:', e);
@@ -1051,36 +928,20 @@ async function initializeUI() {
             return;
         }
         
-        console.log('[InitializeUI] Initializing ticker table with', tickers.length, 'tickers...');
         await logToBackend('INFO', `[InitializeUI] Initializing ticker table with ${tickers.length} tickers`);
         // Initialize ticker table
         initializeTickerTable(tickers);
         await logToBackend('INFO', '[InitializeUI] Ticker table initialized');
         
-        console.log('[InitializeUI] Initializing date selector...');
         // Initialize date selector
         await initializeDateSelector();
         await logToBackend('INFO', '[InitializeUI] Date selector initialized');
         
-        console.log('[InitializeUI] Starting periodic updates...');
         // Settings already initialized in initializeSettingsImmediate()
         
         // Start periodic updates
         startPeriodicUpdates();
         
-        // Verify SaveWindowSize binding is available
-        if (App && typeof App.SaveWindowSize === 'function') {
-            console.log('[InitializeUI] SaveWindowSize binding is available');
-            await logToBackend('INFO', '[InitializeUI] SaveWindowSize binding available');
-            
-            // Start periodic window size checking (as backup for resize events)
-            startWindowSizeMonitor();
-        } else {
-            console.warn('[InitializeUI] SaveWindowSize binding NOT available');
-            await logToBackend('WARN', '[InitializeUI] SaveWindowSize binding NOT available');
-        }
-        
-        console.log('[InitializeUI] ===== UI initialization complete =====');
     } catch (error) {
         console.error('========================================');
         console.error('[InitializeUI] ===== UI initialization FAILED =====');
@@ -1124,7 +985,7 @@ function initializeTickerTable(tickers) {
             <td id="${ticker}-neg-gamma">-</td>
             <td id="${ticker}-net">-</td>
             <td id="${ticker}-last-update">-</td>
-            <td><button class="chart-btn" data-ticker="${ticker}">📊 Chart</button></td>
+            <td class="open-cell"><button class="chart-btn" data-ticker="${ticker}">Chart</button><button class="chart-btn profile-open-btn" data-ticker="${ticker}">Profile</button></td>
         `;
         
         // Add click handler to open chart
@@ -1136,11 +997,18 @@ function initializeTickerTable(tickers) {
         });
         
         // Button click handler
-        const btn = row.querySelector('.chart-btn');
+        const btn = row.querySelector('.chart-btn:not(.profile-open-btn)');
         if (btn) {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 openChart(ticker);
+            });
+        }
+        const profileBtn = row.querySelector('.profile-open-btn');
+        if (profileBtn) {
+            profileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openProfile(ticker);
             });
         }
         
@@ -1200,9 +1068,10 @@ async function saveTickerOrder() {
         
         // Save settings
         await App.SaveSettings(settings);
-        console.log('[Ticker Order] Saved order:', order);
+        saveSettingsToCache(settings);
     } catch (error) {
         console.error('[Ticker Order] Error saving order:', error);
+        setAppStatus('Ticker order was not saved', true);
     }
 }
 
@@ -1227,8 +1096,8 @@ function sortTickersByOrder(tickers, savedOrder) {
 // Resize main window to fit ticker count
 // Load settings UI (doesn't require backend - uses provided settings object)
 function loadSettingsUI(settings) {
+    settingsFormLoading = true;
     try {
-        console.log('[Settings UI] Loading UI with settings:', settings ? 'settings object' : 'null');
         
         if (!settings) {
             settings = getDefaultSettings();
@@ -1246,7 +1115,7 @@ function loadSettingsUI(settings) {
         if (apiKeyInput) {
             apiKeyInput.value = '';
             // Check if API key exists in settings
-            const hasApiKey = settings.APITKey && settings.APITKey.length > 0;
+            const hasApiKey = settings.HasAPIKey === true;
             apiKeyInput.placeholder = hasApiKey ? '••••••••••••••••' : 'Enter your API key';
             if (apiKeyStatus) {
                 apiKeyStatus.textContent = hasApiKey ? '✓ API key is saved' : 'No API key configured';
@@ -1262,15 +1131,12 @@ function loadSettingsUI(settings) {
         
         if (classicCheckbox) {
             classicCheckbox.checked = tiers.includes('classic');
-            console.log('[Settings UI] Classic tier:', classicCheckbox.checked);
         }
         if (stateCheckbox) {
             stateCheckbox.checked = tiers.includes('state');
-            console.log('[Settings UI] State tier:', stateCheckbox.checked);
         }
         if (orderflowCheckbox) {
             orderflowCheckbox.checked = tiers.includes('orderflow');
-            console.log('[Settings UI] Orderflow tier:', orderflowCheckbox.checked);
         }
         
         // Load data collection mode
@@ -1280,7 +1146,6 @@ function loadSettingsUI(settings) {
         const collectAll = settings.CollectAllEndpoints !== false;
         if (collectAllRadio) collectAllRadio.checked = collectAll;
         if (collectChartsRadio) collectChartsRadio.checked = !collectAll;
-        console.log('[Settings UI] Data collection mode:', collectAll ? 'all' : 'charts');
         
         // Load ticker selection (organized by tier)
         loadTickerSelection(settings);
@@ -1294,29 +1159,68 @@ function loadSettingsUI(settings) {
         // Load hidden plots settings
         loadHiddenPlots(settings);
         
-        console.log('[Settings UI] UI loaded successfully');
     } catch (error) {
         console.error('[Settings UI] Error loading UI:', error);
+    } finally {
+        settingsFormLoading = false;
     }
+}
+
+// Layer and lookback checkboxes. A chart edits these through its own POSTs,
+// so a later Save must read the saved values rather than the stale form.
+let profileChoicesDirty = false;
+let profileChoicesWatched = false;
+
+function watchProfileChoices() {
+    if (profileChoicesWatched) return;
+    profileChoicesWatched = true;
+    ['profile-show-priors', 'profile-layer-classic', 'profile-layer-state', 'profile-layer-gamma', 'profile-layer-delta', 'profile-layer-vanna', 'profile-layer-charm'].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener('change', () => { profileChoicesDirty = true; });
+    });
+}
+
+function applyProfileChoiceFields(profile) {
+    watchProfileChoices();
+    const profileSettings = profile || {};
+    const profilePriorsInput = document.getElementById('profile-show-priors');
+    if (profilePriorsInput) {
+        profilePriorsInput.checked = profileSettings.show_priors !== false;
+    }
+    const savedLayers = profileSettings.layers && typeof profileSettings.layers === 'object' ? profileSettings.layers : null;
+    ['classic', 'state', 'gamma', 'delta', 'vanna', 'charm'].forEach((id) => {
+        const input = document.getElementById('profile-layer-' + id);
+        if (!input) return;
+        input.checked = savedLayers ? savedLayers[id] === true : id === 'classic';
+    });
+    updateProfileCollectOptions();
+}
+
+async function refreshUntouchedProfileChoices() {
+    if (profileChoicesDirty) return;
+    try {
+        const res = await fetch('/api/settings');
+        if (!res.ok) return;
+        const latest = await res.json();
+        if (latest && latest.ProfileSettings) applyProfileChoiceFields(latest.ProfileSettings);
+    } catch (e) {}
 }
 
 // Load general settings into UI
 function loadGeneralSettings(settings) {
     try {
-        console.log('[General Settings] Loading...');
         
         // UseMarketTime
         const useMarketTimeCheckbox = document.getElementById('use-market-time');
         if (useMarketTimeCheckbox) {
             useMarketTimeCheckbox.checked = settings.UseMarketTime || false;
-            console.log('[General Settings] UseMarketTime:', useMarketTimeCheckbox.checked);
         }
         
         // Use24HourTime
         const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
         if (use24HourTimeCheckbox) {
             use24HourTimeCheckbox.checked = settings.Use24HourTime !== false;
-            console.log('[General Settings] Use24HourTime:', use24HourTimeCheckbox.checked);
         }
         
         // EnableLogging
@@ -1324,7 +1228,6 @@ function loadGeneralSettings(settings) {
         if (enableLoggingCheckbox) {
             // Default to true if not explicitly set to false
             enableLoggingCheckbox.checked = settings.EnableLogging !== false;
-            console.log('[General Settings] EnableLogging:', enableLoggingCheckbox.checked);
         }
         
         // HideConsole
@@ -1332,28 +1235,50 @@ function loadGeneralSettings(settings) {
         if (hideConsoleCheckbox) {
             // Default to true if not explicitly set to false
             hideConsoleCheckbox.checked = settings.HideConsole !== false;
-            console.log('[General Settings] HideConsole:', hideConsoleCheckbox.checked);
         }
         
         // ChartZoomFilterPercent
         const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
         if (chartZoomFilterInput) {
             chartZoomFilterInput.value = settings.ChartZoomFilterPercent || 1.0;
-            console.log('[General Settings] ChartZoomFilterPercent:', chartZoomFilterInput.value);
         }
         
-        // AutoFollowBufferPercent
+        // AutoFollowBufferPx
         const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
         if (autoFollowBufferInput) {
-            autoFollowBufferInput.value = settings.AutoFollowBufferPercent || 1.0;
-            console.log('[General Settings] AutoFollowBufferPercent:', autoFollowBufferInput.value);
+            const px = Number(settings.AutoFollowBufferPx);
+            autoFollowBufferInput.value = Number.isFinite(px) && px >= 0 ? px : 16;
         }
+        const profileSettings = settings.ProfileSettings || {};
+        const profileSideInput = document.getElementById('profile-side');
+        if (profileSideInput) {
+            profileSideInput.value = profileSettings.profile_side === 'left' ? 'left' : 'right';
+        }
+        const profileSideWidthInput = document.getElementById('profile-side-width');
+        if (profileSideWidthInput) {
+            const sideWidth = Number(profileSettings.side_width_percent);
+            profileSideWidthInput.value = (Number.isFinite(sideWidth) && sideWidth > 0) ? sideWidth : 28;
+        }
+        const profileWidthInput = document.getElementById('profile-band-width');
+        if (profileWidthInput) {
+            const width = Number(profileSettings.bar_width_percent);
+            profileWidthInput.value = (Number.isFinite(width) && width > 0) ? width : 22;
+        }
+        const profileXInput = document.getElementById('profile-band-x');
+        if (profileXInput) {
+            const x = Number(profileSettings.profile_x_percent);
+            profileXInput.value = Number.isFinite(x) ? x : 62;
+        }
+        const profileEnabledInput = document.getElementById('profile-enabled');
+        if (profileEnabledInput) {
+            profileEnabledInput.checked = profileSettings.enabled === true;
+        }
+        applyProfileChoiceFields(profileSettings);
         // PriceAxisLocation
         const priceAxisLocationSelect = document.getElementById('price-axis-location');
         if (priceAxisLocationSelect) {
             const loc = (settings.PriceAxisLocation || 'left').toLowerCase();
             priceAxisLocationSelect.value = (loc === 'right') ? 'right' : 'left';
-            console.log('[General Settings] PriceAxisLocation:', priceAxisLocationSelect.value);
         }
     } catch (error) {
         console.error('[General Settings] Error loading:', error);
@@ -1363,7 +1288,6 @@ function loadGeneralSettings(settings) {
 // Load hidden plots settings into UI
 function loadHiddenPlots(settings) {
     try {
-        console.log('[Hidden Plots] Loading...');
         
         const hiddenPlots = settings.HiddenPlots || [];
         const plotCheckboxes = document.querySelectorAll('#hidden-plots-grid input[type="checkbox"]');
@@ -1373,7 +1297,6 @@ function loadHiddenPlots(settings) {
             if (plotName) {
                 // Checkbox is CHECKED if plot is NOT in hiddenPlots array
                 checkbox.checked = !hiddenPlots.includes(plotName);
-                console.log(`[Hidden Plots] ${plotName}: ${checkbox.checked ? 'visible' : 'hidden'}`);
             }
         });
     } catch (error) {
@@ -1383,7 +1306,6 @@ function loadHiddenPlots(settings) {
 
 // Save general settings from UI to settings object
 function saveGeneralSettings(settings) {
-    console.log('[General Settings] Saving...');
     
     const useMarketTimeCheckbox = document.getElementById('use-market-time');
     if (useMarketTimeCheckbox) {
@@ -1418,30 +1340,68 @@ function saveGeneralSettings(settings) {
     const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
     if (autoFollowBufferInput) {
         const value = parseFloat(autoFollowBufferInput.value);
-        if (!isNaN(value) && value >= 0 && value <= 50) {
-            settings.AutoFollowBufferPercent = value;
+        if (!isNaN(value) && value >= 0 && value <= 400) {
+            settings.AutoFollowBufferPx = value;
         } else {
-            settings.AutoFollowBufferPercent = 1.0; // Default if invalid
+            settings.AutoFollowBufferPx = 16;
         }
     }
     const priceAxisLocationSelect = document.getElementById('price-axis-location');
     if (priceAxisLocationSelect) {
         settings.PriceAxisLocation = priceAxisLocationSelect.value === 'right' ? 'right' : 'left';
     }
-    console.log('[General Settings] Saved:', {
-        UseMarketTime: settings.UseMarketTime,
-        Use24HourTime: settings.Use24HourTime,
-        EnableLogging: settings.EnableLogging,
-        HideConsole: settings.HideConsole,
-        ChartZoomFilterPercent: settings.ChartZoomFilterPercent,
-        AutoFollowBufferPercent: settings.AutoFollowBufferPercent,
-        PriceAxisLocation: settings.PriceAxisLocation
+    if (!settings.ProfileSettings || typeof settings.ProfileSettings !== 'object') {
+        settings.ProfileSettings = {};
+    }
+    const profileSideInput = document.getElementById('profile-side');
+    if (profileSideInput) {
+        settings.ProfileSettings.profile_side = profileSideInput.value === 'left' ? 'left' : 'right';
+    }
+    const profileSideWidthInput = document.getElementById('profile-side-width');
+    if (profileSideWidthInput) {
+        const sideWidth = parseFloat(profileSideWidthInput.value);
+        settings.ProfileSettings.side_width_percent = (!isNaN(sideWidth) && sideWidth >= 12 && sideWidth <= 50) ? sideWidth : 28;
+    }
+    const profileWidthInput = document.getElementById('profile-band-width');
+    if (profileWidthInput) {
+        const value = parseFloat(profileWidthInput.value);
+        settings.ProfileSettings.bar_width_percent = (!isNaN(value) && value >= 8 && value <= 70) ? value : 22;
+    }
+    const profileXInput = document.getElementById('profile-band-x');
+    if (profileXInput) {
+        const value = parseFloat(profileXInput.value);
+        settings.ProfileSettings.profile_x_percent = (!isNaN(value) && value >= 0 && value <= 100) ? value : 62;
+    }
+    const profilePriorsInput = document.getElementById('profile-show-priors');
+    if (profilePriorsInput) {
+        settings.ProfileSettings.show_priors = profilePriorsInput.checked;
+    }
+    const profileEnabledInput = document.getElementById('profile-enabled');
+    if (profileEnabledInput) {
+        settings.ProfileSettings.enabled = profileEnabledInput.checked;
+    }
+    const layers = {};
+    ['classic', 'state', 'gamma', 'delta', 'vanna', 'charm'].forEach((id) => {
+        const input = document.getElementById('profile-layer-' + id);
+        if (input) layers[id] = input.checked;
+    });
+    settings.ProfileSettings.layers = layers;
+}
+
+function updateProfileCollectOptions() {
+    const collectAll = document.getElementById('collect-all');
+    const enabled = document.getElementById('profile-enabled');
+    const box = document.getElementById('profile-layer-options');
+    if (!box) return;
+    const locked = (collectAll && collectAll.checked) || !(enabled && enabled.checked);
+    box.querySelectorAll('input').forEach((input) => {
+        input.disabled = locked;
     });
 }
+window.updateProfileCollectOptions = updateProfileCollectOptions;
 
 // Save hidden plots from UI to settings object
 function saveHiddenPlots(settings) {
-    console.log('[Hidden Plots] Saving...');
     
     const hiddenPlots = [];
     const plotCheckboxes = document.querySelectorAll('#hidden-plots-grid input[type="checkbox"]');
@@ -1455,13 +1415,11 @@ function saveHiddenPlots(settings) {
     });
     
     settings.HiddenPlots = hiddenPlots;
-    console.log('[Hidden Plots] Saved hidden plots:', hiddenPlots);
 }
 
 // Load settings from backend (optional - updates UI if available)
 async function loadSettingsFromBackend() {
     try {
-        console.log('[Settings Backend] Attempting to load from backend...');
         
         // Wait for App to be available (retry up to 3 times, shorter timeout)
         let retries = 0;
@@ -1475,13 +1433,10 @@ async function loadSettingsFromBackend() {
         }
         
         if (!App || typeof App.GetSettings !== 'function') {
-            console.log('[Settings Backend] Backend not available, using cache/defaults');
             return null; // Not an error - just use cache/defaults
         }
         
-        console.log('[Settings Backend] Calling App.GetSettings()...');
         const settings = await App.GetSettings();
-        console.log('[Settings Backend] Received settings:', settings ? 'settings object' : 'null/undefined');
         
         if (settings) {
             // Update UI with backend settings
@@ -1577,7 +1532,6 @@ function loadTickerSelection(settings) {
                 // Default refresh rate to 0 (auto/disabled), priority to medium
                 // Note: use explicit check for undefined/null since 0 is a valid value
                 const refreshRate = config && config.RefreshRateMs !== undefined && config.RefreshRateMs !== null ? config.RefreshRateMs : 0;
-                console.log(`[Ticker Selection] Loading ${ticker}: config.RefreshRateMs=${config?.RefreshRateMs}, using refreshRate=${refreshRate}`);
                 const priority = config && config.Priority ? config.Priority : 'medium';
                 
                 // Create compact ticker row
@@ -1681,6 +1635,7 @@ function loadTickerSelection(settings) {
                     const draggedRow = tickerGrid.querySelector(`[data-ticker="${draggedTicker}"]`);
                     if (draggedRow && draggedRow !== tickerRow) {
                         tickerGrid.insertBefore(draggedRow, tickerRow);
+                        scheduleSettingsSave(true);
                     }
                 });
                 
@@ -1698,7 +1653,6 @@ function loadTickerSelection(settings) {
         countDisplay.style.cssText = 'margin-top: 1rem; padding: 0.5rem; background: #2a2a2a; border-radius: 4px; text-align: center; color: #4CAF50; font-weight: 600;';
         tickerSelection.appendChild(countDisplay);
         
-        console.log('[Ticker Selection] Loaded', enabledCount, 'enabled tickers');
     } catch (error) {
         console.error('[Ticker Selection] Error loading:', error);
         const tickerSelection = document.getElementById('ticker-selection');
@@ -1727,7 +1681,6 @@ function updateTickerEnabledCount() {
 // Load chart colors into UI
 function loadChartColors(settings) {
     try {
-        console.log('[Chart Colors] Loading chart colors...');
         const colorsGrid = document.getElementById('chart-colors-grid');
         if (!colorsGrid) {
             console.warn('[Chart Colors] chart-colors-grid element not found');
@@ -1744,9 +1697,7 @@ function loadChartColors(settings) {
         const colorsOff = getChartColorsOffFromSettings(settings);
         if (settings && settings.ChartColors) {
             chartColors = settings.ChartColors;
-            console.log('[Chart Colors] Using colors from settings:', Object.keys(chartColors));
         } else {
-            console.log('[Chart Colors] No ChartColors in settings, using defaults');
         }
         
         CHART_SERIES_METADATA.forEach(series => {
@@ -1802,7 +1753,6 @@ function loadChartColors(settings) {
             colorsGrid.appendChild(colorItem);
         });
         
-        console.log('[Chart Colors] Loaded', Object.keys(defaultColors).length, 'color pickers');
         
         // Reset colors button handler (remove old listeners first)
         const resetBtn = document.getElementById('reset-colors');
@@ -1823,6 +1773,7 @@ function loadChartColors(settings) {
                     const offInput = document.getElementById(`color-off-${series.key}`);
                     if (offInput) offInput.checked = false;
                 });
+                scheduleSettingsSave(false);
             });
         }
     } catch (error) {
@@ -1836,7 +1787,6 @@ function loadChartColors(settings) {
 
 // Save chart colors from UI to settings
 function saveChartColors(settings) {
-    console.log('[Chart Colors] Saving chart colors...');
     if (!settings.ChartColors) {
         settings.ChartColors = {};
     }
@@ -1852,20 +1802,18 @@ function saveChartColors(settings) {
         }
     });
     settings.ChartColorsOff = colorsOff;
-    console.log('[Chart Colors] Chart colors saved to settings object.', colorsOff.length ? `Off: ${colorsOff.join(', ')}` : '');
 }
 
 // Save settings
-async function saveSettings() {
+async function saveSettings(options) {
+    const refreshTickers = !options || options.refreshTickers !== false;
     try {
-        console.log('[Save Settings] Starting save...');
         
         // Get current settings (from backend if available, otherwise from cache/defaults)
         let settings = null;
         if (App && typeof App.GetSettings === 'function') {
             try {
                 settings = await App.GetSettings();
-                console.log('[Save Settings] Loaded settings from backend');
             } catch (error) {
                 console.warn('[Save Settings] Failed to load from backend, using cache/defaults:', error);
             }
@@ -1875,7 +1823,6 @@ async function saveSettings() {
         if (!settings) {
             const cached = loadSettingsFromCache();
             settings = cached?.settings || getDefaultSettings();
-            console.log('[Save Settings] Using cached/default settings');
         }
         
         if (!settings) {
@@ -1890,9 +1837,10 @@ async function saveSettings() {
         
         // If user entered a new API key in the settings form, include it so it is saved and poller uses it
         const apiKeyInput = document.getElementById('api-key');
-        if (apiKeyInput && apiKeyInput.value.trim() !== '') {
-            settings.APITKey = apiKeyInput.value.trim();
-            console.log('[Save Settings] New API key provided (length:', settings.APITKey.length, ')');
+        const apiKeyStatus = document.getElementById('api-key-status');
+        const typedAPIKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+        if (typedAPIKey !== '') {
+            settings.APITKey = typedAPIKey;
         }
         
         // Save subscription tiers - read checkboxes carefully
@@ -1903,29 +1851,23 @@ async function saveSettings() {
         
         if (classicCheckbox && classicCheckbox.checked) {
             tiers.push('classic');
-            console.log('[Save Settings] Classic tier selected');
         }
         if (stateCheckbox && stateCheckbox.checked) {
             tiers.push('state');
-            console.log('[Save Settings] State tier selected');
         }
         if (orderflowCheckbox && orderflowCheckbox.checked) {
             tiers.push('orderflow');
-            console.log('[Save Settings] Orderflow tier selected');
         }
         
         if (tiers.length === 0) {
             tiers.push('classic'); // Default to classic if none selected
-            console.log('[Save Settings] No tiers selected, defaulting to classic');
         }
         
         settings.APISubscriptionTiers = tiers;
-        console.log('[Save Settings] Subscription tiers:', tiers);
         
         // Save data collection mode
         const collectAllRadio = document.getElementById('collect-all');
         settings.CollectAllEndpoints = collectAllRadio ? collectAllRadio.checked : true;
-        console.log('[Save Settings] Data collection mode:', settings.CollectAllEndpoints ? 'all' : 'charts');
         
         // Save ticker selection and polling preferences
         if (!settings.TickerConfigs) {
@@ -1945,12 +1887,10 @@ async function saveSettings() {
             let refreshRate = 0; // Default to 0 (auto)
             if (refreshRateInput) {
                 const value = parseInt(refreshRateInput.value);
-                console.log(`[Save Settings] Ticker ${ticker}: input value="${refreshRateInput.value}", parsed=${value}, isNaN=${isNaN(value)}`);
                 if (!isNaN(value) && value >= 0) {
                     refreshRate = value;
                 }
             }
-            console.log(`[Save Settings] Ticker ${ticker}: final refreshRate=${refreshRate}`);
             
             let priority = 'medium'; // Default
             if (prioritySelect) {
@@ -1978,6 +1918,10 @@ async function saveSettings() {
         // Save chart colors
         saveChartColors(settings);
         
+        // Chart layer and lookback edits land on the server before this Save.
+        // Pull those into the form unless this window edited them itself.
+        await refreshUntouchedProfileChoices();
+
         // Save general settings (UseMarketTime, EnableLogging, HideConsole)
         saveGeneralSettings(settings);
         
@@ -1991,60 +1935,53 @@ async function saveSettings() {
         });
         if (tickerOrder.length > 0) {
             settings.TickerOrder = tickerOrder;
-            console.log('[Save Settings] Saved ticker order:', tickerOrder.length, 'tickers');
         }
         
-        console.log('[Save Settings] Saving settings with ticker configs:', Object.keys(settings.TickerConfigs));
         
         // Save to cache immediately (works even without backend)
         saveSettingsToCache(settings);
-        console.log('[Save Settings] Settings saved to cache');
         
         // Try to save to backend if available
         if (App && typeof App.SaveSettings === 'function') {
             try {
                 await App.SaveSettings(settings);
-                console.log('[Save Settings] Settings saved to backend successfully');
+                profileChoicesDirty = false;
+                if (typedAPIKey !== '' && apiKeyInput) {
+                    apiKeyInput.value = '';
+                    if (apiKeyStatus) {
+                        apiKeyStatus.textContent = '✓ API key is saved';
+                        apiKeyStatus.style.color = '#4CAF50';
+                    }
+                }
             } catch (error) {
                 console.warn('[Save Settings] Failed to save to backend, but cached:', error);
-                // Still show success since cache was saved
+                setAppStatus('Settings were not saved', true);
             }
         } else {
-            console.log('[Save Settings] Backend not available, settings saved to cache only');
+            setAppStatus('Settings were not saved', true);
         }
-        
-        alert('Settings saved successfully!');
         
         // Broadcast settings update to all chart windows so they can refresh colors
         try {
             const settingsChannel = new BroadcastChannel('market-terminal-settings');
-            settingsChannel.postMessage({ type: 'settings-updated', settings: settings });
+            settingsChannel.postMessage({ type: 'settings-updated', settings: settingsWithoutKey(settings) });
             settingsChannel.close();
-            console.log('[Save Settings] Broadcast settings update to chart windows');
         } catch (e) {
             console.warn('[Save Settings] Failed to broadcast settings update:', e);
         }
         
-        // Reload settings UI to reflect changes (from cache, which we just updated)
-        loadSettingsUI(settings);
-        
-        // Refresh main page ticker list to show newly enabled tickers
-        // Wait a moment for backend to process the save
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
+        if (!refreshTickers) return;
+
         if (App && typeof App.GetEnabledTickers === 'function') {
             try {
-                console.log('[Save Settings] Calling GetEnabledTickers()...');
                 let enabledTickers = await App.GetEnabledTickers();
                 cachedEnabledTickers = enabledTickers; // refresh the 1s-loop cache
-                console.log('[Save Settings] GetEnabledTickers returned:', enabledTickers, 'length:', enabledTickers?.length);
                 
                 if (enabledTickers && enabledTickers.length > 0) {
                     // Sort by the ticker order we just saved
                     if (settings.TickerOrder && settings.TickerOrder.length > 0) {
                         enabledTickers = sortTickersByOrder(enabledTickers, settings.TickerOrder);
                     }
-                    console.log('[Save Settings] Refreshing main page with tickers:', enabledTickers);
                     initializeTickerTable(enabledTickers);
                     startPeriodicUpdates(); // Restart updates with new tickers
                 } else {
@@ -2063,7 +2000,6 @@ async function saveSettings() {
         }
     } catch (saveError) {
         console.error('[Save Settings] Error saving settings:', saveError);
-        alert('Error saving settings: ' + (saveError.message || String(saveError)));
         throw saveError;
     }
 }
@@ -2085,50 +2021,6 @@ async function getEnabledTickersCached() {
 }
 
 // Start periodic updates
-// Monitor window size and save periodically (backup for resize events)
-let windowSizeMonitorInterval = null;
-let monitoredWidth = 0;
-let monitoredHeight = 0;
-
-function startWindowSizeMonitor() {
-    // Clear existing interval
-    if (windowSizeMonitorInterval) {
-        clearInterval(windowSizeMonitorInterval);
-    }
-    
-    // Check window size every 5 seconds
-    windowSizeMonitorInterval = setInterval(async () => {
-        const dims = getWindowDimensions();
-        
-        // Only save if size changed and is valid
-        if (dims.width >= 600 && dims.height >= 400 && (dims.width !== monitoredWidth || dims.height !== monitoredHeight)) {
-            if (await saveWindowDimensionsNow()) {
-                monitoredWidth = dims.width;
-                monitoredHeight = dims.height;
-            }
-        }
-    }, 5000);
-    
-    // Also save initial size after a delay (but only if it's different from what we've already saved)
-    setTimeout(async () => {
-        const dims = getWindowDimensions();
-        if (dims.width >= 600 && dims.height >= 400) {
-            // Only save if different from what we've already saved (avoid overwriting with same value)
-            if (dims.width !== lastSavedWidth || dims.height !== lastSavedHeight) {
-                if (await saveWindowDimensionsNow()) {
-                    monitoredWidth = dims.width;
-                    monitoredHeight = dims.height;
-                }
-            } else {
-                // Update monitored values even if we don't save (to avoid unnecessary saves)
-                monitoredWidth = dims.width;
-                monitoredHeight = dims.height;
-                console.log('[WindowMonitor] Initial window size matches saved size:', dims.width, 'x', dims.height);
-            }
-        }
-    }, 2000);
-}
-
 function startPeriodicUpdates() {
     // Clear existing interval if any
     if (periodicUpdateInterval) {
@@ -2179,7 +2071,12 @@ function startPeriodicUpdates() {
 }
 
 // Update ticker data (parallelized for performance)
+const loggedNoData = new Set();
+
+let tickerUpdateGeneration = 0;
+
 async function updateTickerData() {
+    const generation = ++tickerUpdateGeneration;
     try {
         const tickers = await getEnabledTickersCached();
         // Determine which date to use for loading data
@@ -2215,6 +2112,9 @@ async function updateTickerData() {
         
         // Wait for all requests to complete
         const results = await Promise.all(promises);
+        if (generation !== tickerUpdateGeneration) {
+            return;
+        }
         
         // Process results
         results.forEach(({ ticker, data, error }) => {
@@ -2227,11 +2127,12 @@ async function updateTickerData() {
                     row.title = error.message;
                 }
             } else if (data && data.timestamp && Array.isArray(data.timestamp) && data.timestamp.length > 0) {
-                // Update table
                 updateTickerRow(ticker, data);
             } else {
-                // No data available - show placeholder
-                console.log(`No data available for ${ticker} on ${dateStrForRequest === '' ? 'today' : dateStr}`);
+                const noDataKey = ticker + '|' + (dateStrForRequest === '' ? 'today' : dateStr);
+                if (!loggedNoData.has(noDataKey)) {
+                    loggedNoData.add(noDataKey);
+                }
                 const row = document.getElementById(`${ticker}-spot`);
                 if (row) {
                     row.textContent = 'No data';
@@ -2253,11 +2154,7 @@ function updateTickerRow(ticker, data) {
     const zeroGamma = getLatestValue(data, 'zero_gamma');
     const posGamma = getLatestValue(data, 'major_pos_vol');
     const negGamma = getLatestValue(data, 'major_neg_vol');
-    let netGamma = null;
-    if (typeof spot === 'number' && typeof posGamma === 'number' && typeof negGamma === 'number') {
-        // Match NinjaScript Net plot level: spot + ((pos - abs(neg)) / 100)
-        netGamma = spot + ((posGamma - Math.abs(negGamma)) / 100);
-    }
+    const netGamma = computeNetGamma(spot, posGamma, negGamma);
     
     if (spot !== null) {
         document.getElementById(`${ticker}-spot`).textContent = formatNumber(spot);
@@ -2308,36 +2205,40 @@ function formatNumber(value) {
     return String(value);
 }
 
+// Today stays empty so the window resolves the session date on each read.
+// A historical selection is pinned to that calendar day.
+function windowDateArg() {
+    if (!selectedDate || selectedDate === lastKnownMarketDate) {
+        return '';
+    }
+    return selectedDate;
+}
+
 // Open chart for a ticker in a new window
 async function openChart(ticker) {
     try {
-        console.log(`Attempting to open chart for ${ticker}...`);
-        console.log('App object:', App);
-        console.log('OpenChartWindow function:', App.OpenChartWindow);
         
         if (!App.OpenChartWindow) {
             throw new Error('OpenChartWindow method not found in App service. Try restarting the application.');
         }
         
-        // Use selected date if available, otherwise use current market date
-        let dateStr = selectedDate;
-        if (!dateStr) {
-            try {
-                dateStr = await fetchMarketDate();
-                if (!dateStr) dateStr = new Date().toISOString().split('T')[0];
-            } catch (error) {
-                console.warn('[OpenChart] Failed to get market date, using today:', error);
-                dateStr = new Date().toISOString().split('T')[0];
-            }
-        }
-        
-        // Pass date as parameter to chart window (OpenChartWindow accepts optional dateStr)
-        // If dateStr is empty, chart will use current market date
-        await App.OpenChartWindow(ticker, dateStr || '');
-        console.log(`Chart window opened for ${ticker} with date ${dateStr || 'current market date'}`);
+        await App.OpenChartWindow(ticker, windowDateArg());
     } catch (error) {
         console.error(`Error opening chart for ${ticker}:`, error);
         alert(`Error opening chart: ${error.message}`);
+    }
+}
+
+// Open a profile-only window. The chart for this ticker stays as it is.
+async function openProfile(ticker) {
+    try {
+        if (!App.OpenProfileWindow) {
+            throw new Error('OpenProfileWindow method not found. Restart the application to load it.');
+        }
+        await App.OpenProfileWindow(ticker, windowDateArg());
+    } catch (error) {
+        console.error(`Error opening profile for ${ticker}:`, error);
+        alert(`Error opening profile: ${error.message}`);
     }
 }
 
@@ -2388,7 +2289,6 @@ async function loadAvailableDates() {
         }
         
         const dates = await response.json();
-        console.log('[Date Selector] Loaded dates:', dates);
         
         // Get current market date for comparison
         let todayStr = null;
@@ -2442,7 +2342,6 @@ async function loadAvailableDates() {
         // If todayStr is null (fetch failed), treat selected date as "today" so we still use live date when available
         lastKnownMarketDate = todayStr || selectedDate;
         
-        console.log('[Date Selector] Default date selected:', selectedDate);
         
         // Trigger initial date change to load data
         await onDateChanged(selectedDate);
@@ -2456,7 +2355,6 @@ async function loadAvailableDates() {
 
 // Handle date change
 async function onDateChanged(dateStr) {
-    console.log('[Date Selector] Date changed to:', dateStr);
     selectedDate = dateStr;
     
     // Refresh ticker table with new date
@@ -2529,6 +2427,9 @@ function showStartupWizard() {
     wizardModal.style.visibility = 'visible';
     wizardModal.style.opacity = '1';
     wizardModal.style.pointerEvents = 'auto';
+    const wizardKey = document.getElementById('wizard-api-key');
+    if (wizardKey) wizardKey.focus();
+    trapModalFocus(wizardModal, null);
     
     // Handle wizard completion - use addEventListener to avoid multiple handlers
     const completeBtn = document.getElementById('wizard-complete');
@@ -2561,7 +2462,6 @@ function showStartupWizard() {
                 btn.disabled = true;
                 btn.textContent = 'Saving...';
                 
-                console.log('Starting setup with API key length:', apiKey.length, 'tiers:', tiers);
                 
                 if (apiKey.length === 0) {
                     console.error('ERROR: API key is empty before calling CompleteSetup!');
@@ -2573,10 +2473,7 @@ function showStartupWizard() {
                 
                 // Complete setup (use default tickers)
                 try {
-                    console.log('Calling App.CompleteSetup with API key length:', apiKey.length);
                     const result = await App.CompleteSetup(apiKey, tiers, []);
-                    console.log('CompleteSetup returned:', result);
-                    console.log('Setup completed successfully');
                 } catch (setupError) {
                     console.error('Setup error:', setupError);
                     alert('Error completing setup: ' + (setupError.message || String(setupError)));
@@ -2586,7 +2483,6 @@ function showStartupWizard() {
                 }
                 
                 // Close modal IMMEDIATELY - don't wait for verification
-                console.log('Closing wizard immediately...');
                 wizardModal.style.display = 'none';
                 wizardModal.style.visibility = 'hidden';
                 wizardModal.style.opacity = '0';
@@ -2603,10 +2499,8 @@ function showStartupWizard() {
                 void wizardModal.offsetHeight;
                 
                 // Initialize UI immediately
-                console.log('Initializing UI...');
                 try {
                     await initializeUI();
-                    console.log('Startup wizard completed - UI initialized');
                 } catch (uiError) {
                     console.error('Error initializing UI:', uiError);
                     alert('Setup completed but there was an error initializing the UI: ' + (uiError.message || String(uiError)));

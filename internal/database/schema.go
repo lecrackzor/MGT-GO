@@ -30,7 +30,7 @@ func (sm *SchemaManager) EnsureTable(scalarFields []string) error {
 	}
 
 	// Get existing columns
-	existingColumns, err := sm.getExistingColumns()
+	existingColumns, err := tableColumns(sm.db)
 	if err != nil {
 		return fmt.Errorf("failed to get existing columns: %w", err)
 	}
@@ -60,31 +60,31 @@ func (sm *SchemaManager) EnsureTable(scalarFields []string) error {
 		}
 	}
 
-	// Create indexes if they don't exist
-	_, err = sm.db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_timestamp_desc
-		ON ticker_data(timestamp DESC)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create descending index: %w", err)
-	}
-
-	_, err = sm.db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_timestamp_asc
-		ON ticker_data(timestamp ASC)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create ascending index: %w", err)
+	// timestamp is the primary key. The extra indexes only made each insert
+	// update the same column twice.
+	if err := DropRedundantTimestampIndexes(sm.db); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// getExistingColumns returns a map of existing column names
-func (sm *SchemaManager) getExistingColumns() (map[string]bool, error) {
-	rows, err := sm.db.Query(`
-		SELECT name FROM pragma_table_info('ticker_data')
-	`)
+// DropRedundantTimestampIndexes removes the timestamp indexes that duplicate
+// the primary key. Safe to call on databases created before those indexes
+// were dropped.
+func DropRedundantTimestampIndexes(db *sql.DB) error {
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_timestamp_desc`); err != nil {
+		return fmt.Errorf("failed to drop descending timestamp index: %w", err)
+	}
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_timestamp_asc`); err != nil {
+		return fmt.Errorf("failed to drop ascending timestamp index: %w", err)
+	}
+	return nil
+}
+
+// tableColumns returns the column names on ticker_data.
+func tableColumns(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('ticker_data')`)
 	if err != nil {
 		return nil, err
 	}
@@ -116,12 +116,12 @@ func sanitizeFieldName(field string) string {
 			result.WriteRune('_')
 		}
 	}
-	
+
 	sanitized := result.String()
-	
+
 	// Remove leading/trailing underscores (matches Python: strip('_'))
 	sanitized = strings.Trim(sanitized, "_")
-	
+
 	// Ensure it starts with a letter or underscore (matches Python behavior)
 	if len(sanitized) > 0 {
 		first := sanitized[0]
@@ -129,6 +129,6 @@ func sanitizeFieldName(field string) string {
 			sanitized = "_" + sanitized
 		}
 	}
-	
+
 	return sanitized
 }

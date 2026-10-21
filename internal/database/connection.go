@@ -12,22 +12,25 @@ import (
 
 // ConnectionPool manages database connections with idle timeout
 type ConnectionPool struct {
-	mu                sync.RWMutex
-	connections       map[string]*pooledConnection
-	maxSize           int
-	idleTimeout       time.Duration
-	cleanupInterval   time.Duration
-	cleanupTimer      *time.Timer
-	stopCleanup       chan struct{}
+	mu              sync.RWMutex
+	connections     map[string]*pooledConnection
+	maxSize         int
+	idleTimeout     time.Duration
+	cleanupInterval time.Duration
+	cleanupTimer    *time.Timer
+	stopCleanup     chan struct{}
 }
 
 type pooledConnection struct {
-	db          *sql.DB
-	lastUsed    time.Time
-	filepath    string
+	db       *sql.DB
+	lastUsed time.Time
+	filepath string
 }
 
-// NewConnectionPool creates a new connection pool
+// NewConnectionPool creates a new connection pool.
+// maxSize is stored and not enforced. A pooled handle may still be inside a
+// query, and closing it to honor the cap would fail that query. Idle files
+// already close after idleTimeout.
 func NewConnectionPool(maxSize int, idleTimeout, cleanupInterval time.Duration) *ConnectionPool {
 	pool := &ConnectionPool{
 		connections:     make(map[string]*pooledConnection),
@@ -43,36 +46,76 @@ func NewConnectionPool(maxSize int, idleTimeout, cleanupInterval time.Duration) 
 	return pool
 }
 
-// GetConnection gets or creates a database connection
+// GetConnection gets or creates a database connection.
+// The pool lock is not held across Ping or open. One slow file must not
+// block every other file. The lock is taken again only to publish the handle.
 func (p *ConnectionPool) GetConnection(filepath string, readOnly bool) (*sql.DB, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Check if connection exists and is still valid
 	if pc, exists := p.connections[filepath]; exists {
-		// Check if connection is still valid
-		if err := pc.db.Ping(); err == nil {
-			// Update last used time
+		// A connection used in the last 30 seconds is reused without a ping.
+		// Discard removes it when a query fails, and the next checkout opens a new one.
+		if time.Since(pc.lastUsed) < 30*time.Second {
 			pc.lastUsed = time.Now()
-			return pc.db, nil
+			db := pc.db
+			p.mu.Unlock()
+			return db, nil
 		}
-		// Connection is invalid - remove it
-		pc.db.Close()
-		delete(p.connections, filepath)
+		db := pc.db
+		p.mu.Unlock()
+
+		if err := db.Ping(); err == nil {
+			p.mu.Lock()
+			if cur, ok := p.connections[filepath]; ok && cur.db == db {
+				cur.lastUsed = time.Now()
+				p.mu.Unlock()
+				return db, nil
+			}
+			p.mu.Unlock()
+		} else {
+			p.mu.Lock()
+			if cur, ok := p.connections[filepath]; ok && cur.db == db {
+				delete(p.connections, filepath)
+				p.mu.Unlock()
+				db.Close()
+			} else {
+				p.mu.Unlock()
+			}
+		}
+	} else {
+		p.mu.Unlock()
 	}
 
-	// Create new connection
+	db, err := p.openConnection(filepath, readOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	if cur, ok := p.connections[filepath]; ok {
+		cur.lastUsed = time.Now()
+		p.mu.Unlock()
+		db.Close()
+		return cur.db, nil
+	}
+	p.connections[filepath] = &pooledConnection{
+		db:       db,
+		lastUsed: time.Now(),
+		filepath: filepath,
+	}
+	p.mu.Unlock()
+	return db, nil
+}
+
+// openConnection opens one file outside the pool lock.
+func (p *ConnectionPool) openConnection(filepath string, readOnly bool) (*sql.DB, error) {
 	var db *sql.DB
 	var err error
 
 	if readOnly {
-		// Read-only connection
 		db, err = sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", filepath))
 	} else {
-		// Read-write connection
 		db, err = sql.Open("sqlite", filepath)
 	}
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -84,19 +127,10 @@ func (p *ConnectionPool) GetConnection(filepath string, readOnly bool) (*sql.DB,
 	// 2. One file never has competing write handles (prevents SQLITE_BUSY)
 	db.SetMaxOpenConns(1)
 
-	// Configure connection
 	if err := p.configureConnection(db, readOnly); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to configure connection: %w", err)
 	}
-
-	// Add to pool
-	p.connections[filepath] = &pooledConnection{
-		db:       db,
-		lastUsed: time.Now(),
-		filepath: filepath,
-	}
-
 	return db, nil
 }
 
@@ -152,11 +186,6 @@ func (p *ConnectionPool) configureConnection(db *sql.DB, readOnly bool) error {
 	if readOnly {
 		// Read-only specific settings
 		_, err = conn.ExecContext(nil, "PRAGMA query_only=1")
-		if err != nil {
-			return err
-		}
-
-		_, err = conn.ExecContext(nil, "PRAGMA read_uncommitted=1")
 		if err != nil {
 			return err
 		}
@@ -252,15 +281,28 @@ func (p *ConnectionPool) Close() error {
 			conn.Close()
 		}
 		cancel()
-		
+
 		// Close the database connection
 		pc.db.Close()
 	}
-	
+
 	// Clear connections map
 	p.connections = make(map[string]*pooledConnection)
 
 	return nil
+}
+
+// Discard closes and forgets the connection for a file so the next checkout opens a new one.
+func (p *ConnectionPool) Discard(filepath string) {
+	if p == nil || filepath == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pc, ok := p.connections[filepath]; ok {
+		pc.db.Close()
+		delete(p.connections, filepath)
+	}
 }
 
 // Size returns current pool size

@@ -32,78 +32,50 @@ func NowMarketTime() time.Time {
 	return time.Now().In(MARKET_TIMEZONE)
 }
 
-// MarketOpenCloseTimes returns market open and close times for a given date in Eastern Time
-// Market hours: 9:30 AM - 4:00 PM ET, Monday-Friday
+// MarketOpenCloseTimes returns market open and close times for a given date in Eastern Time.
+// A regular session is 9:30 AM–4:00 PM ET. An NYSE early close ends at 1:00 PM ET.
 func MarketOpenCloseTimes(date time.Time) (time.Time, time.Time) {
-	// Ensure date is in market timezone
 	date = date.In(MARKET_TIMEZONE)
-	
-	// Market opens at 9:30 AM ET
+
 	marketOpen := time.Date(date.Year(), date.Month(), date.Day(), 9, 30, 0, 0, MARKET_TIMEZONE)
-	
-	// Market closes at 4:00 PM ET
-	marketClose := time.Date(date.Year(), date.Month(), date.Day(), 16, 0, 0, 0, MARKET_TIMEZONE)
-	
+	closeHour, closeMin := 16, 0
+	if isEarlyClose(date) {
+		closeHour, closeMin = 13, 0
+	}
+	marketClose := time.Date(date.Year(), date.Month(), date.Day(), closeHour, closeMin, 0, 0, MARKET_TIMEZONE)
+
 	return marketOpen, marketClose
 }
 
-// IsMarketOpen checks if the US stock market is currently open
-// Market hours are 9:30 AM - 4:00 PM Eastern Time, Monday-Friday only
+// IsMarketOpen reports whether the US stock market is open right now.
 func IsMarketOpen() bool {
-	now := NowMarketTime()
-	today := now
-	
-	// Check if it's a weekend (Saturday=6, Sunday=0 in Go)
-	weekday := today.Weekday()
-	if weekday == time.Saturday || weekday == time.Sunday {
-		return false
-	}
-	
-	marketOpen, marketClose := MarketOpenCloseTimes(today)
-	return now.After(marketOpen) && now.Before(marketClose) || now.Equal(marketOpen) || now.Equal(marketClose)
+	return IsMarketOpenAt(NowMarketTime())
 }
 
-// IsWithinExtendedHours checks if current time is within extended hours
-// Extended hours: N minutes before market open and after market close
-// Default is 5 minutes before 9:30 AM and 5 minutes after 4:00 PM
-func IsWithinExtendedHours(extendedMinutes int) bool {
-	if extendedMinutes <= 0 {
-		extendedMinutes = 5 // Default 5 minutes
-	}
-	
-	now := NowMarketTime()
-	today := now
-	
-	// Weekends are not considered extended hours
-	weekday := today.Weekday()
-	if weekday == time.Saturday || weekday == time.Sunday {
+// IsMarketOpenAt reports whether the market is open at a specific Eastern Time.
+// Weekends and full NYSE closures are closed. The open and close minutes count as open.
+func IsMarketOpenAt(now time.Time) bool {
+	now = now.In(MARKET_TIMEZONE)
+	if IsWeekend(now) || IsFullMarketClosure(now) {
 		return false
 	}
-	
-	marketOpen, marketClose := MarketOpenCloseTimes(today)
-	extendedOpen := marketOpen.Add(-time.Duration(extendedMinutes) * time.Minute)
-	extendedClose := marketClose.Add(time.Duration(extendedMinutes) * time.Minute)
-	
-	return (now.After(extendedOpen) || now.Equal(extendedOpen)) && 
-		   (now.Before(extendedClose) || now.Equal(extendedClose))
+	marketOpen, marketClose := MarketOpenCloseTimes(now)
+	return !now.Before(marketOpen) && !now.After(marketClose)
 }
 
-// IsAfterHours checks if current time is after hours
-// After hours includes pre-market (before 9:25 AM), post-market (after 4:05 PM), and weekends
+// IsAfterHours checks if current time is after hours.
+// After hours includes pre-market (before 9:25 AM), post-market (after 5 minutes past the close), weekends, and full closures.
 func IsAfterHours() bool {
 	now := NowMarketTime()
-	today := now
-	
-	// Weekends are always after hours
-	weekday := today.Weekday()
-	if weekday == time.Saturday || weekday == time.Sunday {
+
+	if IsWeekend(now) || IsFullMarketClosure(now) {
 		return true
 	}
-	
-	marketOpen, marketClose := MarketOpenCloseTimes(today)
-	extendedOpen := marketOpen.Add(-5 * time.Minute) // 5 minutes before open
+
+	marketOpen, marketClose := MarketOpenCloseTimes(now)
+	extendedOpen := marketOpen.Add(-5 * time.Minute)  // 5 minutes before open
 	extendedClose := marketClose.Add(5 * time.Minute) // 5 minutes after close
-	
+
 	return now.Before(extendedOpen) || now.After(extendedClose)
 }
 
@@ -114,63 +86,57 @@ func IsWeekend(date time.Time) bool {
 	return weekday == time.Saturday || weekday == time.Sunday
 }
 
-// GetLastTradingDay returns the last trading day (Friday) if the date is a weekend,
-// otherwise returns the date unchanged
+// GetLastTradingDay walks backward over weekends and full NYSE closures.
+// A weekday that is not a closure is returned unchanged.
 func GetLastTradingDay(date time.Time) time.Time {
 	date = date.In(MARKET_TIMEZONE)
-	weekday := date.Weekday()
-	
-	if weekday == time.Saturday {
-		// Saturday: go back 1 day to Friday
-		return date.AddDate(0, 0, -1)
-	} else if weekday == time.Sunday {
-		// Sunday: go back 2 days to Friday
-		return date.AddDate(0, 0, -2)
+	for IsWeekend(date) || IsFullMarketClosure(date) {
+		date = date.AddDate(0, 0, -1)
 	}
-	
 	return date
 }
 
-// GetMarketDate returns the current market date in Eastern Time
-// Date rolls over at 8:30 AM ET (1 hour before market open at 9:30 AM ET)
-// Before 8:30 AM ET: returns yesterday's date
-// 8:30 AM ET or later: returns today's date
+// NextSessionOpen is the next 9:30 ET open at or after now.
+// A full closure and a session that has already closed are skipped.
+func NextSessionOpen(now time.Time) time.Time {
+	now = now.In(MARKET_TIMEZONE)
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, MARKET_TIMEZONE)
+	for i := 0; i < 14; i++ {
+		day := start.AddDate(0, 0, i)
+		if IsWeekend(day) || IsFullMarketClosure(day) {
+			continue
+		}
+		open, closeAt := MarketOpenCloseTimes(day)
+		if i == 0 && !now.Before(closeAt) {
+			continue
+		}
+		return open
+	}
+	return time.Time{}
+}
+
+// GetMarketDate returns the session date in Eastern Time.
+// The session rolls at 8:30 AM ET. Weekends and full NYSE closures use the previous trading day,
+// and so does the morning before the rollover.
 func GetMarketDate() time.Time {
 	now := NowMarketTime()
-	
-	// Date rollover happens at 8:30 AM ET
 	rolloverTime := time.Date(now.Year(), now.Month(), now.Day(), 8, 30, 0, 0, MARKET_TIMEZONE)
-	
 	if now.Before(rolloverTime) {
-		// Before 8:30 AM ET: use yesterday's date
-		return now.AddDate(0, 0, -1)
+		now = now.AddDate(0, 0, -1)
 	}
-
-	// 8:30 AM ET or later: use today's date
-	return now
+	return GetLastTradingDay(now)
 }
 
-// GetMarketDateForDate converts any date to the market date, handling weekends and rollover logic
-// If the date is a weekend, returns the last Friday
-// If the date is before 8:30 AM ET, returns the previous day
-// Otherwise returns the date as-is
+// GetMarketDateForDate converts any date to the session date.
+// Before 8:30 AM ET belongs to the previous day. Weekends and full closures belong to the previous trading day.
 func GetMarketDateForDate(date time.Time) time.Time {
 	date = date.In(MARKET_TIMEZONE)
-	
-	// First, handle weekend dates (use last Friday)
-	if IsWeekend(date) {
-		return GetLastTradingDay(date)
-	}
-	
-	// Check if before 8:30 AM ET rollover time
+
 	rolloverTime := time.Date(date.Year(), date.Month(), date.Day(), 8, 30, 0, 0, MARKET_TIMEZONE)
 	if date.Before(rolloverTime) {
-		// Before 8:30 AM ET: use previous day
-		return date.AddDate(0, 0, -1)
+		date = date.AddDate(0, 0, -1)
 	}
-	
-	// 8:30 AM ET or later: use the date as-is
-	return date
+	return GetLastTradingDay(date)
 }
 
 // ParseDateInET parses a date string in "YYYY-MM-DD" format, assuming it's in Eastern Time
@@ -187,4 +153,64 @@ func ParseDateInET(dateStr string) (time.Time, error) {
 	}
 	// Return the date at midnight ET (ParseInLocation already creates it in the correct timezone)
 	return t, nil
+}
+
+// NYSE cash-session closures and 1:00 PM ET early closes, 2026–2028.
+// Source: NYSE Group holiday calendar announced for those years.
+var nyseFullClosures = map[string]struct{}{
+	"2026-01-01": {},
+	"2026-01-19": {},
+	"2026-02-16": {},
+	"2026-04-03": {},
+	"2026-05-25": {},
+	"2026-06-19": {},
+	"2026-07-03": {},
+	"2026-09-07": {},
+	"2026-11-26": {},
+	"2026-12-25": {},
+
+	"2027-01-01": {},
+	"2027-01-18": {},
+	"2027-02-15": {},
+	"2027-03-26": {},
+	"2027-05-31": {},
+	"2027-06-18": {},
+	"2027-07-05": {},
+	"2027-09-06": {},
+	"2027-11-25": {},
+	"2027-12-24": {},
+
+	"2028-01-17": {},
+	"2028-02-21": {},
+	"2028-04-14": {},
+	"2028-05-29": {},
+	"2028-06-19": {},
+	"2028-07-04": {},
+	"2028-09-04": {},
+	"2028-11-23": {},
+	"2028-12-25": {},
+}
+
+var nyseEarlyCloses = map[string]struct{}{
+	"2026-11-27": {},
+	"2026-12-24": {},
+	"2027-11-26": {},
+	"2028-07-03": {},
+	"2028-11-24": {},
+}
+
+func sessionDateKey(date time.Time) string {
+	date = date.In(MARKET_TIMEZONE)
+	return date.Format("2006-01-02")
+}
+
+// IsFullMarketClosure reports an NYSE session that does not open at all.
+func IsFullMarketClosure(date time.Time) bool {
+	_, ok := nyseFullClosures[sessionDateKey(date)]
+	return ok
+}
+
+func isEarlyClose(date time.Time) bool {
+	_, ok := nyseEarlyCloses[sessionDateKey(date)]
+	return ok
 }

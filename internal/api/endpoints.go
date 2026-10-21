@@ -4,48 +4,48 @@ package api
 // Template format: "%s/{ticker}/classic/zero" (base, ticker)
 var Endpoints = map[string]string{
 	// Classic Subscription Endpoints
-	"classic_full":         "%s/%s/classic/full",
-	"classic_zero":         "%s/%s/classic/zero",
-	"classic_one":          "%s/%s/classic/one",
-	"classic_full_majors":  "%s/%s/classic/full/majors",
-	"classic_zero_majors":  "%s/%s/classic/zero/majors",
-	"classic_one_majors":   "%s/%s/classic/one/majors",
+	"classic_full":           "%s/%s/classic/full",
+	"classic_zero":           "%s/%s/classic/zero",
+	"classic_one":            "%s/%s/classic/one",
+	"classic_full_majors":    "%s/%s/classic/full/majors",
+	"classic_zero_majors":    "%s/%s/classic/zero/majors",
+	"classic_one_majors":     "%s/%s/classic/one/majors",
 	"classic_full_maxchange": "%s/%s/classic/full/maxchange",
 	"classic_zero_maxchange": "%s/%s/classic/zero/maxchange",
-	"classic_one_maxchange":   "%s/%s/classic/one/maxchange",
+	"classic_one_maxchange":  "%s/%s/classic/one/maxchange",
 
 	// State Subscription Endpoints
-	"state_full":         "%s/%s/state/full",
-	"state_zero":         "%s/%s/state/zero",
-	"state_one":          "%s/%s/state/one",
-	"state_full_majors":  "%s/%s/state/full/majors",
-	"state_zero_majors":  "%s/%s/state/zero/majors",
-	"state_one_majors":   "%s/%s/state/one/majors",
+	"state_full":           "%s/%s/state/full",
+	"state_zero":           "%s/%s/state/zero",
+	"state_one":            "%s/%s/state/one",
+	"state_full_majors":    "%s/%s/state/full/majors",
+	"state_zero_majors":    "%s/%s/state/zero/majors",
+	"state_one_majors":     "%s/%s/state/one/majors",
 	"state_full_maxchange": "%s/%s/state/full/maxchange",
 	"state_zero_maxchange": "%s/%s/state/zero/maxchange",
-	"state_one_maxchange":   "%s/%s/state/one/maxchange",
-	
+	"state_one_maxchange":  "%s/%s/state/one/maxchange",
+
 	// Options Profile Greeks - New API structure (State subscription)
 	"delta_zero": "%s/%s/state/delta_zero",
 	"gamma_zero": "%s/%s/state/gamma_zero",
 	"delta_one":  "%s/%s/state/delta_one",
 	"gamma_one":  "%s/%s/state/gamma_one",
-	
+
 	// Options Profile Greeks - New API structure (Orderflow subscription)
 	"charm_zero": "%s/%s/state/charm_zero",
 	"vanna_zero": "%s/%s/state/vanna_zero",
 	"charm_one":  "%s/%s/state/charm_one",
 	"vanna_one":  "%s/%s/state/vanna_one",
-	
+
 	// Legacy endpoint names (deprecated, kept for backwards compatibility)
-	"state_gamma":     "%s/%s/state/gamma_zero",
-	"state_onegamma":  "%s/%s/state/gamma_one",
-	"state_delta":     "%s/%s/state/delta_zero",
-	"state_onedelta":  "%s/%s/state/delta_one",
-	"state_vanna":     "%s/%s/state/vanna_zero",
-	"state_onevanna":  "%s/%s/state/vanna_one",
-	"state_charm":     "%s/%s/state/charm_zero",
-	"state_onecharm":  "%s/%s/state/charm_one",
+	"state_gamma":    "%s/%s/state/gamma_zero",
+	"state_onegamma": "%s/%s/state/gamma_one",
+	"state_delta":    "%s/%s/state/delta_zero",
+	"state_onedelta": "%s/%s/state/delta_one",
+	"state_vanna":    "%s/%s/state/vanna_zero",
+	"state_onevanna": "%s/%s/state/vanna_one",
+	"state_charm":    "%s/%s/state/charm_zero",
+	"state_onecharm": "%s/%s/state/charm_one",
 
 	// Orderflow Subscription Endpoints
 	"orderflow": "%s/%s/orderflow/orderflow",
@@ -62,9 +62,8 @@ func GetEndpointsForTiers(tiers []string) []string {
 		"state": {
 			"state_full", "state_zero", "state_one",
 			"delta_zero", "gamma_zero", "delta_one", "gamma_one",
-			// NOTE: legacy aliases (state_gamma, state_onegamma, state_delta,
-			// state_onedelta) intentionally excluded - they map to the same URLs
-			// as delta_zero/gamma_zero/delta_one/gamma_one and would double-fetch.
+			"vanna_zero", "charm_zero", "vanna_one", "charm_one",
+			// Legacy aliases hit the same URLs and would double-fetch.
 		},
 		"orderflow": {
 			"orderflow",
@@ -124,38 +123,4 @@ func GetChartEndpointsForTiers(tiers []string) []string {
 	}
 
 	return result
-}
-
-// GetEndpointTier returns the subscription tier required for an endpoint
-func GetEndpointTier(endpoint string) string {
-	classicEndpoints := map[string]bool{
-		"classic_full": true, "classic_zero": true, "classic_one": true,
-		"classic_full_majors": true, "classic_zero_majors": true, "classic_one_majors": true,
-		"classic_full_maxchange": true, "classic_zero_maxchange": true, "classic_one_maxchange": true,
-	}
-	
-	stateEndpoints := map[string]bool{
-		"state_full": true, "state_zero": true, "state_one": true,
-		"state_full_majors": true, "state_zero_majors": true, "state_one_majors": true,
-		"state_full_maxchange": true, "state_zero_maxchange": true, "state_one_maxchange": true,
-		"delta_zero": true, "gamma_zero": true, "delta_one": true, "gamma_one": true,
-		"state_gamma": true, "state_onegamma": true, "state_delta": true, "state_onedelta": true,
-	}
-	
-	orderflowEndpoints := map[string]bool{
-		"orderflow": true,
-		"charm_zero": true, "vanna_zero": true, "charm_one": true, "vanna_one": true,
-		"state_vanna": true, "state_onevanna": true, "state_charm": true, "state_onecharm": true,
-	}
-
-	if classicEndpoints[endpoint] {
-		return "classic"
-	}
-	if stateEndpoints[endpoint] {
-		return "state"
-	}
-	if orderflowEndpoints[endpoint] {
-		return "orderflow"
-	}
-	return "" // Unknown endpoint
 }

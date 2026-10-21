@@ -19,6 +19,8 @@ import (
 var frontend embed.FS
 
 func main() {
+	hideConsoleWindow()
+
 	// Load settings first to check EnableLogging
 	settingsManager := config.NewSettingsManager("")
 	settings, err := settingsManager.LoadSettings()
@@ -54,22 +56,14 @@ func main() {
 			return
 		}
 
-		// Handle frontend test endpoint - allows frontend to verify it's executing
-		if r.URL.Path == "/api/frontend-test" {
-			log.Println("[FRONTEND-TEST] Frontend test endpoint called - frontend JavaScript IS executing!")
-			utils.Logf("[frontend-test] Frontend test endpoint called - frontend JavaScript IS executing!")
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Frontend is executing"})
-			return
-		}
-
 		// Handle frontend logging endpoint - allows frontend to log to backend terminal and log file
 		if r.URL.Path == "/api/frontend-log" && r.Method == "POST" {
 			var logData struct {
 				Level   string `json:"level"`
 				Message string `json:"message"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&logData); err != nil {
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+			if err := decoder.Decode(&logData); err != nil {
 				http.Error(w, "Invalid JSON", http.StatusBadRequest)
 				return
 			}
@@ -93,6 +87,18 @@ func main() {
 		}
 
 		// Handle API routes
+		if r.URL.Path == "/api/log" {
+			path, text, ok := utils.CurrentLogTail(80_000)
+			if !ok {
+				path = ""
+				text = ""
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			json.NewEncoder(w).Encode(map[string]string{"path": path, "text": text})
+			return
+		}
+
 		if r.URL.Path == "/api/market-date" {
 			// Get current market date (never cache - date rolls over at 8:30 AM ET)
 			marketDate := appInstance.GetCurrentMarketDate()
@@ -121,12 +127,89 @@ func main() {
 			return
 		}
 
+		if r.URL.Path == "/api/profile-layers" && r.Method == http.MethodPost {
+			var layers map[string]bool
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+			if err := decoder.Decode(&layers); err != nil {
+				http.Error(w, "invalid profile layers", http.StatusBadRequest)
+				return
+			}
+			if err := appInstance.UpdateProfileLayers(layers); err != nil {
+				utils.Logf("[HTTP] ERROR: profile layers failed: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+
+		if r.URL.Path == "/api/profile-layout" && r.Method == http.MethodPost {
+			var body map[string]interface{}
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12))
+			if err := decoder.Decode(&body); err != nil {
+				http.Error(w, "invalid profile layout", http.StatusBadRequest)
+				return
+			}
+			if err := appInstance.UpdateProfileLayout(body); err != nil {
+				utils.Logf("[HTTP] ERROR: profile layout failed: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+
+		if r.URL.Path == "/api/profile-priors" && r.Method == http.MethodPost {
+			var body struct {
+				ShowPriors bool `json:"show_priors"`
+			}
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12))
+			if err := decoder.Decode(&body); err != nil {
+				http.Error(w, "invalid profile priors", http.StatusBadRequest)
+				return
+			}
+			if err := appInstance.UpdateProfilePriors(body.ShowPriors); err != nil {
+				utils.Logf("[HTTP] ERROR: profile priors failed: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+
 		if r.URL.Path == "/api/available-dates" {
 			// Get available dates (includes current market date so "Today" is always selectable)
 			dates := appInstance.GetAvailableDates()
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			json.NewEncoder(w).Encode(dates)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/profile/") {
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/profile/"), "/")
+			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+				if !config.ValidTicker(parts[0]) {
+					http.Error(w, "unknown ticker", http.StatusBadRequest)
+					return
+				}
+				snap, err := appInstance.GetProfile(parts[0], parts[1], r.URL.Query().Get("at"), r.URL.Query().Get("endpoints"))
+				if err != nil {
+					utils.Logf("[HTTP] ERROR: GetProfile failed for %s: %v", parts[0], err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				if err := json.NewEncoder(w).Encode(snap); err != nil {
+					http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				}
+				return
+			}
+			http.Error(w, "Invalid API path", http.StatusBadRequest)
 			return
 		}
 
@@ -142,6 +225,10 @@ func main() {
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/chart-data/"), "/")
 			if len(parts) >= 2 {
 				ticker := parts[0]
+				if !config.ValidTicker(ticker) {
+					http.Error(w, "unknown ticker", http.StatusBadRequest)
+					return
+				}
 				dateStr := parts[1]
 				sinceStr := r.URL.Query().Get("since")
 
@@ -158,11 +245,7 @@ func main() {
 				}
 
 				if httpDebug {
-					timestampCount := 0
-					if timestamps, ok := data["timestamp"].([]interface{}); ok {
-						timestampCount = len(timestamps)
-					}
-					utils.Logf("[HTTP] GetChartData succeeded for %s: %d timestamps", ticker, timestampCount)
+					utils.Logf("[HTTP] GetChartData succeeded for %s: %d timestamps", ticker, seriesLen(data["timestamp"]))
 				}
 
 				// Return JSON

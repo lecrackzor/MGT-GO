@@ -9,7 +9,7 @@ const (
 // Database Connection Pool Configuration
 const (
 	DBConnectionPoolMaxSize    = 20    // Maximum number of connections to keep
-	DBConnectionIdleTimeoutSec = 180.0 // Close connections idle for 3 minutes
+	DBConnectionIdleTimeoutSec = 180.0 // Close idle read and write connections after 3 minutes
 )
 
 // File Write Batching Configuration
@@ -20,8 +20,7 @@ const (
 
 // SQLite Connection Configuration
 const (
-	SQLiteConnectionIdleTimeoutSeconds     = 10.0 // Close connections idle for 10 seconds
-	SQLiteConnectionCleanupIntervalSeconds = 5.0  // Run cleanup every 5 seconds
+	SQLiteConnectionCleanupIntervalSeconds = 5.0 // Run cleanup every 5 seconds
 )
 
 // API Configuration

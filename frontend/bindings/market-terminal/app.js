@@ -153,21 +153,20 @@ export function GetVersion() {
 }
 
 /**
- * Greet returns a greeting message (for testing)
- * @param {string} name
- * @returns {$CancellablePromise<string>}
- */
-export function Greet(name) {
-    return $Call.ByID(2659711170, name);
-}
-
-/**
  * IsMarketOpen checks if the market is currently open.
  * Called by the frontend every second, so only log when the state changes.
  * @returns {$CancellablePromise<boolean>}
  */
 export function IsMarketOpen() {
     return $Call.ByID(2919903461);
+}
+
+/**
+ * OpenLogWindow opens the session log, or focuses it if it is already open.
+ * @returns {$CancellablePromise<void>}
+ */
+export function OpenLogWindow() {
+    return $Call.ByID(3937883445);
 }
 
 /**
@@ -179,6 +178,36 @@ export function IsMarketOpen() {
  */
 export function OpenChartWindow(ticker, dateStr) {
     return $Call.ByID(3221280727, ticker, dateStr);
+}
+
+/**
+ * OpenProfileWindow opens a profile-only window for a ticker.
+ * An existing profile window is focused. The chart window is left alone.
+ * @param {string} ticker
+ * @param {string} dateStr
+ * @returns {$CancellablePromise<void>}
+ */
+export function OpenProfileWindow(ticker, dateStr) {
+    return $Call.ByID(947699022, ticker, dateStr);
+}
+
+/**
+ * CloseProfileWindow closes the profile-only window for a ticker.
+ * @param {string} ticker
+ * @returns {$CancellablePromise<void>}
+ */
+export function CloseProfileWindow(ticker) {
+    return $Call.ByID(856440952, ticker);
+}
+
+/**
+ * AttachProfileToChart focuses the chart, or opens one with the side profile docked.
+ * @param {string} ticker
+ * @param {string} dateStr
+ * @returns {$CancellablePromise<void>}
+ */
+export function AttachProfileToChart(ticker, dateStr) {
+    return $Call.ByID(4222259184, ticker, dateStr);
 }
 
 /**
