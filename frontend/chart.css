@@ -506,6 +506,8 @@
             z-index: 2000;
             font-size: 12px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            max-height: calc(100vh - 16px);
+            overflow-y: auto;
         }
         #chart-context-menu .ctx-section {
             padding: 4px 12px;

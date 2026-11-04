@@ -237,7 +237,6 @@ function captureWindow() {
             let chartDataMaxTime = null;
             let chartDataLastLogicalIndex = null;
             let autoFollowEnabled = true;
-            let followPaused = false;
             let chartIsLive = !dateFromURL;
             let chartLiveResolved = !dateFromURL;
             let updateInterval = null;
@@ -350,22 +349,14 @@ function captureWindow() {
             });
             let programmaticRangeChange = false;
             var lastProgrammaticRangeChangeTime = 0;
+            try { chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false }); } catch (e) {}
             chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
                 if (programmaticRangeChange) return;
                 userHasZoomed = true;
                 if (typeof saveZoomState === 'function') savedZoomState = saveZoomState();
                 if (!autoFollowEnabled) return;
-                let logical = null;
-                try { logical = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-                const last = chartDataLastLogicalIndex;
-                const inView = !logical || last == null || (last >= logical.from - 0.25 && last <= logical.to + 0.25);
-                if (!inView) {
-                    autoFollowEnabled = false;
-                    followPaused = false;
-                    try { syncAutoFollowButton(); } catch (e) {}
-                    return;
-                }
-                followPaused = true;
+                autoFollowEnabled = false;
+                try { syncAutoFollowButton(); } catch (e) {}
             });
             
             if (typeof ResizeObserver !== 'undefined') {
@@ -374,16 +365,7 @@ function captureWindow() {
                     if (!hit) return;
                     const w = chartContainer.clientWidth;
                     const h = chartContainer.clientHeight;
-                    if (w > 0 && h > 0) {
-                        try {
-                            chart.applyOptions({ autoSize: false });
-                            if (typeof chart.resize === 'function') chart.resize(w, h, true);
-                            else chart.applyOptions({ width: w, height: h });
-                            requestAnimationFrame(function () {
-                                try { reapplyFollowGap(); } catch (e) {}
-                            });
-                        } catch (e) {}
-                    }
+                    if (w > 0 && h > 0) resizeChart(w, h);
                 }).observe(chartContainer);
             }
             
@@ -394,6 +376,7 @@ function captureWindow() {
                 get savedZoomState() { return savedZoomState; },
                 set savedZoomState(v) { savedZoomState = v; },
                 fitSessionInset: function () { fitSessionInset(); },
+                resizeChart: function (w, h) { resizeChart(w, h); },
                 get programmaticRangeChange() { return programmaticRangeChange; },
                 set programmaticRangeChange(v) { programmaticRangeChange = v; },
                 get lastProgrammaticRangeChangeTime() { return lastProgrammaticRangeChangeTime; },
@@ -428,9 +411,13 @@ function captureWindow() {
                 get infoBoxAspectRatio() { return infoBoxAspectRatio; },
                 set infoBoxAspectRatio(v) { infoBoxAspectRatio = v; },
                 get autoFollowEnabled() { return autoFollowEnabled; },
-                set autoFollowEnabled(v) { autoFollowEnabled = !!v; if (v) followPaused = false; },
+                set autoFollowEnabled(v) {
+                    autoFollowEnabled = !!v;
+                    if (autoFollowEnabled) scheduleFollow();
+                },
                 get saveChartPrefs() { return saveChartPrefs; },
                 get setPriceScaleFromSpotOnly() { return zoomHelpers.setPriceScaleFromSpotOnly; },
+                get followSpotPrice() { return zoomHelpers.followSpotPrice; },
                 get setVisiblePriceRange() { return zoomHelpers.setVisiblePriceRange; },
                 get ticker() { return ticker; },
                 get dateFromURL() { return dateFromURL; },
@@ -454,6 +441,7 @@ function captureWindow() {
                 const isOverTimeScale = (e.clientY >= rect.bottom - TIME_SCALE_HEIGHT);
                 e.preventDefault();
                 e.stopPropagation();
+                if (typeof live.zoomChartProfileX === 'function' && live.zoomChartProfileX(e.clientX, e.clientY, e.deltaY)) return;
                 if (isOverPriceScale) {
                     applyPriceZoom(e.deltaY);
                 } else if (isOverTimeScale) {
@@ -463,6 +451,15 @@ function captureWindow() {
                     applyTimeZoom(e.deltaY);
                 }
             }, { passive: false, capture: true });
+            chartContainer.addEventListener('pointerdown', function (e) {
+                if (e.button !== 0) return;
+                const rect = chartContainer.getBoundingClientRect();
+                const axisOnLeft = globalChartSettings.PriceAxisLocation === 'left';
+                const onPrice = axisOnLeft
+                    ? (e.clientX <= rect.left + PRICE_SCALE_WIDTH)
+                    : (e.clientX >= rect.right - PRICE_SCALE_WIDTH);
+                if (onPrice) live.autoPrice = 'user';
+            });
             
             await logToBackend('info', '[Chart] Lightweight Charts instance created');
         
@@ -941,7 +938,7 @@ function captureWindow() {
                 return out;
             }
 
-            const LEVEL_HISTORY_ENDPOINTS = { zero_gamma: true, major_pos_vol: true, major_neg_vol: true };
+            const LEVEL_HISTORY_ENDPOINTS = { zero_gamma: true, major_call_gamma: true, major_put_gamma: true };
 
             function levelHistoryStyle() {
                 const saved = currentChartPrefs && currentChartPrefs.levelHistoryStyle;
@@ -954,17 +951,23 @@ function captureWindow() {
                 const out = new Array(values.length);
                 const window = [];
                 let sum = 0;
+                let last = null;
                 for (let i = 0; i < values.length; i++) {
                     const raw = values[i];
                     let n = NaN;
                     if (typeof raw === 'number') n = raw;
                     else if (raw != null && typeof raw === 'object' && typeof raw.value === 'number') n = raw.value;
                     else if (raw != null && raw !== '') n = Number(raw);
+                    // Older sessions leave zero gamma empty on many rows. Hold the last
+                    // level through those gaps so the average is not restarted each time.
                     if (typeof n !== 'number' || !isFinite(n)) {
-                        window.length = 0;
-                        sum = 0;
-                        out[i] = null;
-                        continue;
+                        if (last == null) {
+                            out[i] = null;
+                            continue;
+                        }
+                        n = last;
+                    } else {
+                        last = n;
                     }
                     window.push(n);
                     sum += n;
@@ -974,7 +977,7 @@ function captureWindow() {
                 return out;
             }
 
-            const LEVEL_HISTORY_NAMES = ['zero_gamma', 'major_pos_vol', 'major_neg_vol'];
+            const LEVEL_HISTORY_NAMES = ['zero_gamma', 'major_call_gamma', 'major_put_gamma'];
 
             function levelHistoryPoints(endpoint, scatter) {
                 if (!chartDataCache || !Array.isArray(chartDataCache.timestamp)) return [];
@@ -1109,11 +1112,9 @@ function captureWindow() {
         let chartAppliedPointCount = 0;
         
         // Function to update chart with data
-            let justDidFitContent = false;
             async function updateChart() {
             const myUpdateId = ++chartUpdateId;
             try {
-                justDidFitContent = false;
                 statusEl.textContent = 'Loading data...';
                 statusEl.className = '';
                 
@@ -1124,6 +1125,7 @@ function captureWindow() {
                     chartDataCache = null;
                     lastChartTimestamp = null;
                     chartAppliedPointCount = 0;
+                    initialZoomSet = false;
                     lwSeriesList.forEach((e) => { try { chart.removeSeries(e.series); } catch (err) {} });
                     lwSeriesList = [];
                     lwSeriesByEndpoint = {};
@@ -1177,7 +1179,7 @@ function captureWindow() {
                         }
                         return;
                     }
-                    const keys = ['timestamp', 'spot', 'zero_gamma', 'major_pos_vol', 'major_neg_vol', 'major_long_gamma', 'major_short_gamma', 'major_positive', 'major_negative', 'major_pos_oi', 'major_neg_oi', 'net'];
+                    const keys = ['timestamp', 'spot', 'zero_gamma', 'major_pos_vol', 'major_neg_vol', 'major_call_gamma', 'major_put_gamma', 'major_long_gamma', 'major_short_gamma', 'major_positive', 'major_negative', 'major_pos_oi', 'major_neg_oi', 'net'];
                     if (Number(data.timestamp[0]) === Number(lastChartTimestamp)) {
                         for (const key of keys) {
                             if (Array.isArray(chartDataCache[key]) && chartDataCache[key].length > 0) {
@@ -1200,7 +1202,7 @@ function captureWindow() {
                     data = chartDataCache;
                     await logToBackend('info', `[Chart] Merged incremental: ${data.timestamp.length} points, lastTs=${lastChartTimestamp}`);
                 } else if (data && data.incremental !== true && data.timestamp && Array.isArray(data.timestamp) && data.timestamp.length > 0) {
-                    chartDataCache = { ticker, dateStr, timestamp: [...data.timestamp], spot: data.spot ? [...data.spot] : [], zero_gamma: data.zero_gamma ? [...data.zero_gamma] : [], major_pos_vol: data.major_pos_vol ? [...data.major_pos_vol] : [], major_neg_vol: data.major_neg_vol ? [...data.major_neg_vol] : [], major_long_gamma: data.major_long_gamma ? [...data.major_long_gamma] : [], major_short_gamma: data.major_short_gamma ? [...data.major_short_gamma] : [], major_positive: data.major_positive ? [...data.major_positive] : [], major_negative: data.major_negative ? [...data.major_negative] : [], major_pos_oi: data.major_pos_oi ? [...data.major_pos_oi] : [], major_neg_oi: data.major_neg_oi ? [...data.major_neg_oi] : [], net: [] };
+                    chartDataCache = { ticker, dateStr, timestamp: [...data.timestamp], spot: data.spot ? [...data.spot] : [], zero_gamma: data.zero_gamma ? [...data.zero_gamma] : [], major_pos_vol: data.major_pos_vol ? [...data.major_pos_vol] : [], major_neg_vol: data.major_neg_vol ? [...data.major_neg_vol] : [], major_call_gamma: data.major_call_gamma ? [...data.major_call_gamma] : [], major_put_gamma: data.major_put_gamma ? [...data.major_put_gamma] : [], major_long_gamma: data.major_long_gamma ? [...data.major_long_gamma] : [], major_short_gamma: data.major_short_gamma ? [...data.major_short_gamma] : [], major_positive: data.major_positive ? [...data.major_positive] : [], major_negative: data.major_negative ? [...data.major_negative] : [], major_pos_oi: data.major_pos_oi ? [...data.major_pos_oi] : [], major_neg_oi: data.major_neg_oi ? [...data.major_neg_oi] : [], net: [] };
                     lastChartTimestamp = data.timestamp[data.timestamp.length - 1];
                 }
                 computeNetSeries(data);
@@ -1344,19 +1346,12 @@ function captureWindow() {
                 // In-place update: when we already have series for this ticker/date, update data only instead of
                 // removing and re-adding all series. This avoids the chart blinking and scale jumping on every poll.
                 const canUpdateInPlace = lwSeriesList.length > 0 && optimizedLabels.length > 0;
-                // Save visible range (time + logical) before in-place data update so we can restore after setData.
-                // For auto-follow ON we use logical bar count so shift and buffer are correct.
-                let savedVisibleRange = null;
                 let savedVisibleLogicalRange = null;
-                let savedVisibleBarCount = null;
                 if (canUpdateInPlace) {
                     try {
-                        const range = chart.timeScale().getVisibleRange();
-                        if (range && typeof range.from === 'number' && typeof range.to === 'number') savedVisibleRange = { from: range.from, to: range.to };
                         const logical = chart.timeScale().getVisibleLogicalRange();
                         if (logical && typeof logical.from === 'number' && typeof logical.to === 'number') {
                             savedVisibleLogicalRange = { from: logical.from, to: logical.to };
-                            savedVisibleBarCount = logical.to - logical.from;
                         }
                     } catch (e) {}
                 }
@@ -1375,7 +1370,7 @@ function captureWindow() {
                 const levelStyleChanged = appliedLevelHistoryStyle !== styleNow;
                 appliedLevelHistoryStyle = styleNow;
                 if (levelStyleChanged && canUpdateInPlace) {
-                    const levelNames = ['zero_gamma', 'major_pos_vol', 'major_neg_vol'];
+                    const levelNames = ['zero_gamma', 'major_call_gamma', 'major_put_gamma'];
                     for (const endpoint of levelNames) {
                         const series = lwSeriesByEndpoint[endpoint];
                         if (!series) continue;
@@ -1385,21 +1380,6 @@ function captureWindow() {
                     }
                     lwSeriesList = lwSeriesList.filter((entry) => levelNames.indexOf(entry.endpoint) < 0);
                 }
-                let pinFollow = autoFollowEnabled && !followPaused;
-                
-                // When auto-follow is OFF: never shift on append. When ON: we do the shift ourselves (setVisibleLogicalRange after each setData), so keep the library from shifting (shiftVisibleRangeOnNewBar: false). Only when ON and !appendOnly use native shift for the next cycle.
-                if (canUpdateInPlace) {
-                    try {
-                        if (pinFollow && !appendOnly) {
-                            var barCount = savedVisibleBarCount != null && savedVisibleBarCount > 0 ? savedVisibleBarCount : 50;
-                            var rightOffsetBars = bufferBarsFor(barCount);
-                            chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: true, rightOffset: rightOffsetBars });
-                        } else {
-                            chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false, rightOffset: 0 });
-                        }
-                    } catch (e) {}
-                }
-                
                 if (optimizedLabels.length === 0) {
                     await logToBackend('warn', `[Chart] No data after filtering/optimization for ${ticker} on ${dateStr}`);
                     try {
@@ -1416,46 +1396,19 @@ function captureWindow() {
                     if (initialZoomSet) firstChartLoadDone = true;
                     return;
                 }
-                
+
                 chartDataMinTime = dateToLWTime(optimizedLabels[0]);
                 chartDataMaxTime = dateToLWTime(optimizedLabels[optimizedLabels.length - 1]);
                 chartDataLastLogicalIndex = optimizedLabels.length - 1;
-                if (autoFollowEnabled && followPaused && savedVisibleLogicalRange && chartDataLastLogicalIndex >= savedVisibleLogicalRange.to - 0.05) {
-                    followPaused = false;
-                    pinFollow = true;
-                }
-                
-                // Auto-follow + append: set the visible range once before updates and save it for re-apply after the loop. When auto-follow is ON we use setData (not update()) so only one time-scale update per series = stable range.
-                var appendOnlyFollowRangeInLoop = null;
-                if (firstChartLoadDone && !justDidFitContent && pinFollow && appendOnly && chartDataLastLogicalIndex != null && chartDataLastLogicalIndex >= 0) {
-                    var W = savedVisibleBarCount != null && savedVisibleBarCount > 0 ? savedVisibleBarCount : (chartDataLastLogicalIndex + 1);
-                    var bufferBars = bufferBarsFor(W);
-                    var fromLogical = Math.max(0, chartDataLastLogicalIndex - W + bufferBars);
-                    var toLogical = chartDataLastLogicalIndex + bufferBars;
-                    appendOnlyFollowRangeInLoop = { from: fromLogical, to: toLogical };
-                    programmaticRangeChange = true;
-                    lastProgrammaticRangeChangeTime = Date.now();
-                    try { chart.timeScale().setVisibleLogicalRange({ from: fromLogical, to: toLogical }); } catch (e) {}
-                    setTimeout(function () { programmaticRangeChange = false; }, 0);
-                }
-                
-                // When auto-follow is OFF and append-only, set visible range once before any series.update() so the time scale starts the cycle with the desired range (reduces jitter from internal rightOffset changes).
-                if (canUpdateInPlace && !pinFollow && appendOnly && (savedVisibleLogicalRange || savedVisibleRange)) {
-                    programmaticRangeChange = true;
-                    lastProgrammaticRangeChangeTime = Date.now();
-                    try {
-                        if (savedVisibleLogicalRange) chart.timeScale().setVisibleLogicalRange(savedVisibleLogicalRange);
-                        else if (savedVisibleRange) chart.timeScale().setVisibleRange(savedVisibleRange);
-                    } catch (e) {}
-                    setTimeout(function () { programmaticRangeChange = false; }, 0);
-                }
-                
+
                 // Add one line series per endpoint
                 const endpoints = [
                     'spot',
                     'zero_gamma',
-                    'major_pos_vol',    // Positive gamma
-                    'major_neg_vol',    // Negative gamma
+                    'major_pos_vol',    // Positive gamma from live classic snapshots
+                    'major_neg_vol',    // Negative gamma from live classic snapshots
+                    'major_call_gamma', // Historical call gamma from the Ninja majors feed
+                    'major_put_gamma',  // Historical put gamma from the Ninja majors feed
                     'net',              // Net gamma (computed)
                     'major_long_gamma', // Long gamma
                     'major_short_gamma', // Short gamma
@@ -1467,7 +1420,6 @@ function captureWindow() {
                 
                 let datasetsAdded = 0;
                 const batchPromises = [];
-                var deferredSetDataWhenAutoFollow = [];
                 for (const endpoint of endpoints) {
                     if (optimizedData[endpoint] && Array.isArray(optimizedData[endpoint]) && optimizedData[endpoint].length > 0) {
                         const valuesLength = optimizedData[endpoint].length;
@@ -1570,7 +1522,7 @@ function captureWindow() {
                             } else {
                                 series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible, lineVisible: !historyScatter, lineWidth: historyScatter ? 0 : 2, lastValueVisible: showValueOnScale });
                             }
-                            if (appendOnly && series && !pinFollow && !(isLevelHistory && levelStyleChanged)) {
+                            if (appendOnly && series && !(isLevelHistory && levelStyleChanged)) {
                                 var firstNewTimeSpot = chartAppliedPointCount < optimizedLabels.length ? dateToLWTime(optimizedLabels[chartAppliedPointCount]) : null;
                                 var startIdxSpot = 0;
                                 if (firstNewTimeSpot != null) {
@@ -1582,11 +1534,7 @@ function captureWindow() {
                                     try { series.update({ time: lwData[i].time, value: lwData[i].value }); } catch (e) {}
                                 }
                             } else {
-                                if (pinFollow && appendOnly && appendOnlyFollowRangeInLoop != null) {
-                                    deferredSetDataWhenAutoFollow.push({ series: series, data: lwData.map(function (p) { return { time: p.time, value: p.value }; }) });
-                                } else {
-                                    series.setData(lwData.map(function (p) { return { time: p.time, value: p.value }; }));
-                                }
+                                series.setData(lwData.map(function (p) { return { time: p.time, value: p.value }; }));
                             }
                             series.applyOptions({ priceLineVisible: false, lineVisible: !historyScatter, lineWidth: historyScatter ? 0 : 2 });
                             if (isLevelHistory && segmentPrimitive) {
@@ -1621,7 +1569,7 @@ function captureWindow() {
                             } else {
                                 series.applyOptions({ color: colors.border, title: seriesTitle, visible: seriesVisible, lastValueVisible: showValueOnScale });
                             }
-                            if (appendOnly && series && chartAppliedPointCount < labelsToUse.length && !pinFollow) {
+                            if (appendOnly && series && chartAppliedPointCount < labelsToUse.length) {
                                 const firstNewTime = dateToLWTime(labelsToUse[chartAppliedPointCount]);
                                 let startIdx = 0;
                                 for (let k = 0; k < segmentPairs.length; k++) {
@@ -1635,11 +1583,7 @@ function captureWindow() {
                                     // Do NOT fall back to setData: that replaces all data and redraws history. Skip this series this cycle.
                                 }
                             } else {
-                                if (pinFollow && appendOnly && appendOnlyFollowRangeInLoop != null) {
-                                    deferredSetDataWhenAutoFollow.push({ series: series, data: segmentPairs.map(function (p) { return { time: p.time, value: p.value }; }) });
-                                } else {
-                                    series.setData(segmentPairs.map(function (p) { return { time: p.time, value: p.value }; }));
-                                }
+                                series.setData(segmentPairs.map(function (p) { return { time: p.time, value: p.value }; }));
                             }
                             series.applyOptions({ priceLineVisible: false });
                             const lastP = segmentPairs[segmentPairs.length - 1];
@@ -1707,7 +1651,7 @@ function captureWindow() {
                                     } else {
                                         seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd, lastValueVisible: showValueOnScaleFwd });
                                     }
-                                    if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length && !pinFollow) {
+                                    if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length) {
                                         var firstNewTimeFwd = dateToLWTime(optimizedLabels[chartAppliedPointCount]);
                                         var startIdxFwd = 0;
                                         for (var fi = 0; fi < lwDataFwd.length; fi++) {
@@ -1717,11 +1661,7 @@ function captureWindow() {
                                             try { seriesFwd.update({ time: lwDataFwd[i].time, value: lwDataFwd[i].value }); } catch (e) {}
                                         }
                                     } else {
-                                        if (pinFollow && appendOnly && appendOnlyFollowRangeInLoop != null) {
-                                            deferredSetDataWhenAutoFollow.push({ series: seriesFwd, data: lwDataFwd.map(function (p) { return { time: p.time, value: p.value }; }) });
-                                        } else {
-                                            seriesFwd.setData(lwDataFwd.map(function (p) { return { time: p.time, value: p.value }; }));
-                                        }
+                                        seriesFwd.setData(lwDataFwd.map(function (p) { return { time: p.time, value: p.value }; }));
                                     }
                                     seriesFwd.applyOptions({ priceLineVisible: false, lineVisible: !(isLevelHistoryFwd && styleNow === 'scatter'), lineWidth: (isLevelHistoryFwd && styleNow === 'scatter') ? 0 : 2 });
                                     if (isLevelHistoryFwd && segmentPrimitive) {
@@ -1755,7 +1695,7 @@ function captureWindow() {
                                         } else {
                                             seriesFwd.applyOptions({ color: colorsFwd.border, title: seriesTitleFwd, visible: seriesVisibleFwd, lastValueVisible: showValueOnScaleFwd });
                                         }
-                                        if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length && !pinFollow) {
+                                        if (appendOnly && seriesFwd && chartAppliedPointCount < optimizedLabels.length) {
                                             const firstNewTime = dateToLWTime(optimizedLabels[chartAppliedPointCount]);
                                             let startIdx = 0;
                                             for (let k = 0; k < segmentPairsFwd.length; k++) {
@@ -1769,11 +1709,7 @@ function captureWindow() {
                                                 // Do NOT fall back to setData: that would replace all data and redraw history.
                                             }
                                         } else {
-                                            if (pinFollow && appendOnly && appendOnlyFollowRangeInLoop != null) {
-                                                deferredSetDataWhenAutoFollow.push({ series: seriesFwd, data: segmentPairsFwd.map(function (p) { return { time: p.time, value: p.value }; }) });
-                                            } else {
-                                                seriesFwd.setData(segmentPairsFwd.map(function (p) { return { time: p.time, value: p.value }; }));
-                                            }
+                                            seriesFwd.setData(segmentPairsFwd.map(function (p) { return { time: p.time, value: p.value }; }));
                                         }
                                         seriesFwd.applyOptions({ priceLineVisible: false });
                                         const lastPf = segmentPairsFwd[segmentPairsFwd.length - 1];
@@ -1796,99 +1732,19 @@ function captureWindow() {
                 paintLevelHistory();
                 
                 chartAppliedPointCount = optimizedLabels.length;
-                
-                // When auto-follow is ON we deferred setData. Range was already set above (before the loop). Here we only setData in rAF
-                // so we avoid applying range twice; the library will have applied that range in its next paint, so when we setData we
-                // recalc with the same range and all series get consistent bar.x.
-                // Other workarounds if this still misbehaves: (1) Draw segments via a pane primitive using timeScale.logicalToCoordinate
-                // at draw time so coordinates match the same frame. (2) Build LWC from lightweight-charts-src and add a sync "apply range
-                // then recalc" helper, then call it before setData in this rAF.
-                if (deferredSetDataWhenAutoFollow.length > 0) {
-                    requestAnimationFrame(function () {
-                        for (var i = 0; i < deferredSetDataWhenAutoFollow.length; i++) {
-                            var item = deferredSetDataWhenAutoFollow[i];
-                            try { item.series.setData(item.data); } catch (e) {}
-                        }
-                        paintLevelHistory();
-                        programmaticRangeChange = true;
-                        lastProgrammaticRangeChangeTime = Date.now();
-                        setTimeout(function () { programmaticRangeChange = false; }, 0);
-                    });
-                }
-                
-                // Restore visible range after in-place setData when auto-follow is OFF (append-only avoids full replace; we re-pin to saved range).
-                if (canUpdateInPlace && !autoFollowEnabled && (savedVisibleLogicalRange || savedVisibleRange)) {
-                    programmaticRangeChange = true;
-                    lastProgrammaticRangeChangeTime = Date.now();
-                    try {
-                        if (savedVisibleLogicalRange) chart.timeScale().setVisibleLogicalRange(savedVisibleLogicalRange);
-                        else if (savedVisibleRange) chart.timeScale().setVisibleRange(savedVisibleRange);
-                    } catch (e) {}
-                    setTimeout(function () { programmaticRangeChange = false; }, 0);
-                }
-                
-                // Re-apply the "follow right edge" range when auto-follow is ON and append-only (skip when we applied via deferred rAF above).
-                var appendOnlyFollowRange = null;
-                if (canUpdateInPlace && pinFollow && !followPaused && appendOnly && chartDataLastLogicalIndex != null && chartDataLastLogicalIndex >= 0) {
-                    var W_follow = savedVisibleBarCount != null && savedVisibleBarCount > 0 ? savedVisibleBarCount : (chartDataLastLogicalIndex + 1);
-                    var bufferBars_follow = bufferBarsFor(W_follow);
-                    var fromLogical_follow = Math.max(0, chartDataLastLogicalIndex - W_follow + bufferBars_follow);
-                    var toLogical_follow = chartDataLastLogicalIndex + bufferBars_follow;
-                    appendOnlyFollowRange = { from: fromLogical_follow, to: toLogical_follow };
-                    if (deferredSetDataWhenAutoFollow.length === 0) {
-                        programmaticRangeChange = true;
-                        lastProgrammaticRangeChangeTime = Date.now();
-                        try { chart.timeScale().setVisibleLogicalRange({ from: fromLogical_follow, to: toLogical_follow }); } catch (e) {}
-                        setTimeout(function () { programmaticRangeChange = false; }, 0);
-                    }
-                }
-                
-                const zoomStateBefore3 = saveZoomState();
-                
+
                 if (!initialZoomSet) {
                     fitSessionInset();
                     userHasZoomed = false;
                     savedZoomState = null;
-                    justDidFitContent = true;
                     initialZoomSet = true;
+                } else if (autoFollowEnabled) {
+                    commitFollow();
+                } else if (!appendOnly && savedVisibleLogicalRange) {
+                    writeTimeRange(savedVisibleLogicalRange);
                 }
-                
-                // Restore zoom when user had zoomed and this was not an append. (Auto-follow append: range was already set before the loop.)
-                if (zoomStateBefore3 && userHasZoomed && !appendOnly) {
-                    restoreZoomState(zoomStateBefore3);
-                }
-                
-                // Re-apply the visible range in rAF when auto-follow is OFF (saved range) or when auto-follow is ON and append-only and we did not use deferred rAF (skip 2x rAF when we already applied in one rAF to avoid extra repaints).
-                if (!followPaused && canUpdateInPlace && (!pinFollow || (pinFollow && appendOnly && appendOnlyFollowRange != null && deferredSetDataWhenAutoFollow.length === 0))) {
-                    var rangeToReapply = null;
-                    var useLogical = false;
-                    if (!pinFollow) {
-                        if (savedVisibleLogicalRange) {
-                            rangeToReapply = savedVisibleLogicalRange;
-                            useLogical = true;
-                        } else if (savedVisibleRange) {
-                            rangeToReapply = savedVisibleRange;
-                            useLogical = false;
-                        }
-                    } else if (appendOnlyFollowRange != null) {
-                        rangeToReapply = appendOnlyFollowRange;
-                        useLogical = true;
-                    }
-                    if (rangeToReapply != null) {
-                        const doApply = function () {
-                            programmaticRangeChange = true;
-                            lastProgrammaticRangeChangeTime = Date.now();
-                            try {
-                                if (useLogical) chart.timeScale().setVisibleLogicalRange({ from: rangeToReapply.from, to: rangeToReapply.to });
-                                else chart.timeScale().setVisibleRange({ from: rangeToReapply.from, to: rangeToReapply.to });
-                            } catch (e) {}
-                            setTimeout(function () { programmaticRangeChange = false; }, 0);
-                        };
-                        requestAnimationFrame(function () {
-                            doApply();
-                            requestAnimationFrame(doApply);
-                        });
-                    }
+                if (initialZoomSet && typeof zoomHelpers.followSpotPrice === 'function') {
+                    zoomHelpers.followSpotPrice();
                 }
                 
                 if (!isMouseOverChart) updateCrosshairToLatest();
@@ -1964,57 +1820,88 @@ function captureWindow() {
                 return px * bars / width;
             }
 
-            // Keep the same candles on screen and put the pixel gap back on the right.
-            function reapplyFollowGap() {
-                if (!autoFollowEnabled || followPaused) return;
-                var lastIdx = chartDataLastLogicalIndex;
-                if (lastIdx == null || typeof lastIdx !== 'number' || lastIdx < 0) return;
-                var logical = null;
-                try { logical = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-                if (!logical || !Number.isFinite(logical.from)) return;
-                var content = Math.max(1, lastIdx - logical.from);
-                var width = plotWidthPx();
-                var px = Math.min(followBufferPx(), width * 0.45);
-                var bufferBars = (px > 0 && width > px) ? content * px / (width - px) : 0;
+            // One writer for the time axis. Hold does not move the range. Follow keeps the
+            // current bar span and leaves the pixel gap after the last bar. Reset shows the session.
+            let followFrame = 0;
+            function logicalRange() {
+                try {
+                    var logical = chart.timeScale().getVisibleLogicalRange();
+                    if (logical && Number.isFinite(logical.from) && Number.isFinite(logical.to) && logical.to > logical.from) {
+                        return { from: logical.from, to: logical.to };
+                    }
+                } catch (e) {}
+                return null;
+            }
+            function writeTimeRange(range) {
+                if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || !(range.to > range.from)) return;
+                var current = logicalRange();
+                if (current && Math.abs(current.from - range.from) < 0.25 && Math.abs(current.to - range.to) < 0.25) return;
                 programmaticRangeChange = true;
                 lastProgrammaticRangeChangeTime = Date.now();
-                try {
-                    chart.timeScale().setVisibleLogicalRange({ from: logical.from, to: lastIdx + bufferBars });
-                } catch (e) {}
+                try { chart.timeScale().setVisibleLogicalRange({ from: range.from, to: range.to }); } catch (e) {}
                 setTimeout(function () { programmaticRangeChange = false; }, 0);
+            }
+            function followRange() {
+                var lastIdx = chartDataLastLogicalIndex;
+                if (lastIdx == null || typeof lastIdx !== 'number' || lastIdx < 0) return null;
+                var logical = logicalRange();
+                var span = logical ? (logical.to - logical.from) : (lastIdx + 1);
+                if (!(span > 0)) span = lastIdx + 1;
+                var gap = bufferBarsFor(span);
+                return { from: lastIdx + gap - span, to: lastIdx + gap };
+            }
+            function commitFollow() {
+                if (!autoFollowEnabled) return;
+                writeTimeRange(followRange());
+            }
+            function scheduleFollow() {
+                if (!autoFollowEnabled) return;
+                var token = ++followFrame;
+                requestAnimationFrame(function () {
+                    if (token !== followFrame || !autoFollowEnabled) return;
+                    commitFollow();
+                });
+            }
+            function resizeChart(w, h) {
+                var held = autoFollowEnabled ? null : logicalRange();
+                try {
+                    chart.applyOptions({ autoSize: false });
+                    if (typeof chart.resize === 'function') chart.resize(Math.round(w), Math.round(h), true);
+                    else chart.applyOptions({ width: Math.round(w), height: Math.round(h) });
+                } catch (e) {}
+                if (autoFollowEnabled) scheduleFollow();
+                else if (held) writeTimeRange(held);
             }
 
             // Price range first, then one time inset after the price scale has taken its width.
-            // Doing both twice made the edge padding jump.
             let fitToken = 0;
             function applyTimeInset() {
                 var lastIdx = chartDataLastLogicalIndex;
                 if (lastIdx == null || typeof lastIdx !== 'number' || lastIdx < 0) {
-                    chart.timeScale().fitContent();
+                    programmaticRangeChange = true;
+                    lastProgrammaticRangeChangeTime = Date.now();
+                    try { chart.timeScale().fitContent(); } catch (e) {}
+                    setTimeout(function () { programmaticRangeChange = false; }, 0);
                     return;
                 }
                 var plotWidth = plotWidthPx();
                 var padPx = Math.min(followBufferPx(), plotWidth * 0.45);
                 if (!(padPx > 0)) {
-                    programmaticRangeChange = true;
-                    lastProgrammaticRangeChangeTime = Date.now();
-                    chart.timeScale().setVisibleLogicalRange({ from: 0, to: lastIdx });
-                    setTimeout(function () { programmaticRangeChange = false; }, 0);
+                    writeTimeRange({ from: 0, to: lastIdx });
                     return;
                 }
                 var bars = lastIdx + 1;
                 var inset = bars * (padPx / (plotWidth - padPx * 2));
-                programmaticRangeChange = true;
-                lastProgrammaticRangeChangeTime = Date.now();
-                chart.timeScale().setVisibleLogicalRange({ from: -inset, to: lastIdx + inset });
-                setTimeout(function () { programmaticRangeChange = false; }, 0);
+                writeTimeRange({ from: -inset, to: lastIdx + inset });
             }
             function fitSessionInset() {
                 const token = ++fitToken;
+                try { if (live && typeof live.resetChartProfileX === 'function') live.resetChartProfileX(); } catch (e) {}
                 try { setPriceScaleFromSpotOnly(); } catch (e) {}
                 requestAnimationFrame(function () {
                     if (token !== fitToken) return;
                     try { applyTimeInset(); } catch (e) {}
+                    try { setPriceScaleFromSpotOnly(); } catch (e) {}
                     if (live && typeof live.relinkProfilePrice === 'function') live.relinkProfilePrice();
                 });
             }
@@ -2057,7 +1944,6 @@ function captureWindow() {
                         await applyResetWithBuffer();
                         userHasZoomed = false;
                         savedZoomState = null;
-                        followPaused = false;
                         await logToBackend('info', '[Chart] Reset zoom to default filter').catch(() => {});
                     } catch (error) {
                         console.error('[Chart] Error resetting zoom:', error);
@@ -2075,9 +1961,9 @@ function captureWindow() {
                 
                 autoFollowBtn.addEventListener('click', () => {
                     autoFollowEnabled = !autoFollowEnabled;
-                    followPaused = false;
                     autoFollowBtn.textContent = `Auto-Follow: ${autoFollowEnabled ? 'ON' : 'OFF'}`;
                     autoFollowBtn.classList.toggle('active', autoFollowEnabled);
+                    if (autoFollowEnabled) scheduleFollow();
                     logToBackend('info', `[Chart] Auto-follow ${autoFollowEnabled ? 'enabled' : 'disabled'}`).catch(() => {});
                 });
             }
@@ -2182,7 +2068,7 @@ function captureWindow() {
                         if (globalChartSettings.ChartZoomFilterPercent !== zoomBefore) {
                             try { setPriceScaleFromSpotOnly(); } catch (e) {}
                         }
-                        try { reapplyFollowGap(); } catch (e) {}
+                        try { scheduleFollow(); } catch (e) {}
                         if (live && typeof live.redrawProfile === 'function') live.redrawProfile();
                         paintLevelHistory();
                     }

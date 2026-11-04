@@ -92,6 +92,12 @@
                             <input type="password" id="api-key" placeholder="Enter your API key">
                             <small id="api-key-status">Checking API key status...</small>
                         </div>
+                        <div class="setting-group">
+                            <label for="ninja-api-key">NinjaTrader API Key:</label>
+                            <input type="password" id="ninja-api-key" placeholder="Enter your NinjaTrader API key" autocomplete="off">
+                            <small id="ninja-api-key-status">Checking NinjaTrader key status...</small>
+                            <small>Used for historical call and put gamma. Separate from the API key above, and stored only in the local app config on this PC.</small>
+                        </div>
                         
                         <div class="setting-group">
                             <label>Subscription Tiers:</label>
@@ -227,9 +233,8 @@
                             <label for="chart-zoom-filter">Chart Y-Axis Zoom Filter (%):</label>
                             <input type="number" id="chart-zoom-filter" min="0.01" max="100" step="0.01" value="1.0" style="width: 100px;">
                             <small style="display: block; margin-top: 0.25rem; color: #888;">
-                                Default zoom level for Y-axis viewport. Shows ±(percentage) of current spot price. 
-                                Example: 1% with spot=5000 shows range 4950-5050. All data points are still plotted;
-                                this only controls the initial visible range. You can zoom/pan to see other points.
+                                Empty space above today's high and below today's low, as a percent of the current spot.
+                                1% at 5000 leaves 50 points on each side. A profile drawn on the chart uses this window.
                             </small>
                         </div>
                         <div class="setting-group" style="margin-top: 0.75rem;">

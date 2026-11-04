@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -712,6 +713,10 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 		settings.APITKey = currentSettings.APITKey
 		a.debugPrint(fmt.Sprintf("SaveSettings: Preserved existing API key (length: %d)", len(settings.APITKey)), "app")
 	}
+	if strings.TrimSpace(settings.NinjaAPIKey) == "" && strings.TrimSpace(currentSettings.NinjaAPIKey) != "" {
+		settings.NinjaAPIKey = currentSettings.NinjaAPIKey
+	}
+	settings.NinjaAPIKey = strings.TrimSpace(settings.NinjaAPIKey)
 
 	// When user provided a new API key, persist it to file and use saveAPIKey=true so poller and all consumers get it
 	saveAPIKey := settings.APITKey != "" && settings.APITKey != currentSettings.APITKey

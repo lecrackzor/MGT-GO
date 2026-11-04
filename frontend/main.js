@@ -180,7 +180,11 @@ function settingsWithoutKey(settings) {
     if (typeof copy.APITKey === 'string' && copy.APITKey.length > 0) {
         copy.HasAPIKey = true;
     }
+    if (typeof copy.NinjaAPIKey === 'string' && copy.NinjaAPIKey.length > 0) {
+        copy.HasNinjaAPIKey = true;
+    }
     delete copy.APITKey;
+    delete copy.NinjaAPIKey;
     return copy;
 }
 
@@ -1122,6 +1126,17 @@ function loadSettingsUI(settings) {
                 apiKeyStatus.style.color = hasApiKey ? '#4CAF50' : '#ff9800';
             }
         }
+        const ninjaKeyInput = document.getElementById('ninja-api-key');
+        const ninjaKeyStatus = document.getElementById('ninja-api-key-status');
+        if (ninjaKeyInput) {
+            ninjaKeyInput.value = '';
+            const hasNinjaKey = settings.HasNinjaAPIKey === true;
+            ninjaKeyInput.placeholder = hasNinjaKey ? '••••••••••••••••' : 'Enter your NinjaTrader API key';
+            if (ninjaKeyStatus) {
+                ninjaKeyStatus.textContent = hasNinjaKey ? '✓ NinjaTrader key is saved' : 'No NinjaTrader key configured. Historical call and put gamma stay off.';
+                ninjaKeyStatus.style.color = hasNinjaKey ? '#4CAF50' : '#ff9800';
+            }
+        }
         
         // Load subscription tiers
         const tiers = settings.APISubscriptionTiers || ['classic'];
@@ -1842,6 +1857,14 @@ async function saveSettings(options) {
         if (typedAPIKey !== '') {
             settings.APITKey = typedAPIKey;
         }
+        const ninjaKeyInput = document.getElementById('ninja-api-key');
+        const ninjaKeyStatus = document.getElementById('ninja-api-key-status');
+        const typedNinjaKey = ninjaKeyInput ? ninjaKeyInput.value.trim() : '';
+        if (typedNinjaKey !== '') {
+            settings.NinjaAPIKey = typedNinjaKey;
+        } else {
+            delete settings.NinjaAPIKey;
+        }
         
         // Save subscription tiers - read checkboxes carefully
         const tiers = [];
@@ -1951,6 +1974,14 @@ async function saveSettings(options) {
                     if (apiKeyStatus) {
                         apiKeyStatus.textContent = '✓ API key is saved';
                         apiKeyStatus.style.color = '#4CAF50';
+                    }
+                }
+                if (typedNinjaKey !== '' && ninjaKeyInput) {
+                    ninjaKeyInput.value = '';
+                    ninjaKeyInput.placeholder = '••••••••••••••••';
+                    if (ninjaKeyStatus) {
+                        ninjaKeyStatus.textContent = '✓ NinjaTrader key is saved';
+                        ninjaKeyStatus.style.color = '#4CAF50';
                     }
                 }
             } catch (error) {

@@ -289,6 +289,7 @@ function ProfilePrimitive() {
                     };
                     if (!self._active) return;
                     try {
+                        if (!self._onChart) setChartProfileAxes([]);
                         if (self._onChart) drawOnChart(target, self._layers, chartY, self._showDots, self._levels, self._priceSide, self._align, self._band);
                         else if (self._side) {
                             const frame = self._paneH > 0 ? { top: self._shift, bottom: self._shift + self._paneH } : null;
@@ -374,6 +375,7 @@ export function installProfile(live) {
     let ladderAlign = prefs.align;
     const seededAlign = chartProfileFields(readChartPrefs(live.ticker, live.dateFromURL || '')).ladderAlign;
     if (seededAlign) ladderAlign = seededAlign;
+    let chartXZoom = 1;
     let sideLinked = true;
     let sidePriceLo = null;
     let sidePriceHi = null;
@@ -532,7 +534,7 @@ export function installProfile(live) {
             active: shown && layers.length > 0,
             onChart: onChart,
             layers: layers,
-            band: band(),
+            band: Object.assign({}, band(), { zoom: chartXZoom }),
             side: canvas,
             paneSide: sidePane().side,
             spot: spot,
@@ -782,6 +784,34 @@ export function installProfile(live) {
     }
     live.relinkProfilePrice = relinkProfilePrice;
 
+    function pointOnChartProfileAxis(clientX, clientY) {
+        if (!chartProfileAxes.length) return false;
+        const frame = document.getElementById('chart-div');
+        if (!frame) return false;
+        const rect = frame.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        for (let i = 0; i < chartProfileAxes.length; i++) {
+            const box = chartProfileAxes[i];
+            if (x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) return true;
+        }
+        return false;
+    }
+    function resetChartProfileX() {
+        if (chartXZoom === 1) return;
+        chartXZoom = 1;
+        if (open && mode === 'chart') draw();
+    }
+    live.resetChartProfileX = resetChartProfileX;
+    live.zoomChartProfileX = function (clientX, clientY, deltaY) {
+        if (mode !== 'chart' || !open || !docked) return false;
+        if (!pointOnChartProfileAxis(clientX, clientY)) return false;
+        const factor = deltaY < 0 ? 1.12 : 1 / 1.12;
+        chartXZoom = clamp(chartXZoom * factor, 0.2, 12);
+        draw();
+        return true;
+    };
+
     async function load(at) {
         if (loadFlight) {
             loadQueued = true;
@@ -926,6 +956,10 @@ export function installProfile(live) {
         const key = Math.round(size.w) + 'x' + Math.round(size.h);
         if (key === lastPlotSize) return;
         lastPlotSize = key;
+        if (typeof live.resizeChart === 'function') {
+            live.resizeChart(size.w, size.h);
+            return;
+        }
         try { chart.applyOptions({ autoSize: false }); } catch (err) {}
         try { chart.resize(Math.round(size.w), Math.round(size.h), true); } catch (err) {}
     }
@@ -2691,16 +2725,30 @@ function drawMagnitudeRow(ctx, layer, center, half, y, plotW, showDots, baseline
     }
 }
 
+let chartProfileAxes = [];
+
+function chartProfileSpan(place) {
+    if (!place) return null;
+    if (place.dir === 'left') return { left: place.center, right: place.center + place.half };
+    if (place.dir === 'right') return { left: place.center - place.half, right: place.center };
+    return { left: place.center - place.half, right: place.center + place.half };
+}
+
+function setChartProfileAxes(boxes) {
+    chartProfileAxes = boxes || [];
+}
+
 function onChartPlacement(plotW, showDots, align, band) {
     const edge = ladderEdge(showDots) + 8;
+    const zoom = band && Number.isFinite(band.zoom) && band.zoom > 0 ? band.zoom : 1;
     if (align === 'left' || align === 'right') {
         const room = Math.max(8, plotW - edge * 2);
-        const reach = Math.min(room, Math.max(8, plotW * 0.36));
+        const reach = Math.min(room, Math.max(8, plotW * 0.36) * zoom);
         const center = align === 'left' ? edge : Math.max(edge, plotW - edge);
         return { center: center, half: reach, dir: align };
     }
     const widthFrac = band && Number.isFinite(band.width) ? band.width : 0.22;
-    let bandW = Math.max(48, widthFrac * plotW);
+    let bandW = Math.max(48, widthFrac * plotW) * zoom;
     bandW = Math.min(bandW, Math.max(48, plotW - edge * 2));
     const half = Math.max(8, bandW / 2);
     const frac = band && Number.isFinite(band.center) ? band.center : 0.62;
@@ -2774,7 +2822,6 @@ function drawEdgePills(ctx, pills, yOf, plotW, plotH, side) {
 
 function paintChartLevels(ctx, yOf, plotW, plotH, levels, priceSide, hits) {
     if (!levels) return;
-    const pills = [];
     for (const mark of levels.marks || []) {
         const y = yOf(mark.price);
         if (y == null || y < 0 || y > plotH) continue;
@@ -2785,7 +2832,6 @@ function paintChartLevels(ctx, yOf, plotW, plotH, levels, priceSide, hits) {
         ctx.textBaseline = 'bottom';
         const caption = mark.label === 'Zero gamma' ? '0 gamma' : mark.label;
         ctx.fillText(caption, levelTextX(ctx, caption, 0, plotW, levels.labelX), y - 1);
-        pills.push({ price: mark.price, bg: mark.color, text: formatPrice(mark.price) });
         if (hits && mark.label === 'Zero gamma') {
             hits.push({
                 kind: 'bar',
@@ -2804,9 +2850,7 @@ function paintChartLevels(ctx, yOf, plotW, plotH, levels, priceSide, hits) {
         const y = yOf(price);
         if (y == null || y < 0 || y > plotH) continue;
         dashAcross(ctx, y, 0, plotW, '#888888');
-        pills.push({ price: price, bg: '#888888', text: formatPrice(price) });
     }
-    drawEdgePills(ctx, pills, yOf, plotW, plotH, priceSide);
 }
 
 function paintMoveBands(ctx, yOf, moves, left, right, top, bottom, side) {
@@ -2857,14 +2901,11 @@ function drawMoveBounds(target, yOf, levels, priceSide) {
         const plotH = bh / vRatio;
         ctx.save();
         ctx.setTransform(hRatio, 0, 0, vRatio, 0, 0);
-        const pills = [];
         for (const price of moves) {
             const y = yOf(price);
             if (y == null || y < 0 || y > plotH) continue;
             dashAcross(ctx, y, 0, plotW, '#888888');
-            pills.push({ price: price, bg: '#888888', text: formatPrice(price) });
         }
-        drawEdgePills(ctx, pills, yOf, plotW, plotH, priceSide);
         ctx.restore();
     });
 }
@@ -2879,7 +2920,10 @@ function shiftHits(hits, dx, dy) {
 }
 
 function drawOnChart(target, layers, yOf, showDots, levels, priceSide, align, band) {
-    if (!layers.length) return;
+    if (!layers.length) {
+        setChartProfileAxes([]);
+        return;
+    }
     target.useBitmapCoordinateSpace(function (scope) {
         const ctx = scope.context;
         const hRatio = scope.horizontalPixelRatio || 1;
@@ -2897,10 +2941,24 @@ function drawOnChart(target, layers, yOf, showDots, levels, priceSide, align, ba
         paintChartLevels(ctx, yOf, plotW, plotH, levels, priceSide, hits);
         const canvas = ctx.canvas;
         const frame = document.getElementById('chart-div');
+        let dx = 0;
+        let dy = 0;
         if (frame && canvas && typeof canvas.getBoundingClientRect === 'function') {
             const frameRect = frame.getBoundingClientRect();
             const canvasRect = canvas.getBoundingClientRect();
-            shiftHits(hits, canvasRect.left - frameRect.left, canvasRect.top - frameRect.top);
+            dx = canvasRect.left - frameRect.left;
+            dy = canvasRect.top - frameRect.top;
+            shiftHits(hits, dx, dy);
+        }
+        const span = chartProfileSpan(place);
+        if (span) {
+            const left = Math.min(span.left, span.right) + dx - 8;
+            const width = Math.abs(span.right - span.left) + 16;
+            const strip = 32;
+            setChartProfileAxes([
+                { x: left, y: dy, w: width, h: strip },
+                { x: left, y: dy + Math.max(0, plotH - strip), w: width, h: strip },
+            ]);
         }
         hoverState.hits = hits;
         hoverState.space = 'chart';
@@ -4064,6 +4122,7 @@ export function installStandaloneProfile() {
     }
     function openProfileMenu(clientX, clientY) {
         if (!profileMenu) return;
+        if (profileMenu.parentElement !== document.body) document.body.appendChild(profileMenu);
         profileMenu.innerHTML = '';
         function rowToggle(item, box) {
             item.addEventListener('click', (e) => {

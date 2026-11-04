@@ -36,6 +36,8 @@ const (
 	ConfigFileName = "config.yaml"
 	// APIKeyEnvVar is the environment variable name for the API key
 	APIKeyEnvVar = "GEXBOT_API_KEY"
+	// NinjaAPIKeyEnvVar fills ninja_api_key only when the settings field is empty.
+	NinjaAPIKeyEnvVar = "GEXBOT_NINJA_API_KEY"
 	// OldSettingsFileName is the old JSON settings file name (for migration)
 	OldSettingsFileName = "market_terminal_settings.json"
 )

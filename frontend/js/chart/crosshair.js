@@ -212,6 +212,7 @@ const chartContextMenu = document.getElementById('chart-context-menu');
     }
 function openChartContextMenu(clientX, clientY, view) {
     if (!chartContextMenu) return;
+    if (chartContextMenu.parentElement !== document.body) document.body.appendChild(chartContextMenu);
     const onSide = view === 'side';
     (async function () {
         const dateStr = live.currentChartDateStr || await getMarketDate(live.dateFromURL);
@@ -245,6 +246,28 @@ function openChartContextMenu(clientX, clientY, view) {
             if (top < pad) top = pad;
             chartContextMenu.style.left = left + 'px';
             chartContextMenu.style.top = top + 'px';
+        }
+        function collapsedSection(title) {
+            const parent = document.createElement('div');
+            parent.className = 'ctx-item ctx-parent';
+            const label = document.createElement('span');
+            label.textContent = title;
+            const arrow = document.createElement('span');
+            arrow.className = 'ctx-arrow';
+            arrow.textContent = '▶';
+            parent.appendChild(label);
+            parent.appendChild(arrow);
+            const menu = document.createElement('div');
+            menu.className = 'ctx-submenu';
+            parent.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.classList.toggle('expanded');
+                arrow.textContent = menu.classList.contains('expanded') ? '▼' : '▶';
+                if (menu.classList.contains('expanded')) requestAnimationFrame(() => clampContextMenuToViewport());
+            });
+            chartContextMenu.appendChild(parent);
+            chartContextMenu.appendChild(menu);
+            return menu;
         }
         prefsParent.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -450,7 +473,7 @@ function openChartContextMenu(clientX, clientY, view) {
         const layout = typeof live.profileLayout === 'function'
             ? live.profileLayout()
             : ((live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {});
-        function layoutControl(labelText, control) {
+        function layoutControl(labelText, control, host) {
             const item = document.createElement('div');
             item.className = 'ctx-item';
             const span = document.createElement('span');
@@ -459,17 +482,14 @@ function openChartContextMenu(clientX, clientY, view) {
             control.addEventListener('click', (e) => e.stopPropagation());
             item.appendChild(span);
             item.appendChild(control);
-            chartContextMenu.appendChild(item);
+            (host || chartContextMenu).appendChild(item);
             return item;
         }
         function saveLayout(partial) {
             if (typeof live.saveProfileLayout === 'function') live.saveProfileLayout(partial);
         }
         if (onSide) {
-            const layoutSection = document.createElement('div');
-            layoutSection.className = 'ctx-section';
-            layoutSection.textContent = 'Side profile';
-            chartContextMenu.appendChild(layoutSection);
+            const sideMenu = collapsedSection('Side profile');
             const dockItem = document.createElement('div');
             dockItem.className = 'ctx-item';
             const docked = typeof live.profileDocked === 'function' ? live.profileDocked() : true;
@@ -483,19 +503,19 @@ function openChartContextMenu(clientX, clientY, view) {
                     live.attachProfile();
                 }
             });
-            chartContextMenu.appendChild(dockItem);
+            sideMenu.appendChild(dockItem);
             const sideSelect = document.createElement('select');
             sideSelect.innerHTML = '<option value="right">Right</option><option value="left">Left</option>';
             sideSelect.value = layout.profile_side === 'left' ? 'left' : 'right';
             sideSelect.addEventListener('change', () => saveLayout({ profile_side: sideSelect.value === 'left' ? 'left' : 'right' }));
-            layoutControl('Side', sideSelect);
+            layoutControl('Side', sideSelect, sideMenu);
             const tickSelect = document.createElement('select');
             tickSelect.innerHTML = '<option value="aligned">5 / 10</option><option value="true">Strikes</option>';
             tickSelect.value = typeof live.priceTickMode === 'function' && live.priceTickMode() === 'true' ? 'true' : 'aligned';
             tickSelect.addEventListener('change', () => {
                 if (typeof live.setPriceTickMode === 'function') live.setPriceTickMode(tickSelect.value);
             });
-            layoutControl('Prices', tickSelect);
+            layoutControl('Prices', tickSelect, sideMenu);
             const axisSelect = document.createElement('select');
             axisSelect.innerHTML = '<option value="off">Off</option><option value="left">Left</option><option value="right">Right</option>';
             const axisNow = typeof live.profileAxis === 'function' ? live.profileAxis() : 'left';
@@ -503,26 +523,20 @@ function openChartContextMenu(clientX, clientY, view) {
             axisSelect.addEventListener('change', () => {
                 if (typeof live.setProfileAxis === 'function') live.setProfileAxis(axisSelect.value);
             });
-            layoutControl('Y axis', axisSelect);
+            layoutControl('Y axis', axisSelect, sideMenu);
         }
 
-        const historySection = document.createElement('div');
-        historySection.className = 'ctx-section';
-        historySection.textContent = 'Level history';
-        chartContextMenu.appendChild(historySection);
+        const historyMenu = collapsedSection('Level history');
         const historySelect = document.createElement('select');
         historySelect.innerHTML = '<option value="average">Average</option><option value="scatter">Scatter</option>';
         historySelect.value = typeof live.levelHistoryStyle === 'function' && live.levelHistoryStyle() === 'scatter' ? 'scatter' : 'average';
         historySelect.addEventListener('change', () => {
             if (typeof live.setLevelHistoryStyle === 'function') live.setLevelHistoryStyle(historySelect.value);
         });
-        layoutControl('Average or Scatter', historySelect);
+        layoutControl('Average or Scatter', historySelect, historyMenu);
 
         if (!onSide && profileShown) {
-            const ladderSection = document.createElement('div');
-            ladderSection.className = 'ctx-section';
-            ladderSection.textContent = 'Ladder';
-            chartContextMenu.appendChild(ladderSection);
+            const ladderMenu = collapsedSection('Ladder');
             const alignSelect = document.createElement('select');
             alignSelect.innerHTML = '<option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>';
             const alignNow = typeof live.ladderAlign === 'function' ? live.ladderAlign() : 'center';
@@ -530,7 +544,7 @@ function openChartContextMenu(clientX, clientY, view) {
             alignSelect.addEventListener('change', () => {
                 if (typeof live.setLadderAlign === 'function') live.setLadderAlign(alignSelect.value);
             });
-            layoutControl('Align', alignSelect);
+            layoutControl('Align', alignSelect, ladderMenu);
             const widthInput = document.createElement('input');
             widthInput.type = 'number';
             widthInput.min = '8';
@@ -545,7 +559,7 @@ function openChartContextMenu(clientX, clientY, view) {
                 widthInput.value = String(value);
                 saveLayout({ bar_width_percent: value });
             });
-            const widthItem = layoutControl('Width %', widthInput);
+            const widthItem = layoutControl('Width %', widthInput, ladderMenu);
             const centerInput = document.createElement('input');
             centerInput.type = 'number';
             centerInput.min = '0';
@@ -560,7 +574,7 @@ function openChartContextMenu(clientX, clientY, view) {
                 centerInput.value = String(value);
                 saveLayout({ profile_x_percent: value });
             });
-            const centerItem = layoutControl('Center %', centerInput);
+            const centerItem = layoutControl('Center %', centerInput, ladderMenu);
             function syncCenterControls() {
                 const show = alignSelect.value === 'center';
                 widthItem.style.display = show ? '' : 'none';
@@ -574,7 +588,7 @@ function openChartContextMenu(clientX, clientY, view) {
             orderSelect.addEventListener('change', () => {
                 if (typeof live.setProfileOver === 'function') live.setProfileOver(orderSelect.value !== 'under');
             });
-            layoutControl('Draw', orderSelect);
+            layoutControl('Draw', orderSelect, ladderMenu);
         }
 
         if (!onSide && live.lwSeriesList.length > 0) {

@@ -57,23 +57,26 @@ func TestCloneSettingsDoesNotShareProfileMaps(t *testing.T) {
 }
 
 func TestRedactedSettingsOmitsAPIKey(t *testing.T) {
-	redacted := RedactedSettings(&Settings{APITKey: "secret-value", EnableDebug: true})
+	redacted := RedactedSettings(&Settings{APITKey: "secret-value", NinjaAPIKey: "ninja-secret", EnableDebug: true})
 	if !redacted.HasAPIKey {
 		t.Fatal("HasAPIKey should be true")
 	}
-	if redacted.APITKey != "" {
-		t.Fatal("redacted copy still holds the key")
+	if !redacted.HasNinjaAPIKey {
+		t.Fatal("HasNinjaAPIKey should be true")
+	}
+	if redacted.APITKey != "" || redacted.NinjaAPIKey != "" {
+		t.Fatal("redacted copy still holds a key")
 	}
 	data, err := json.Marshal(redacted)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, "APITKey") || strings.Contains(text, "api_key") || strings.Contains(text, "secret-value") {
+	if strings.Contains(text, `"APITKey"`) || strings.Contains(text, "api_key") || strings.Contains(text, "secret-value") || strings.Contains(text, "ninja-secret") || strings.Contains(text, `"NinjaAPIKey"`) {
 		t.Fatalf("key leaked into JSON: %s", text)
 	}
-	if !strings.Contains(text, `"HasAPIKey":true`) {
-		t.Fatalf("HasAPIKey missing: %s", text)
+	if !strings.Contains(text, `"HasAPIKey":true`) || !strings.Contains(text, `"HasNinjaAPIKey":true`) {
+		t.Fatalf("key flags missing: %s", text)
 	}
 
 	empty := RedactedSettings(&Settings{})

@@ -17,7 +17,11 @@ type Settings struct {
 	// API Key is loaded from environment variable GEXBOT_API_KEY first, then from config file
 	// Note: omitempty is removed so API key is always written when present
 	APITKey                            string                  `yaml:"api_key" json:"APITKey,omitempty"`
+	// NinjaAPIKey is the user's NinjaTrader integration key. Historical call and put gamma
+	// require it. It is stored in the local config and is not part of the app.
+	NinjaAPIKey                        string                  `yaml:"ninja_api_key" json:"NinjaAPIKey,omitempty"`
 	HasAPIKey                          bool                    `yaml:"-" json:"HasAPIKey"`
+	HasNinjaAPIKey                     bool                    `yaml:"-" json:"HasNinjaAPIKey"`
 	APISubscriptionTiers               []string                `yaml:"api_subscription_tiers"`
 	CollectAllEndpoints                bool                    `yaml:"collect_all_endpoints"`           // true = collect all available data, false = chart data only
 	ActiveTickerRefreshRateMs          int                     `yaml:"active_ticker_refresh_rate_ms"`   // saved with settings; not the live poll
@@ -245,6 +249,10 @@ func (sm *SettingsManager) LoadSettings() (*Settings, error) {
 		}
 	}
 	settings.APITKey = apiKey
+	settings.NinjaAPIKey = strings.TrimSpace(settings.NinjaAPIKey)
+	if settings.NinjaAPIKey == "" {
+		settings.NinjaAPIKey = strings.TrimSpace(os.Getenv(NinjaAPIKeyEnvVar))
+	}
 
 	// Initialize TickerConfigs if nil
 	if settings.TickerConfigs == nil {
@@ -411,7 +419,9 @@ func RedactedSettings(settings *Settings) *Settings {
 		return &Settings{HasAPIKey: strings.TrimSpace(settings.APITKey) != ""}
 	}
 	out.HasAPIKey = strings.TrimSpace(settings.APITKey) != ""
+	out.HasNinjaAPIKey = strings.TrimSpace(settings.NinjaAPIKey) != ""
 	out.APITKey = ""
+	out.NinjaAPIKey = ""
 	return out
 }
 

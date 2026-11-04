@@ -4,6 +4,8 @@ export const CHART_SERIES_METADATA = [
     { key: 'zero_gamma', label: 'Zero Gamma', defaultColor: '#FF9800' },
     { key: 'major_pos_vol', label: 'Positive Gamma', defaultColor: '#2196F3' },
     { key: 'major_neg_vol', label: 'Negative Gamma', defaultColor: '#F44336' },
+    { key: 'major_call_gamma', label: 'Call Gamma', defaultColor: '#2BE05C' },
+    { key: 'major_put_gamma', label: 'Put Gamma', defaultColor: '#FF4747' },
     { key: 'net', label: 'Net Gamma', defaultColor: '#00FFFF' },
     { key: 'major_long_gamma', label: 'Long Gamma', defaultColor: '#9C27B0' },
     { key: 'major_short_gamma', label: 'Short Gamma', defaultColor: '#00BCD4' },

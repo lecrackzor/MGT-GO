@@ -27,12 +27,12 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 		return false, fmt.Errorf("failed to parse old settings file: %w", err)
 	}
 
-	// Extract API key (will be moved to environment variable)
+	// Keep the key in the new settings file. Do not copy it into a side note.
 	apiKey, _ := oldSettings["api_key"].(string)
 
 	// Create new settings struct from old data
 	newSettings := &Settings{
-		APITKey:                        "", // Will be loaded from env var
+		APITKey:                        apiKey,
 		APISubscriptionTiers:           getStringSlice(oldSettings, "api_subscription_tiers", []string{"classic"}),
 		ActiveTickerRefreshRateMs:      getInt(oldSettings, "active_ticker_refresh_rate_ms", 5000),
 		DataCollectionRefreshRateMs:    getInt(oldSettings, "data_collection_refresh_rate_ms", 30000),
@@ -95,35 +95,6 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 	manager := NewSettingsManager(newConfigPath)
 	if err := manager.SaveSettings(newSettings); err != nil {
 		return false, fmt.Errorf("failed to save new config: %w", err)
-	}
-
-	// If API key was found, create a note file with instructions
-	if apiKey != "" {
-		notePath := filepath.Join(configDir, "API_KEY_MIGRATION.txt")
-		noteContent := fmt.Sprintf(`API Key Migration Notice
-
-Your API key was found in the old settings file and has been migrated.
-
-IMPORTANT: For security, please set the API key as an environment variable:
-
-Windows (PowerShell):
-  $env:GEXBOT_API_KEY = "%s"
-
-Windows (CMD):
-  set GEXBOT_API_KEY=%s
-
-Linux/Mac:
-  export GEXBOT_API_KEY=%s
-
-Or add it to your shell profile (.bashrc, .zshrc, etc.) for persistence.
-
-The application will check the environment variable first, then fall back to the config file.
-`, apiKey, apiKey, apiKey)
-
-		if err := os.WriteFile(notePath, []byte(noteContent), 0644); err != nil {
-			// Non-fatal, just log
-			fmt.Printf("Warning: Could not create migration note file: %v\n", err)
-		}
 	}
 
 	return true, nil

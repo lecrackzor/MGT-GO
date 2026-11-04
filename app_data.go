@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"market-terminal/internal/api"
 	"market-terminal/internal/config"
 	"market-terminal/internal/database"
 	"market-terminal/internal/utils"
@@ -127,8 +131,85 @@ func (a *App) GetChartData(ticker string, dateStr string, sinceStr string) (map[
 	if pointCount == 0 {
 		a.debugPrint(fmt.Sprintf("GetChartData: No data found for %s on %s", ticker, dateStr), "app")
 	}
+	a.attachHistoricalMajors(ticker, date, result)
 
 	return result, nil
+}
+
+// attachHistoricalMajors fills major_call_gamma and major_put_gamma from the
+// same Ninja history feed the gexbot indicator draws. Live major_pos_vol and
+// major_neg_vol stay as the positive and negative gamma snapshots.
+func (a *App) attachHistoricalMajors(ticker string, date time.Time, result map[string]interface{}) {
+	if a.apiClient == nil || a.settingsManager == nil {
+		return
+	}
+	settings := a.settingsManager.GetSettings()
+	if settings == nil || strings.TrimSpace(settings.NinjaAPIKey) == "" {
+		return
+	}
+	times, ok := result["timestamp"].(database.ChartSeries)
+	if !ok || len(times) == 0 {
+		return
+	}
+	start, end := usSessionBounds(date)
+	samples, err := a.apiClient.FetchHistoricalMajors(context.Background(), settings.NinjaAPIKey, ticker, start, end)
+	if err != nil {
+		a.debugPrint(fmt.Sprintf("GetChartData: historical majors for %s: %v", ticker, err), "app")
+		return
+	}
+	call, put := alignHistoricalMajors(times, samples)
+	result["major_call_gamma"] = call
+	result["major_put_gamma"] = put
+}
+
+func usSessionBounds(date time.Time) (int64, int64) {
+	loc := utils.GetMarketTimezone()
+	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+	now := time.Now().In(loc)
+	open := day.Add(9*time.Hour + 30*time.Minute)
+	if day.Year() == now.Year() && day.YearDay() == now.YearDay() && now.Before(open) {
+		day = day.AddDate(0, 0, -1)
+		for day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+			day = day.AddDate(0, 0, -1)
+		}
+		open = day.Add(9*time.Hour + 30*time.Minute)
+	}
+	closeAt := day.Add(16 * time.Hour)
+	if closeAt.After(now) {
+		closeAt = now
+	}
+	return open.Unix(), closeAt.Unix()
+}
+
+func alignHistoricalMajors(times database.ChartSeries, samples []api.HistMajor) (database.ChartSeries, database.ChartSeries) {
+	sort.Slice(samples, func(i, j int) bool { return samples[i].Timestamp < samples[j].Timestamp })
+	call := make(database.ChartSeries, len(times))
+	put := make(database.ChartSeries, len(times))
+	for i := range call {
+		call[i] = math.NaN()
+		put[i] = math.NaN()
+	}
+	if len(samples) == 0 {
+		return call, put
+	}
+	idx := 0
+	for i, ts := range times {
+		bar := int64(ts)
+		for idx+1 < len(samples) && samples[idx+1].Timestamp <= bar {
+			idx++
+		}
+		sample := samples[idx]
+		if sample.Timestamp > bar || bar-sample.Timestamp > 300 {
+			continue
+		}
+		if sample.Call != 0 {
+			call[i] = sample.Call
+		}
+		if sample.Put != 0 {
+			put[i] = sample.Put
+		}
+	}
+	return call, put
 }
 
 // GetProfile returns one gunzipped profile snapshot. atStr is unix seconds.

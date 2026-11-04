@@ -80,28 +80,38 @@ export function installZoom(live) {
         const chartDataCache = live.chartDataCache;
         if (!chart) return;
         let spot = null;
+        let spotMin = null;
+        let spotMax = null;
         if (chartDataCache && Array.isArray(chartDataCache.spot)) {
-            for (let i = chartDataCache.spot.length - 1; i >= 0; i--) {
+            for (let i = 0; i < chartDataCache.spot.length; i++) {
                 const v = Number(chartDataCache.spot[i]);
-                if (Number.isFinite(v) && v !== 0) {
-                    spot = v;
-                    break;
-                }
+                if (!Number.isFinite(v) || v === 0) continue;
+                spot = v;
+                if (spotMin == null || v < spotMin) spotMin = v;
+                if (spotMax == null || v > spotMax) spotMax = v;
             }
         }
-        if (spot == null) return;
+        if (spot == null || spotMin == null || spotMax == null) return;
         const settings = live.globalChartSettings || {};
         const pct = Number(settings.ChartZoomFilterPercent);
         const percent = Number.isFinite(pct) && pct > 0 ? pct : 1;
+        // Percent of the current spot, above the session high and below the session low.
+        // Profile strikes stay on this scale and do not widen it.
         const pad = Math.abs(spot) * (percent / 100) || 1;
         try {
             const scale = activePriceScale();
-            scale.applyOptions({ autoScale: false });
-            scale.setVisibleRange({ from: spot - pad, to: spot + pad });
+            scale.applyOptions({ autoScale: false, scaleMargins: { top: 0.1, bottom: 0.1 } });
+            scale.setVisibleRange({ from: spotMin - pad, to: spotMax + pad });
             live.autoPrice = 'spot';
             if (typeof live.redrawProfile === 'function') live.redrawProfile();
         } catch (e) {}
     }
 
-    return { applyPriceZoom, applyTimeZoom, saveZoomState, restoreZoomState, setPriceScaleFromSpotOnly, setVisiblePriceRange };
+    // Keep the configured band around the latest spot until the price scale is dragged or wheeled.
+    function followSpotPrice() {
+        if (live.autoPrice === 'user' || live.autoPrice === 'ladder') return;
+        setPriceScaleFromSpotOnly();
+    }
+
+    return { applyPriceZoom, applyTimeZoom, saveZoomState, restoreZoomState, setPriceScaleFromSpotOnly, followSpotPrice, setVisiblePriceRange };
 }
