@@ -25,7 +25,11 @@ const (
 
 // API Configuration
 const (
-	APIBaseURL = "https://api.gexbot.com"
+	// APIBaseURL is the host plus the /v2 version prefix. The /hist routes are
+	// only served under /v2: without it, POST /hist/{ticker}/{package}/{category}
+	// answers 401 for a key that is otherwise valid. The snapshot routes are
+	// also served under /v2, so a single versioned base covers every endpoint.
+	APIBaseURL = "https://api.gexbot.com/v2"
 )
 
 // Config Directory and Environment Variables
