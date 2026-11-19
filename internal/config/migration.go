@@ -57,7 +57,7 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 		ProfileSampleSeconds:            getInt(oldSettings, "profile_sample_seconds", 5),
 		EODBackfillEnabled:              getBool(oldSettings, "eod_backfill_enabled", true),
 		EODBackfillTime:                 getString(oldSettings, "eod_backfill_time", "17:15"),
-		IntradayBackfillEnabled:         getBool(oldSettings, "intraday_backfill_enabled", false),
+		IntradayBackfillEnabled:         getBool(oldSettings, "intraday_backfill_enabled", true),
 		IntradayBackfillIntervalMinutes: getInt(oldSettings, "intraday_backfill_interval_minutes", 30),
 		IntradayFillMaxRequestsPerDay:   getInt(oldSettings, "intraday_fill_max_requests_per_day", 8),
 		IntradayFillMinGapSeconds:       getInt(oldSettings, "intraday_fill_min_gap_seconds", 60),

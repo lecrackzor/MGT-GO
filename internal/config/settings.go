@@ -550,7 +550,7 @@ func getDefaultSettings() *Settings {
 		ProfileSampleSeconds:            5,
 		EODBackfillEnabled:              true,
 		EODBackfillTime:                 "17:15",
-		IntradayBackfillEnabled:         false,
+		IntradayBackfillEnabled:         true,
 		IntradayBackfillIntervalMinutes: 30,
 		IntradayFillMaxRequestsPerDay:   8,
 		IntradayFillMinGapSeconds:       60,

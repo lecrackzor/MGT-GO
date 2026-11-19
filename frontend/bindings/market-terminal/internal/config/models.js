@@ -277,7 +277,7 @@ export class Settings {
              * @member
              * @type {boolean}
              */
-            this["IntradayBackfillEnabled"] = false;
+            this["IntradayBackfillEnabled"] = true;
         }
         if (!("IntradayBackfillIntervalMinutes" in $$source)) {
             /**

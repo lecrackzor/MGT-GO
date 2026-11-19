@@ -279,9 +279,9 @@ function collect(settings) {
     settings.EODBackfillTime = ($('eod-backfill-time').value || '').trim() || '17:15';
     const ladderMB = parseInt($('eod-max-ladder-mb').value, 10);
     settings.EODMaxLadderMB = (!isNaN(ladderMB) && ladderMB >= 0) ? ladderMB : 0;
-    // The intraday history route is not part of this subscription, so the
-    // during-the-day sweep stays off and has no UI.
-    settings.IntradayBackfillEnabled = false;
+    // The intraday history route is part of the subscription (served under /v2),
+    // so the during-the-day sweep is on by default.
+    settings.IntradayBackfillEnabled = true;
 
     // tickers
     if (!settings.TickerConfigs) settings.TickerConfigs = {};
@@ -474,7 +474,7 @@ function wireFooter() {
         settings.Use24HourTime = true;
         settings.EODBackfillEnabled = true;
         settings.EODBackfillTime = '17:15';
-        settings.IntradayBackfillEnabled = false;
+        settings.IntradayBackfillEnabled = true;
         settings.EODMaxLadderMB = 200;
         settings.PriceAxisLocation = 'left';
         settings.ProfileSettings = { ...(settings.ProfileSettings || {}), profile_side: 'right', side_width_percent: 28, show_priors: true, enabled: false };
