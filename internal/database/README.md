@@ -35,7 +35,7 @@ All database operations use `modernc.org/sqlite` (pure Go driver):
 
 ## Connection Management
 
-- **Idle Timeout**: Connections idle for >10 seconds are closed
+- **Idle Timeout**: Connections idle for 3 minutes are closed
 - **Cleanup Interval**: Cleanup runs every 5 seconds
 - **Pool Size Limit**: Maximum 20 connections (configurable)
 - **Thread-Safe**: All pool operations are protected by locks
@@ -65,9 +65,9 @@ writer.FlushTicker("SPX")
 // Create loader
 loader := database.NewDataLoader(settings, debugPrint)
 
-// Load data
-data, err := loader.LoadFromFile("SPX", time.Now())
+// Load the latest row for the ticker table
+data, err := loader.LoadTickerData("SPX", time.Now())
 
-// Load time range
-data, err := loader.LoadTimeRange("SPX", time.Now(), startTime, endTime)
+// Load chart series
+chart, err := loader.LoadChartData("SPX", time.Now(), 0, nil)
 ```

@@ -1,8 +1,8 @@
 # Disclaimer
 
-This software is **NOT affiliated with, endorsed by, or associated with Gexbot** (Not Financial Advice, LLC) or any of its affiliates. This is an independent, open-source project.
+This software is **NOT affiliated with, endorsed by, or associated with Gexbot** (Not Financial Advice, LLC) or any of its affiliates. This is an independent, open-source project. "Gexbot" and any related names are the property of their respective owners and are used only to describe the data source this application connects to.
 
-© 2026 Not Financial Advice, LLC. All rights reserved.
+Copyright (c) 2026 lecrackzor. Released under the MIT License; see [LICENSE](LICENSE).
 
 **This software is provided "AS IS", without warranty of any kind, express or implied.** The developers make no representations or warranties regarding the accuracy, completeness, or reliability of any data or information provided. Use at your own risk.
 

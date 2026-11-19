@@ -3,6 +3,7 @@ build/
 bin/
 *.exe
 *.exe~
+*.exe.bak*
 *.dll
 *.so
 *.dylib
@@ -41,11 +42,12 @@ Thumbs.db
 *.db-shm
 *.db-wal
 
-# Ticker data directories
-Tickers */
+# Ticker data directories (live data and legacy day folders, never commit)
+Tickers/
+Tickers*/
 
-# PNG chart gallery (scripts/export_daily_charts.py default --out)
-chart_gallery/
+# Archive trimming output from cmd/trimprofiles (generated, local-only)
+trimmed-out/
 
 # Log files
 *.log
@@ -54,6 +56,8 @@ logs/
 # Settings (may contain sensitive data like API keys)
 settings.yaml
 settings.yml
+config.yaml
+config.yml
 *.yaml.bak
 *.yml.bak
 
@@ -69,26 +73,3 @@ dist/
 *.pb.gz
 *.prof
 pprof/
-
-# ---------------------------------------------------------------------------
-# Python ML sidecar (local-only — do not commit the side project)
-# ---------------------------------------------------------------------------
-ml/
-scripts/
-tests/
-
-# Python bytecode / caches (any stray .py outside the dirs above)
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-*.egg-info/
-.eggs/
-
-# Large ML artifacts if copied outside ml/ (e.g. manual backups)
-*.joblib
-*.parquet
-optuna.db
-optuna.db-journal

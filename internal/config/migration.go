@@ -27,46 +27,47 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 		return false, fmt.Errorf("failed to parse old settings file: %w", err)
 	}
 
-	// Extract API key (will be moved to environment variable)
+	// Keep the key in the new settings file. Do not copy it into a side note.
 	apiKey, _ := oldSettings["api_key"].(string)
 
 	// Create new settings struct from old data
 	newSettings := &Settings{
-		APITKey:                        "", // Will be loaded from env var
-		APISubscriptionTiers:           getStringSlice(oldSettings, "api_subscription_tiers", []string{"classic"}),
-		ActiveTickerRefreshRateMs:      getInt(oldSettings, "active_ticker_refresh_rate_ms", 5000),
-		DataCollectionRefreshRateMs:    getInt(oldSettings, "data_collection_refresh_rate_ms", 30000),
-		DataDirectory:                  getString(oldSettings, "data_directory", "Tickers"),
-		TrimDataStartTime:              getString(oldSettings, "trim_data_start_time", "09:33"),
-		TrimDataEndTime:                getString(oldSettings, "trim_data_end_time", "16:00"),
-		EnableDebug:                    getBool(oldSettings, "enable_debug", false),
-		HideConsole:                    getBool(oldSettings, "hide_console", true),
-		ShowCrosshair:                  getBool(oldSettings, "show_crosshair", true),
-		ShowDialogWarnings:             getBool(oldSettings, "show_dialog_warnings", true),
-		CrosshairColor:                 getString(oldSettings, "crosshair_color", "808080"),
-		CrosshairTextSize:              getInt(oldSettings, "crosshair_text_size", 12),
-		CrosshairTextPlacement:         getString(oldSettings, "crosshair_text_placement", "top_center"),
+		APITKey:                         apiKey,
+		APISubscriptionTiers:            getStringSlice(oldSettings, "api_subscription_tiers", []string{"classic"}),
+		DataDirectory:                   getString(oldSettings, "data_directory", "Tickers"),
+		EnableDebug:                     getBool(oldSettings, "enable_debug", false),
+		HideConsole:                     getBool(oldSettings, "hide_console", true),
+		ShowDialogWarnings:              getBool(oldSettings, "show_dialog_warnings", true),
+		CrosshairColor:                  getString(oldSettings, "crosshair_color", "808080"),
+		CrosshairTextSize:               getInt(oldSettings, "crosshair_text_size", 12),
+		CrosshairTextPlacement:          getString(oldSettings, "crosshair_text_placement", "top_center"),
 		CrosshairBackgroundOpacity:      getInt(oldSettings, "crosshair_background_opacity", 180),
 		CrosshairAxisMarkersEnabled:     getBool(oldSettings, "crosshair_axis_markers_enabled", true),
-		CrosshairAxisMarkerSide:        getString(oldSettings, "crosshair_axis_marker_side", "right"),
+		CrosshairAxisMarkerSide:         getString(oldSettings, "crosshair_axis_marker_side", "right"),
 		AlertDisplayTimeoutMs:           getInt(oldSettings, "alert_display_timeout_ms", 60000),
-		PriceColor:                     getString(oldSettings, "price_color", "ffffff"),
-		PriceFilterThresholdFuturesPercent: getFloat64(oldSettings, "price_filter_threshold_futures_percent", 3.0),
-		PriceFilterThresholdStocksPercent:   getFloat64(oldSettings, "price_filter_threshold_stocks_percent", 7.0),
+		PriceColor:                      getString(oldSettings, "price_color", "ffffff"),
 		LegendOpacity:                   getInt(oldSettings, "legend_opacity", 100),
-		LegendFontColor:                getString(oldSettings, "legend_font_color", "ffffff"),
+		LegendFontColor:                 getString(oldSettings, "legend_font_color", "ffffff"),
 		LegendFontSize:                  getInt(oldSettings, "legend_font_size", 12),
-		LegendBackgroundTransparent:    getBool(oldSettings, "legend_background_transparent", true),
-		LegendBackgroundColor:         getString(oldSettings, "legend_background_color", "000000"),
-		PriceAxisLocation:              getString(oldSettings, "price_axis_location", "left"),
-		ChartTimezone:                  getString(oldSettings, "chart_timezone", "market"),
-		Alerts:                         getInterfaceSlice(oldSettings, "alerts"),
-		ProfileSettings:                getMap(oldSettings, "profile_settings"),
-		Classic:                        getMap(oldSettings, "classic"),
-		State:                          getMap(oldSettings, "state"),
-		Orderflow:                      getMap(oldSettings, "orderflow"),
-		Charts:                         getInterfaceSlice(oldSettings, "charts"),
-		Tickers:                        getInterfaceSlice(oldSettings, "tickers"),
+		LegendBackgroundTransparent:     getBool(oldSettings, "legend_background_transparent", true),
+		LegendBackgroundColor:           getString(oldSettings, "legend_background_color", "000000"),
+		PriceAxisLocation:               getString(oldSettings, "price_axis_location", "left"),
+		Alerts:                          getInterfaceSlice(oldSettings, "alerts"),
+		ProfileSettings:                 getMap(oldSettings, "profile_settings"),
+		ProfileSampleSeconds:            getInt(oldSettings, "profile_sample_seconds", 5),
+		EODBackfillEnabled:              getBool(oldSettings, "eod_backfill_enabled", true),
+		EODBackfillTime:                 getString(oldSettings, "eod_backfill_time", "17:15"),
+		IntradayBackfillEnabled:         getBool(oldSettings, "intraday_backfill_enabled", false),
+		IntradayBackfillIntervalMinutes: getInt(oldSettings, "intraday_backfill_interval_minutes", 30),
+		IntradayFillMaxRequestsPerDay:   getInt(oldSettings, "intraday_fill_max_requests_per_day", 8),
+		IntradayFillMinGapSeconds:       getInt(oldSettings, "intraday_fill_min_gap_seconds", 60),
+		EODMaxLadderMB:                  getInt(oldSettings, "eod_max_ladder_mb", 200),
+		DataRetentionDays:               getInt(oldSettings, "data_retention_days", 0),
+		Classic:                         getMap(oldSettings, "classic"),
+		State:                           getMap(oldSettings, "state"),
+		Orderflow:                       getMap(oldSettings, "orderflow"),
+		Charts:                          getInterfaceSlice(oldSettings, "charts"),
+		Tickers:                         getInterfaceSlice(oldSettings, "tickers"),
 	}
 
 	// Migrate ticker_configs if present
@@ -95,35 +96,6 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 	manager := NewSettingsManager(newConfigPath)
 	if err := manager.SaveSettings(newSettings); err != nil {
 		return false, fmt.Errorf("failed to save new config: %w", err)
-	}
-
-	// If API key was found, create a note file with instructions
-	if apiKey != "" {
-		notePath := filepath.Join(configDir, "API_KEY_MIGRATION.txt")
-		noteContent := fmt.Sprintf(`API Key Migration Notice
-
-Your API key was found in the old settings file and has been migrated.
-
-IMPORTANT: For security, please set the API key as an environment variable:
-
-Windows (PowerShell):
-  $env:GEXBOT_API_KEY = "%s"
-
-Windows (CMD):
-  set GEXBOT_API_KEY=%s
-
-Linux/Mac:
-  export GEXBOT_API_KEY=%s
-
-Or add it to your shell profile (.bashrc, .zshrc, etc.) for persistence.
-
-The application will check the environment variable first, then fall back to the config file.
-`, apiKey, apiKey, apiKey)
-
-		if err := os.WriteFile(notePath, []byte(noteContent), 0644); err != nil {
-			// Non-fatal, just log
-			fmt.Printf("Warning: Could not create migration note file: %v\n", err)
-		}
 	}
 
 	return true, nil

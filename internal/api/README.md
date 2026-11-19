@@ -43,24 +43,9 @@ This package provides the API client and query system for Market Terminal Gexbot
 client := api.NewClient(apiKey, debugPrint)
 
 // Create query system
-querySystem := api.NewQuerySystem(settings, apiKey, client, debugPrint)
+querySystem := api.NewQuerySystem(settings, client)
 
-// Build query plan
-queryPlan := []api.QueryPlanItem{
-	{Ticker: "SPX", Endpoints: []string{"classic_zero", "state_zero"}},
-}
-
-// Validate and filter queries
-queries := querySystem.ValidateAndFilterQueries(queryPlan)
-
-// Execute queries in parallel
-querySystem.ExecuteQueryPlan(queries, 96, func(q api.Query, result map[string]interface{}, err error) {
-	if err != nil {
-		log.Printf("Error: %v", err)
-		return
-	}
-	// Process result
-})
+queries := querySystem.BuildValidatedQueries([]string{"SPX"}, []string{"SPX"})
 ```
 
 ## Memory Visibility

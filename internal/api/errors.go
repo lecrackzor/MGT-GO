@@ -29,8 +29,8 @@ func (e *SubscriptionError) Error() string {
 
 // RateLimitError represents a rate limit error
 type RateLimitError struct {
-	Endpoint  string
-	Message   string
+	Endpoint   string
+	Message    string
 	RetryAfter string
 }
 

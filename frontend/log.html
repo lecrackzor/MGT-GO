@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Log</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; color: #d0d0d0; }
+        body { display: flex; flex-direction: column; font-family: Consolas, "Courier New", monospace; }
+        header { flex: 0 0 auto; padding: 0.5rem 0.75rem; background: #252525; border-bottom: 1px solid #3a3a3a; font-family: "Segoe UI", sans-serif; font-size: 0.85rem; color: #aaa; overflow-wrap: anywhere; }
+        #log { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0.75rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.4; }
+    </style>
+</head>
+<body>
+    <header id="path">Loading log…</header>
+    <pre id="log"></pre>
+    <script>
+        const pathEl = document.getElementById('path');
+        const logEl = document.getElementById('log');
+        async function refresh() {
+            const nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+            try {
+                const response = await fetch('/api/log', { cache: 'no-store' });
+                const data = await response.json();
+                pathEl.textContent = data.path || 'File logging is off. Turn it on in Settings and restart.';
+                logEl.textContent = data.text || '';
+                if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+            } catch (err) {
+                pathEl.textContent = 'Could not read the log';
+            }
+        }
+        refresh();
+        setInterval(refresh, 1000);
+    </script>
+</body>
+</html>

@@ -42,17 +42,3 @@ func (ct *ChartTracker) GetDisplayedTickers() []string {
 	}
 	return tickers
 }
-
-// IsTickerDisplayed checks if a ticker is currently displayed
-func (ct *ChartTracker) IsTickerDisplayed(ticker string) bool {
-	ct.mu.RLock()
-	defer ct.mu.RUnlock()
-	return ct.displayedTickers[ticker]
-}
-
-// GetDisplayedTickerCount returns the number of displayed tickers
-func (ct *ChartTracker) GetDisplayedTickerCount() int {
-	ct.mu.RLock()
-	defer ct.mu.RUnlock()
-	return len(ct.displayedTickers)
-}

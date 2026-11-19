@@ -6,18 +6,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Logger provides file and console logging with per-run rotation
 type Logger struct {
-	mu           sync.Mutex
-	logFile      *os.File
-	logDir       string
-	logPath      string // Full path to current log file
-	consoleLog   *log.Logger
-	fileLog      *log.Logger
+	mu         sync.Mutex
+	logFile    *os.File
+	logDir     string
+	logPath    string // Full path to current log file
+	consoleLog *log.Logger
+	fileLog    *log.Logger
 }
 
 var globalLogger *Logger
@@ -59,8 +60,8 @@ func NewLogger(logDir string) (*Logger, error) {
 	now := time.Now()
 	logFileName := fmt.Sprintf("%s.log", now.Format("2006-01-02_15-04-05"))
 	logPath := filepath.Join(logDir, logFileName)
-	
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
@@ -68,14 +69,65 @@ func NewLogger(logDir string) (*Logger, error) {
 	logger.logFile = file
 	logger.logPath = logPath
 
-	// Create file logger that writes to both file and console
-	multiWriter := io.MultiWriter(os.Stdout, file)
-	logger.fileLog = log.New(multiWriter, "", log.LstdFlags)
-
-	// Create console logger (stdout)
-	logger.consoleLog = log.New(os.Stdout, "", log.LstdFlags)
+	// The process has no console window. Keep every line in the log file.
+	logger.fileLog = log.New(file, "", log.LstdFlags)
+	logger.consoleLog = log.New(io.Discard, "", log.LstdFlags)
+	log.SetOutput(logger)
+	log.SetFlags(log.LstdFlags)
 
 	return logger, nil
+}
+
+// Write implements io.Writer so the standard logger lands in the same file.
+func (l *Logger) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.logFile == nil {
+		return len(p), nil
+	}
+	return l.logFile.Write(p)
+}
+
+// Tail returns the current log path and its trailing bytes.
+func (l *Logger) Tail(maxBytes int) (string, string) {
+	if l == nil {
+		return "", ""
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.logFile == nil {
+		return l.logPath, ""
+	}
+	info, err := l.logFile.Stat()
+	if err != nil || info.Size() == 0 {
+		return l.logPath, ""
+	}
+	size := info.Size()
+	start := int64(0)
+	if maxBytes > 0 && size > int64(maxBytes) {
+		start = size - int64(maxBytes)
+	}
+	buf := make([]byte, size-start)
+	n, err := l.logFile.ReadAt(buf, start)
+	if n == 0 && err != nil {
+		return l.logPath, ""
+	}
+	text := string(buf[:n])
+	if start > 0 {
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			text = text[i+1:]
+		}
+	}
+	return l.logPath, text
+}
+
+// CurrentLogTail reads the active log without creating one.
+func CurrentLogTail(maxBytes int) (string, string, bool) {
+	if globalLogger == nil || globalLogger.logFile == nil {
+		return "", "", false
+	}
+	path, text := globalLogger.Tail(maxBytes)
+	return path, text, true
 }
 
 // rotateIfNeeded is a no-op for per-run logging (no rotation during runtime)
@@ -86,7 +138,7 @@ func (l *Logger) rotateIfNeeded() error {
 	return nil
 }
 
-// Printf logs a formatted message to both console and file
+// Printf logs a formatted message to the session log.
 func (l *Logger) Printf(format string, v ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
