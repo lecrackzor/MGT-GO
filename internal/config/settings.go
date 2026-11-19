@@ -553,7 +553,7 @@ func getDefaultSettings() *Settings {
 		IntradayBackfillEnabled:         true,
 		IntradayBackfillIntervalMinutes: 30,
 		IntradayFillMaxRequestsPerDay:   8,
-		IntradayFillMinGapSeconds:       60,
+		IntradayFillMinGapSeconds:       45,
 		EODMaxLadderMB:                  200,
 		DataRetentionDays:               0,
 		Classic: map[string]interface{}{

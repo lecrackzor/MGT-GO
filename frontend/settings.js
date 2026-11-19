@@ -228,6 +228,9 @@ function renderStorage(settings) {
     $('eod-backfill-enabled').checked = settings.EODBackfillEnabled === true;
     $('eod-backfill-time').value = settings.EODBackfillTime || '17:15';
     $('eod-max-ladder-mb').value = settings.EODMaxLadderMB || 0;
+    $('intraday-backfill-enabled').checked = settings.IntradayBackfillEnabled === true;
+    $('intraday-backfill-interval').value = settings.IntradayBackfillIntervalMinutes || 30;
+    $('intraday-fill-min-gap').value = settings.IntradayFillMinGapSeconds || 45;
 }
 
 function renderApi(settings) {
@@ -279,9 +282,11 @@ function collect(settings) {
     settings.EODBackfillTime = ($('eod-backfill-time').value || '').trim() || '17:15';
     const ladderMB = parseInt($('eod-max-ladder-mb').value, 10);
     settings.EODMaxLadderMB = (!isNaN(ladderMB) && ladderMB >= 0) ? ladderMB : 0;
-    // The intraday history route is part of the subscription (served under /v2),
-    // so the during-the-day sweep is on by default.
-    settings.IntradayBackfillEnabled = true;
+    settings.IntradayBackfillEnabled = $('intraday-backfill-enabled').checked;
+    const intervalMin = parseInt($('intraday-backfill-interval').value, 10);
+    settings.IntradayBackfillIntervalMinutes = (!isNaN(intervalMin) && intervalMin >= 1) ? intervalMin : 30;
+    const minGap = parseInt($('intraday-fill-min-gap').value, 10);
+    settings.IntradayFillMinGapSeconds = (!isNaN(minGap) && minGap >= 1) ? minGap : 45;
 
     // tickers
     if (!settings.TickerConfigs) settings.TickerConfigs = {};
@@ -475,6 +480,8 @@ function wireFooter() {
         settings.EODBackfillEnabled = true;
         settings.EODBackfillTime = '17:15';
         settings.IntradayBackfillEnabled = true;
+        settings.IntradayBackfillIntervalMinutes = 30;
+        settings.IntradayFillMinGapSeconds = 45;
         settings.EODMaxLadderMB = 200;
         settings.PriceAxisLocation = 'left';
         settings.ProfileSettings = { ...(settings.ProfileSettings || {}), profile_side: 'right', side_width_percent: 28, show_priors: true, enabled: false };

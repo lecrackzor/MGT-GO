@@ -312,7 +312,7 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 	}
 	open, _ := sessionBounds(date)
 	closeAt := end
-	minGap := float64(intOr(settings.IntradayFillMinGapSeconds, 60))
+	minGap := float64(intOr(settings.IntradayFillMinGapSeconds, 45))
 	gaps, err := missingRanges(chartPath, open, closeAt, minGap)
 	if err != nil {
 		return err
