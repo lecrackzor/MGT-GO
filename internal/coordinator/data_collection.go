@@ -276,7 +276,7 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 			if errors.As(err, &rateLimitErr) {
 				cancel()
 			}
-			dcc.recordRequestOutcome(rateLimitTracker, result, err)
+			dcc.recordRequestOutcome(rateLimitTracker, q.Endpoint, result, err)
 
 			mu.Lock()
 			if err != nil {
@@ -308,6 +308,7 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 // on success it records the request and any X-RateLimit-* headers.
 func (dcc *DataCollectionCoordinator) recordRequestOutcome(
 	tracker *scheduler.RateLimitTracker,
+	endpoint string,
 	result map[string]interface{},
 	err error,
 ) {
@@ -335,7 +336,7 @@ func (dcc *DataCollectionCoordinator) recordRequestOutcome(
 			headers = h
 		}
 	}
-	tracker.RecordRequest(now, headers)
+	tracker.RecordRequest(endpoint, now, headers)
 }
 
 // Chart columns come from the zero-DTE endpoint that actually computes them.
@@ -343,23 +344,61 @@ func (dcc *DataCollectionCoordinator) recordRequestOutcome(
 // gamma_one fills only when gamma_zero did not. State and the other greeks
 // repeat these keys (often as 0, or as the 1 DTE level) and must not replace them.
 // spot uses the same classic rank so a later state or greek price cannot replace it.
-var chartScalarSources = map[string]map[string]int{
-	"spot":                {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"zero_gamma":          {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"major_pos_vol":       {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"major_neg_vol":       {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"major_pos_oi":        {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"major_neg_oi":        {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"sum_gex_vol":         {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"sum_gex_oi":          {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"delta_risk_reversal": {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"min_dte":             {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"sec_min_dte":         {"classic_zero": 0, "classic_one": 1, "classic_full": 2},
-	"major_long_gamma":    {"gamma_zero": 0, "gamma_one": 1},
-	"major_short_gamma":   {"gamma_zero": 0, "gamma_one": 1},
-	"major_positive":      {"gamma_zero": 0, "gamma_one": 1},
-	"major_negative":      {"gamma_zero": 0, "gamma_one": 1},
+//
+// State and Orderflow ranks sit below the classic ones on purpose: when the
+// account has classic data, it always wins, and a State-only or chart-only
+// account still fills the chart instead of writing nothing. Orderflow has no
+// classic or state endpoint at all, so it is last for spot and the major levels.
+var classicScalarRank = map[string]int{
+	"classic_zero": 0,
+	"classic_one":  1,
+	"classic_full": 2,
+	"state_zero":   3,
+	"state_one":    4,
+	"state_full":   5,
 }
+
+var gammaScalarRank = map[string]int{
+	"gamma_zero": 0,
+	"gamma_one":  1,
+	"state_zero": 2,
+	"state_one":  3,
+	"state_full": 4,
+}
+
+func cloneRanks(src map[string]int) map[string]int {
+	out := make(map[string]int, len(src)+1)
+	for endpoint, rank := range src {
+		out[endpoint] = rank
+	}
+	return out
+}
+
+var chartScalarSources = func() map[string]map[string]int {
+	sources := make(map[string]map[string]int, 16)
+	for _, field := range []string{
+		"zero_gamma", "major_pos_vol", "major_neg_vol", "major_pos_oi",
+		"major_neg_oi", "sum_gex_vol", "sum_gex_oi", "delta_risk_reversal",
+		"min_dte", "sec_min_dte",
+	} {
+		sources[field] = cloneRanks(classicScalarRank)
+	}
+	for _, field := range []string{
+		"major_long_gamma", "major_short_gamma", "major_positive", "major_negative",
+	} {
+		sources[field] = cloneRanks(gammaScalarRank)
+	}
+
+	// spot and the major levels are the only chart columns an Orderflow
+	// account receives, and the only ones it must be allowed to write.
+	spot := cloneRanks(classicScalarRank)
+	spot["orderflow"] = 6
+	sources["spot"] = spot
+	for _, field := range []string{"major_long_gamma", "major_short_gamma", "major_positive", "major_negative"} {
+		sources[field]["orderflow"] = 5
+	}
+	return sources
+}()
 
 // keepChartScalar reports whether this endpoint may write the shared chart column.
 // Lower rank wins. A field with no owner list keeps the previous last-write behavior.

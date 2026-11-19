@@ -4,7 +4,7 @@ package config
 type TickerConfig struct {
 	Display           bool   `yaml:"display" json:"Display"`
 	CollectionEnabled bool   `yaml:"collection_enabled" json:"CollectionEnabled"`
-	Priority          string `yaml:"priority" json:"Priority"` // "high", "medium", "low"
+	Priority          string `yaml:"priority" json:"Priority"`             // "high", "medium", "low"
 	RefreshRateMs     *int   `yaml:"refresh_rate_ms" json:"RefreshRateMs"` // Optional override, 0 = use priority-based scheduling
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	_ "time/tzdata" // Embed IANA timezone database for Windows compatibility
 
@@ -18,7 +19,19 @@ import (
 //go:embed all:frontend
 var frontend embed.FS
 
+func scheduledStartShouldExit(args []string) bool {
+	for _, arg := range args {
+		if arg == "--scheduled-start" {
+			return utils.SessionSkipsOpen(utils.NowMarketTime())
+		}
+	}
+	return false
+}
+
 func main() {
+	if scheduledStartShouldExit(os.Args[1:]) {
+		return
+	}
 	hideConsoleWindow()
 
 	// Load settings first to check EnableLogging
@@ -108,6 +121,34 @@ func main() {
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			json.NewEncoder(w).Encode(map[string]string{"date": marketDate})
+			return
+		}
+
+		if r.URL.Path == "/api/tickers" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"tickers": config.KnownTickerList,
+				"groups":  config.TickerGroups,
+			})
+			return
+		}
+
+		if r.URL.Path == "/api/request-count" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			json.NewEncoder(w).Encode(map[string]int64{"count": appInstance.RequestCount()})
+			return
+		}
+
+		if r.URL.Path == "/api/backfill-status" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			if report := appInstance.BackfillStatus(); report != nil {
+				_ = json.NewEncoder(w).Encode(report)
+			} else {
+				w.Write([]byte(`{}`))
+			}
 			return
 		}
 

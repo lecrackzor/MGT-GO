@@ -16,14 +16,37 @@ export class Settings {
      * @param {Partial<Settings>} [$$source = {}] - The source object to create the Settings.
      */
     constructor($$source = {}) {
-        if (!("APITKey" in $$source)) {
+        if (/** @type {any} */(false)) {
             /**
              * API Key is loaded from environment variable GEXBOT_API_KEY first, then from config file
              * Note: omitempty is removed so API key is always written when present
              * @member
-             * @type {string}
+             * @type {string | undefined}
              */
-            this["APITKey"] = "";
+            this["APITKey"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * NinjaAPIKey is the user's NinjaTrader integration key. Historical call and put gamma
+             * require it. It is stored in the local config and is not part of the app.
+             * @member
+             * @type {string | undefined}
+             */
+            this["NinjaAPIKey"] = undefined;
+        }
+        if (!("HasAPIKey" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["HasAPIKey"] = false;
+        }
+        if (!("HasNinjaAPIKey" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["HasNinjaAPIKey"] = false;
         }
         if (!("APISubscriptionTiers" in $$source)) {
             /**
@@ -40,40 +63,12 @@ export class Settings {
              */
             this["CollectAllEndpoints"] = false;
         }
-        if (!("ActiveTickerRefreshRateMs" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["ActiveTickerRefreshRateMs"] = 0;
-        }
-        if (!("DataCollectionRefreshRateMs" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["DataCollectionRefreshRateMs"] = 0;
-        }
         if (!("DataDirectory" in $$source)) {
             /**
              * @member
              * @type {string}
              */
             this["DataDirectory"] = "";
-        }
-        if (!("TrimDataStartTime" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["TrimDataStartTime"] = "";
-        }
-        if (!("TrimDataEndTime" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["TrimDataEndTime"] = "";
         }
         if (!("EnableDebug" in $$source)) {
             /**
@@ -112,6 +107,20 @@ export class Settings {
              */
             this["Use24HourTime"] = false;
         }
+        if (!("CloseAfterMarketClose" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["CloseAfterMarketClose"] = false;
+        }
+        if (!("StartBeforeMarketOpen" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["StartBeforeMarketOpen"] = false;
+        }
         if (!("HiddenPlots" in $$source)) {
             /**
              * Plots hidden by default on charts
@@ -119,13 +128,6 @@ export class Settings {
              * @type {string[]}
              */
             this["HiddenPlots"] = [];
-        }
-        if (!("ShowCrosshair" in $$source)) {
-            /**
-             * @member
-             * @type {boolean}
-             */
-            this["ShowCrosshair"] = false;
         }
         if (!("ShowDialogWarnings" in $$source)) {
             /**
@@ -190,20 +192,6 @@ export class Settings {
              */
             this["PriceColor"] = "";
         }
-        if (!("PriceFilterThresholdFuturesPercent" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["PriceFilterThresholdFuturesPercent"] = 0;
-        }
-        if (!("PriceFilterThresholdStocksPercent" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["PriceFilterThresholdStocksPercent"] = 0;
-        }
         if (!("LegendOpacity" in $$source)) {
             /**
              * @member
@@ -246,13 +234,6 @@ export class Settings {
              */
             this["PriceAxisLocation"] = "";
         }
-        if (!("ChartTimezone" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["ChartTimezone"] = "";
-        }
         if (!("Alerts" in $$source)) {
             /**
              * @member
@@ -266,6 +247,74 @@ export class Settings {
              * @type {{ [_: string]: any }}
              */
             this["ProfileSettings"] = {};
+        }
+        if (!("ProfileSampleSeconds" in $$source)) {
+            /**
+             * how often a ladder is stored; chart scalars keep the poll cadence
+             * @member
+             * @type {number}
+             */
+            this["ProfileSampleSeconds"] = 0;
+        }
+        if (!("EODBackfillEnabled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["EODBackfillEnabled"] = false;
+        }
+        if (!("EODBackfillTime" in $$source)) {
+            /**
+             * ET, after the nightly export exists
+             * @member
+             * @type {string}
+             */
+            this["EODBackfillTime"] = "";
+        }
+        if (!("IntradayBackfillEnabled" in $$source)) {
+            /**
+             * periodic gap fill while the market is open
+             * @member
+             * @type {boolean}
+             */
+            this["IntradayBackfillEnabled"] = false;
+        }
+        if (!("IntradayBackfillIntervalMinutes" in $$source)) {
+            /**
+             * how often to sweep gaps during the session
+             * @member
+             * @type {number}
+             */
+            this["IntradayBackfillIntervalMinutes"] = 0;
+        }
+        if (!("IntradayFillMaxRequestsPerDay" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["IntradayFillMaxRequestsPerDay"] = 0;
+        }
+        if (!("IntradayFillMinGapSeconds" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["IntradayFillMinGapSeconds"] = 0;
+        }
+        if (!("EODMaxLadderMB" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["EODMaxLadderMB"] = 0;
+        }
+        if (!("DataRetentionDays" in $$source)) {
+            /**
+             * 0 keeps every day folder
+             * @member
+             * @type {number}
+             */
+            this["DataRetentionDays"] = 0;
         }
         if (!("Classic" in $$source)) {
             /**
@@ -341,13 +390,13 @@ export class Settings {
              */
             this["ChartZoomFilterPercent"] = 0;
         }
-        if (!("AutoFollowBufferPercent" in $$source)) {
+        if (!("AutoFollowBufferPx" in $$source)) {
             /**
-             * Buffer percentage for auto-follow (default 10%)
+             * Empty pixels after the latest bar. Reset and auto-follow both use it.
              * @member
              * @type {number}
              */
-            this["AutoFollowBufferPercent"] = 0;
+            this["AutoFollowBufferPx"] = 0;
         }
         if (!("WindowWidth" in $$source)) {
             /**
@@ -375,58 +424,58 @@ export class Settings {
      * @returns {Settings}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType0;
-        const $$createField13_0 = $$createType0;
-        const $$createField33_0 = $$createType1;
-        const $$createField34_0 = $$createType2;
-        const $$createField35_0 = $$createType2;
-        const $$createField36_0 = $$createType2;
-        const $$createField37_0 = $$createType2;
-        const $$createField38_0 = $$createType1;
-        const $$createField39_0 = $$createType1;
-        const $$createField40_0 = $$createType4;
-        const $$createField41_0 = $$createType0;
-        const $$createField42_0 = $$createType5;
-        const $$createField43_0 = $$createType0;
+        const $$createField4_0 = $$createType0;
+        const $$createField14_0 = $$createType0;
+        const $$createField30_0 = $$createType1;
+        const $$createField31_0 = $$createType2;
+        const $$createField41_0 = $$createType2;
+        const $$createField42_0 = $$createType2;
+        const $$createField43_0 = $$createType2;
+        const $$createField44_0 = $$createType1;
+        const $$createField45_0 = $$createType1;
+        const $$createField46_0 = $$createType4;
+        const $$createField47_0 = $$createType0;
+        const $$createField48_0 = $$createType5;
+        const $$createField49_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("APISubscriptionTiers" in $$parsedSource) {
-            $$parsedSource["APISubscriptionTiers"] = $$createField1_0($$parsedSource["APISubscriptionTiers"]);
+            $$parsedSource["APISubscriptionTiers"] = $$createField4_0($$parsedSource["APISubscriptionTiers"]);
         }
         if ("HiddenPlots" in $$parsedSource) {
-            $$parsedSource["HiddenPlots"] = $$createField13_0($$parsedSource["HiddenPlots"]);
+            $$parsedSource["HiddenPlots"] = $$createField14_0($$parsedSource["HiddenPlots"]);
         }
         if ("Alerts" in $$parsedSource) {
-            $$parsedSource["Alerts"] = $$createField33_0($$parsedSource["Alerts"]);
+            $$parsedSource["Alerts"] = $$createField30_0($$parsedSource["Alerts"]);
         }
         if ("ProfileSettings" in $$parsedSource) {
-            $$parsedSource["ProfileSettings"] = $$createField34_0($$parsedSource["ProfileSettings"]);
+            $$parsedSource["ProfileSettings"] = $$createField31_0($$parsedSource["ProfileSettings"]);
         }
         if ("Classic" in $$parsedSource) {
-            $$parsedSource["Classic"] = $$createField35_0($$parsedSource["Classic"]);
+            $$parsedSource["Classic"] = $$createField41_0($$parsedSource["Classic"]);
         }
         if ("State" in $$parsedSource) {
-            $$parsedSource["State"] = $$createField36_0($$parsedSource["State"]);
+            $$parsedSource["State"] = $$createField42_0($$parsedSource["State"]);
         }
         if ("Orderflow" in $$parsedSource) {
-            $$parsedSource["Orderflow"] = $$createField37_0($$parsedSource["Orderflow"]);
+            $$parsedSource["Orderflow"] = $$createField43_0($$parsedSource["Orderflow"]);
         }
         if ("Charts" in $$parsedSource) {
-            $$parsedSource["Charts"] = $$createField38_0($$parsedSource["Charts"]);
+            $$parsedSource["Charts"] = $$createField44_0($$parsedSource["Charts"]);
         }
         if ("Tickers" in $$parsedSource) {
-            $$parsedSource["Tickers"] = $$createField39_0($$parsedSource["Tickers"]);
+            $$parsedSource["Tickers"] = $$createField45_0($$parsedSource["Tickers"]);
         }
         if ("TickerConfigs" in $$parsedSource) {
-            $$parsedSource["TickerConfigs"] = $$createField40_0($$parsedSource["TickerConfigs"]);
+            $$parsedSource["TickerConfigs"] = $$createField46_0($$parsedSource["TickerConfigs"]);
         }
         if ("TickerOrder" in $$parsedSource) {
-            $$parsedSource["TickerOrder"] = $$createField41_0($$parsedSource["TickerOrder"]);
+            $$parsedSource["TickerOrder"] = $$createField47_0($$parsedSource["TickerOrder"]);
         }
         if ("ChartColors" in $$parsedSource) {
-            $$parsedSource["ChartColors"] = $$createField42_0($$parsedSource["ChartColors"]);
+            $$parsedSource["ChartColors"] = $$createField48_0($$parsedSource["ChartColors"]);
         }
         if ("ChartColorsOff" in $$parsedSource) {
-            $$parsedSource["ChartColorsOff"] = $$createField43_0($$parsedSource["ChartColorsOff"]);
+            $$parsedSource["ChartColorsOff"] = $$createField49_0($$parsedSource["ChartColorsOff"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }

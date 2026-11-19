@@ -132,6 +132,51 @@ func TestStateAndLaterGreeksDoNotReplaceChartLevels(t *testing.T) {
 	}
 }
 
+// A State-only account collects no classic endpoint, so spot and the chart
+// levels must come from state_zero instead of being dropped.
+func TestStateOnlyTierStillWritesSpot(t *testing.T) {
+	dcc := &DataCollectionCoordinator{}
+	state := api.Query{Ticker: "ES_SPX", Endpoint: "state_zero"}
+	gamma := api.Query{Ticker: "ES_SPX", Endpoint: "gamma_zero"}
+	results := map[api.Query]map[string]interface{}{
+		state: {
+			"spot":        7690.0,
+			"zero_gamma":  7695.0,
+			"sum_gex_vol": -398.0,
+		},
+		gamma: {
+			"major_long_gamma": 7767.0,
+		},
+	}
+	got := dcc.aggregateResults([]api.Query{state, gamma}, results, nil)["ES_SPX"]
+	for field, want := range map[string]interface{}{
+		"spot":             7690.0,
+		"zero_gamma":       7695.0,
+		"sum_gex_vol":      -398.0,
+		"major_long_gamma": 7767.0,
+	} {
+		if got[field] != want {
+			t.Fatalf("%s = %#v, want %#v", field, got[field], want)
+		}
+	}
+}
+
+// An Orderflow-only account gets spot from the orderflow endpoint.
+func TestOrderflowOnlyTierWritesSpot(t *testing.T) {
+	dcc := &DataCollectionCoordinator{}
+	flow := api.Query{Ticker: "ES_SPX", Endpoint: "orderflow"}
+	results := map[api.Query]map[string]interface{}{
+		flow: {"spot": 7711.0, "major_long_gamma": 7720.0, "zgr": 1.5},
+	}
+	got := dcc.aggregateResults([]api.Query{flow}, results, nil)["ES_SPX"]
+	if got["spot"] != 7711.0 {
+		t.Fatalf("spot = %#v", got["spot"])
+	}
+	if got["major_long_gamma"] != 7720.0 {
+		t.Fatalf("major_long_gamma = %#v", got["major_long_gamma"])
+	}
+}
+
 func TestStopDateRolloverMonitorReturns(t *testing.T) {
 	dcc := NewDataCollectionCoordinator(
 		nil, nil, nil, nil,

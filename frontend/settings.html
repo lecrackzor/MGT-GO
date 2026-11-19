@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings</title>
+<link rel="stylesheet" href="settings.css">
+<script type="importmap">
+{
+    "imports": {
+        "@wailsio/runtime": "/wails-runtime-shim.js"
+    }
+}
+</script>
+</head>
+<body>
+    <div class="settings">
+        <div class="sidebar" id="sidebar">
+            <div class="item active" data-pane="api"><span class="ico">🔑</span> API</div>
+            <div class="item" data-pane="storage"><span class="ico">💾</span> Storage</div>
+            <div class="item" data-pane="tickers"><span class="ico">📊</span> Tickers</div>
+            <div class="item" data-pane="colors"><span class="ico">🎨</span> Plots &amp; Colors</div>
+            <div class="item" data-pane="general"><span class="ico">⚙️</span> General</div>
+            <div class="item" data-pane="profile"><span class="ico">📐</span> Profile</div>
+            <div class="spacer"></div>
+            <div class="footnote">Changes are saved on this window, not per chart.</div>
+        </div>
+
+        <div class="panes">
+            <div class="pane" id="pane-api">
+                <h2>API Configuration</h2>
+                <div class="sub">Keys are stored in the local config on this PC.</div>
+                <div class="field">
+                    <label>API Key</label>
+                    <input type="password" id="api-key" placeholder="••••••••••••••••" autocomplete="off">
+                    <div class="help" id="api-key-status">Checking API key status...</div>
+                </div>
+                <div class="field">
+                    <label>NinjaTrader API Key</label>
+                    <input type="password" id="ninja-api-key" placeholder="••••••••••••••••" autocomplete="off">
+                    <div class="help" id="ninja-api-key-status">Used for historical call/put gamma. Separate from the API key above.</div>
+                </div>
+                <div class="field">
+                    <label>Subscription Tiers</label>
+                    <div class="check"><input type="checkbox" id="settings-tier-classic"><span class="txt">Classic — basic GEX data</span></div>
+                    <div class="check"><input type="checkbox" id="settings-tier-state"><span class="txt">State — advanced state data</span></div>
+                    <div class="check"><input type="checkbox" id="settings-tier-orderflow"><span class="txt">Orderflow — order flow data</span></div>
+                    <div class="help">Tier-gated layers are disabled in charts when the key can't serve them.</div>
+                </div>
+                <div class="field">
+                    <label>Data Collection Mode</label>
+                    <div class="check"><input type="radio" name="data-collection-mode" id="collect-all" value="all"><span class="txt">Collect all available data (recommended)</span></div>
+                    <div class="check"><input type="radio" name="data-collection-mode" id="collect-charts" value="charts"><span class="txt">Collect chart data only (less storage)</span></div>
+                    <div class="help">All data saves every ladder for the tiers you checked. Chart data saves the lines, and profile ladders only when the profile is on.</div>
+                </div>
+                <div class="field">
+                    <div class="check"><input type="checkbox" id="profile-enabled"><span class="txt">Show profile</span></div>
+                    <div class="help" style="margin-left: 1.5rem;">Stays off until you turn it on, then stays on for later sessions.</div>
+                    <div id="profile-layer-options" style="display: flex; flex-wrap: wrap; gap: .75rem; margin: .5rem 0 0 1.5rem;">
+                        <label><input type="checkbox" id="profile-layer-classic"> Classic</label>
+                        <label><input type="checkbox" id="profile-layer-state"> State</label>
+                        <label><input type="checkbox" id="profile-layer-gamma"> Gamma</label>
+                        <label><input type="checkbox" id="profile-layer-delta"> Delta</label>
+                        <label><input type="checkbox" id="profile-layer-vanna"> Vanna</label>
+                        <label><input type="checkbox" id="profile-layer-charm"> Charm</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-storage" hidden>
+                <h2>Data Storage</h2>
+                <div class="sub">Where daily ticker data is written and how long it is kept.</div>
+                <div class="field">
+                    <label>Data Directory</label>
+                    <input type="text" id="data-dir" placeholder="Tickers" style="width:100%">
+                    <div class="help">A relative path resolves next to the executable.</div>
+                </div>
+                <div class="field">
+                    <label>Retention (days)</label>
+                    <div class="row"><input type="number" class="small" id="data-retention-days" min="0" value="0"><span class="help" style="margin:0">0 = keep every day folder</span></div>
+                    <div class="help">Folders older than this are pruned at startup. This deletes, it does not compress.</div>
+                </div>
+                <div class="field">
+                    <label>Missed-data recovery</label>
+                    <div class="check"><input type="checkbox" id="eod-backfill-enabled"><span class="txt">Recover missed data at startup and after the close</span></div>
+                    <div class="help">Fills gaps the live poll missed from the end-of-day archive, which is available from 17:00 ET.</div>
+                    <div class="row" style="margin-top:.5rem"><label style="margin:0;width:180px">Archive time (ET)</label><input type="text" class="small" id="eod-backfill-time" placeholder="17:15" style="width:80px"></div>
+                    <div class="row" style="margin-top:.25rem"><label style="margin:0;width:180px">Ladder budget (MB)</label><input type="number" class="small" id="eod-max-ladder-mb" min="0" value="0" style="width:80px"></div>
+                </div>
+                <div class="field callout">
+                    <label class="warn">Compact archived history</label>
+                    <div class="help" style="margin:0">
+                        One-time offline pass that copies each old profile file, re-encodes it to the current format
+                        (≈2–3.5× smaller), verifies every kept ladder, and swaps it over. Originals are backed up.
+                        <br><br><em>Runs via the <b>trimprofiles</b> tool, not from the app.</em>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-tickers" hidden>
+                <h2>Ticker Selection &amp; Polling</h2>
+                <div class="sub">Checkbox enables collection; Refresh 0 = automatic via Priority; drag ☰ to reorder.</div>
+                <div class="row" style="margin-bottom:.5rem">
+                    <input type="text" id="ticker-search" placeholder="Search tickers..." style="flex:1">
+                </div>
+                <div class="table-wrap">
+                    <table class="ticker-table">
+                        <thead><tr><th></th><th>Enabled</th><th>Ticker</th><th>Refresh (ms)</th><th>Priority</th></tr></thead>
+                        <tbody id="ticker-selection"><!-- rows inserted here --></tbody>
+                    </table>
+                </div>
+                <div class="row" style="margin-top:12px"><button class="ghost" id="reset-polling-defaults">Reset all to Auto (0)</button></div>
+            </div>
+
+            <div class="pane" id="pane-colors" hidden>
+                <h2>Chart Plots &amp; Colors</h2>
+                <div class="sub">Set each series color and whether it is hidden by default. Hidden plots are not collected in chart-only mode.</div>
+                <div id="chart-colors-grid" class="color-grid"><!-- rows inserted here --></div>
+                <div class="row" style="margin-top:12px"><button class="ghost" id="reset-colors">Reset to Defaults</button></div>
+            </div>
+
+            <div class="pane" id="pane-general" hidden>
+                <h2>General Settings</h2>
+                <div class="sub">Session behavior and time display.</div>
+                <div class="check"><input type="checkbox" id="close-after-market"><span class="txt">Close after the market closes</span></div>
+                <div class="check"><input type="checkbox" id="start-before-open"><span class="txt">Start before the market opens</span></div>
+                <div class="check"><input type="checkbox" id="use-market-time"><span class="txt">Display times in Market Time (ET)</span></div>
+                <div class="check"><input type="checkbox" id="use-24-hour-time"><span class="txt">Chart times: 24-hour (14:30)</span></div>
+                <div class="check"><input type="checkbox" id="enable-logging"><span class="txt">Enable file logging</span></div>
+                <div class="check"><input type="checkbox" id="hide-console"><span class="txt">Keep the console window hidden</span></div>
+                <div class="field"><label>Chart Y-Axis Zoom Filter (%)</label><input type="number" class="small" id="chart-zoom-filter" min="0.01" max="100" step="0.01"></div>
+                <div class="field"><label>Right edge (px)</label><input type="number" class="small" id="auto-follow-buffer" min="0" max="400" step="1"></div>
+            </div>
+
+            <div class="pane" id="pane-profile" hidden>
+                <h2>Profile</h2>
+                <div class="sub">Defaults for a window that has not chosen its own.</div>
+                <div class="row field"><label style="margin:0">Beside the chart:</label>
+                    <select id="profile-side"><option value="right">Right</option><option value="left">Left</option></select>
+                    <label style="margin:0">Width (%):</label><input type="number" class="small" id="profile-side-width" min="12" max="50" step="1">
+                </div>
+                <div class="check"><input type="checkbox" id="profile-show-priors"><span class="txt">Show lookback dots</span></div>
+                <div class="row field"><label style="margin:0">Price axis (Y):</label>
+                    <select id="price-axis-location"><option value="left">Left</option><option value="right">Right</option></select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <span class="dirty" id="dirty" style="display:none"><span class="bullet">●</span> Unsaved changes</span>
+        <span class="footer spacer"></span>
+        <button class="ghost" id="reset-defaults">Reset to defaults</button>
+        <button class="ghost" id="cancel">Cancel</button>
+        <button class="primary" id="save">Save</button>
+    </div>
+
+    <div class="dialog-overlay" id="dialog" style="display:none">
+        <div class="dialog">
+            <h3>Reset all settings to defaults?</h3>
+            <p id="dialog-text">This resets colors, plots, polling, and preferences to their defaults. Your API keys, subscription tiers, and enabled tickers are kept. This cannot be undone.</p>
+            <div class="actions">
+                <button class="ghost" id="dialog-cancel">Cancel</button>
+                <button class="danger" id="dialog-confirm">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="settings.js"></script>
+</body>
+</html>

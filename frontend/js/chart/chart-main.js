@@ -4,7 +4,7 @@ import { splitSegmentsToLwArrays, SegmentPrimitive, segmentPairsToLineDataWithGa
 import { optimizeDataPoints, getMarketDate, getMarketHoursLocal, filterToMarketHours } from './data.js';
 import { installZoom } from './zoom.js';
 import { installCrosshair } from './crosshair.js';
-import { installProfile, chartProfileFields } from './profile.js';
+import { installProfile, chartProfileFields, readChartPrefs, chartPrefsKey } from './profile.js';
 
 function fillRoundRect(ctx, x, y, w, h, radius, fill, stroke) {
     const r = Math.max(0, Math.min(radius || 0, w / 2, h / 2));
@@ -160,7 +160,7 @@ function captureWindow() {
     const pageBg = getComputedStyle(root).backgroundColor;
     ctx.fillStyle = pageBg && pageBg !== 'rgba(0, 0, 0, 0)' ? pageBg : '#1a1a1a';
     ctx.fillRect(0, 0, width, height);
-    ['#chart-title', '#chart-toolbar', '#profile-replay', '#status', '#profile-pane'].forEach(function (sel) {
+    ['#chart-header', '#chart-toolbar', '#profile-replay', '#status', '#profile-pane'].forEach(function (sel) {
         const el = document.querySelector(sel);
         if (!el) return;
         const style = getComputedStyle(el);
@@ -179,7 +179,7 @@ function captureWindow() {
             ctx.drawImage(node, rect.left - origin.left, rect.top - origin.top, rect.width, rect.height);
         } catch (err) {}
     });
-    ['#chart-title', '#chart-toolbar', '#profile-replay', '#status', '#profile-metrics', '#profile-note', '#profile-chart-note', '#crosshair-info-box', '#level-alert-pop'].forEach(function (sel) {
+    ['#chart-header', '#chart-toolbar', '#profile-replay', '#status', '#profile-metrics', '#profile-note', '#profile-chart-note', '#crosshair-info-box', '#level-alert-pop'].forEach(function (sel) {
         paintPanel(ctx, document.querySelector(sel), origin);
     });
     return out;
@@ -217,8 +217,11 @@ function captureWindow() {
                 // Ignore
             }
             
-            document.getElementById('chart-title').textContent = `${ticker} Chart`;
-            await logToBackend('info', `[Chart] Title set to: ${ticker} Chart`);
+            const chartTickerEl = document.getElementById('chart-ticker');
+            if (chartTickerEl) chartTickerEl.textContent = ticker;
+            const chartDateEl = document.getElementById('chart-date');
+            if (chartDateEl) chartDateEl.textContent = dateFromURL || 'Live';
+            await logToBackend('info', `[Chart] Header set: ${ticker} (${dateFromURL || 'live'})`);
             
             // Initialize chart (Lightweight Charts)
             const chartContainer = document.getElementById('chart-div');
@@ -249,14 +252,11 @@ function captureWindow() {
             let appliedLevelHistoryStyle = null;
             let currentChartDateStr = '';
             let chartUpdateId = 0; // Guard: only the latest updateChart() run may modify the chart (prevents doubled series on date change)
-            const CHART_PREFS_KEY_PREFIX = 'chartPrefs_';
             function loadChartPrefs(tickerKey, dateStr) {
                 const empty = { seriesTitleVisible: {}, priceLabelsFollowCrosshair: false, hiddenSeries: [], infoBoxCollapsed: false };
                 try {
-                    const key = CHART_PREFS_KEY_PREFIX + (tickerKey || '') + '_' + (dateStr || '');
-                    const raw = localStorage.getItem(key);
-                    const p = raw ? JSON.parse(raw) : null;
-                    if (!p || typeof p !== 'object') return Object.assign(empty, chartProfileFields(null));
+                    const p = readChartPrefs(tickerKey, dateStr);
+                    if (!p || typeof p !== 'object' || Object.keys(p).length === 0) return Object.assign(empty, chartProfileFields(null));
                     return Object.assign({}, p, {
                         seriesTitleVisible: p.seriesTitleVisible && typeof p.seriesTitleVisible === 'object' ? p.seriesTitleVisible : (p.lastValueVisible && typeof p.lastValueVisible === 'object' ? p.lastValueVisible : {}),
                         priceLabelsFollowCrosshair: !!p.priceLabelsFollowCrosshair,
@@ -267,8 +267,7 @@ function captureWindow() {
             }
             function saveChartPrefs(tickerKey, dateStr, prefs) {
                 try {
-                    const key = CHART_PREFS_KEY_PREFIX + (tickerKey || '') + '_' + (dateStr || '');
-                    localStorage.setItem(key, JSON.stringify(prefs));
+                    localStorage.setItem(chartPrefsKey(tickerKey), JSON.stringify(prefs));
                 } catch (e) {}
             }
             let currentChartPrefs = loadChartPrefs('', ''); // seriesTitleVisible[endpoint]=false hides series name (text left of value); value on scale always shown unless follow crosshair
@@ -404,6 +403,12 @@ function captureWindow() {
                     saveChartPrefs(ticker, currentChartDateStr || dateFromURL || '', currentChartPrefs);
                     paintLevelHistory();
                 },
+                levelHistoryWarmupDrop: function () { return levelHistoryWarmupDrop(); },
+                setLevelHistoryWarmupDrop: function (on) {
+                    currentChartPrefs.levelHistoryWarmupDrop = !!on;
+                    saveChartPrefs(ticker, currentChartDateStr || dateFromURL || '', currentChartPrefs);
+                    paintLevelHistory();
+                },
                 get lastValueByEndpoint() { return lastValueByEndpoint; },
                 get currentChartPrefs() { return currentChartPrefs; },
                 get currentChartDateStr() { return currentChartDateStr; },
@@ -423,6 +428,7 @@ function captureWindow() {
                 get dateFromURL() { return dateFromURL; },
             };
             installProfile(live);
+            setupHeaderReadouts();
             zoomHelpers = installZoom(live);
             var applyPriceZoom = zoomHelpers.applyPriceZoom;
             var applyTimeZoom = zoomHelpers.applyTimeZoom;
@@ -506,13 +512,12 @@ function captureWindow() {
                     
                     if (savedWidth && savedHeight) {
                         const width = parseInt(savedWidth, 10);
-                        const height = parseInt(savedHeight, 10);
-                        // Ensure dimensions are not too small
-                        if (!isNaN(width) && !isNaN(height) && width >= 200 && height >= 100) {
+                        // Width is remembered; height is not, so the box always
+                        // grows to fit its rows instead of clipping them.
+                        if (!isNaN(width) && width >= 200) {
                             crosshairInfoBox.style.width = width + 'px';
-                            crosshairInfoBox.style.height = height + 'px';
                             if (typeof logToBackend === 'function') {
-                                logToBackend('info', `[Chart] Restored tooltip dimensions: ${width}x${height}`).catch(() => {});
+                                logToBackend('info', `[Chart] Restored tooltip width: ${width}`).catch(() => {});
                             }
                         }
                     }
@@ -548,7 +553,9 @@ function captureWindow() {
             }
         }
         
-        // Track resize events and save to localStorage; lock resize to diagonal (aspect ratio)
+        // Track user resizes and save the width. Height stays content-driven:
+        // pinning it to the first aspect ratio clipped the rows and left
+        // scrollbars on the legend at all times.
         let resizeTimeout = null;
         let infoBoxAspectRatio = null;
         if (typeof ResizeObserver !== 'undefined' && crosshairInfoBox) {
@@ -562,9 +569,6 @@ function captureWindow() {
                                 if (infoBoxAspectRatio == null) {
                                     infoBoxAspectRatio = height / width;
                                 }
-                                const minH = parseFloat(crosshairInfoBox.style.minHeight) || 100;
-                                const diagonalH = width * infoBoxAspectRatio;
-                                crosshairInfoBox.style.height = Math.max(minH, diagonalH) + 'px';
                                 requestAnimationFrame(() => clampInfoBoxMinHeight());
                                 // Debounce saves to avoid too many localStorage writes
                                 if (resizeTimeout !== null) {
@@ -677,7 +681,7 @@ function captureWindow() {
         // Make info box draggable
         if (crosshairInfoHeader && crosshairInfoBox) {
             crosshairInfoHeader.addEventListener('mousedown', (e) => {
-                if (e.target && e.target.classList && e.target.classList.contains('crosshair-info-box-toggle')) return;
+                if (e.target && e.target.classList && (e.target.classList.contains('crosshair-info-box-toggle') || e.target.classList.contains('crosshair-info-box-pin'))) return;
                 try {
                     isDraggingInfoBox = true;
                     dragStartX = e.clientX;
@@ -947,7 +951,13 @@ function captureWindow() {
                 catch (err) { return 'average'; }
             }
 
-            function movingAverage(values, windowSize) {
+            // Drop the moving average's warm-up ramp: the first windowSize-1 samples
+            // average over a partial window and are not yet a real average.
+            function levelHistoryWarmupDrop() {
+                return !!(currentChartPrefs && currentChartPrefs.levelHistoryWarmupDrop);
+            }
+
+            function movingAverage(values, windowSize, dropWarmup) {
                 const out = new Array(values.length);
                 const window = [];
                 let sum = 0;
@@ -972,7 +982,7 @@ function captureWindow() {
                     window.push(n);
                     sum += n;
                     if (window.length > windowSize) sum -= window.shift();
-                    out[i] = sum / window.length;
+                    out[i] = (dropWarmup && window.length < windowSize) ? null : (sum / window.length);
                 }
                 return out;
             }
@@ -985,11 +995,13 @@ function captureWindow() {
                 const raw = chartDataCache[endpoint];
                 if (!Array.isArray(raw) || raw.length === 0) return [];
                 const filled = forwardFillZeros(raw.slice(0, times.length));
-                const values = scatter ? filled : movingAverage(filled, 300);
+                const values = scatter ? filled : movingAverage(filled, 300, levelHistoryWarmupDrop());
                 const byTime = new Map();
                 const n = Math.min(times.length, values.length);
                 for (let i = 0; i < n; i++) {
-                    const num = Number(values[i]);
+                    const rawVal = values[i];
+                    if (rawVal === null || rawVal === undefined) continue;
+                    const num = Number(rawVal);
                     if (!Number.isFinite(num)) continue;
                     const ts = typeof times[i] === 'number' ? times[i] : parseFloat(times[i]);
                     if (!Number.isFinite(ts)) continue;
@@ -1437,7 +1449,7 @@ function captureWindow() {
                         let dataPoints;
                         
                         if (isSpot || isLevelHistory) {
-                            const rawSpot = isLevelHistory && !historyScatter ? movingAverage(valuesForEndpoint, 300) : valuesForEndpoint;
+                            const rawSpot = isLevelHistory && !historyScatter ? movingAverage(valuesForEndpoint, 300, levelHistoryWarmupDrop()) : valuesForEndpoint;
                             dataPoints = rawSpot
                                 .map((value, idx) => {
                                     if (value === null || value === undefined) return null;
@@ -1758,6 +1770,8 @@ function captureWindow() {
                 if (live && typeof live.redrawProfile === 'function') live.redrawProfile();
                 if (live && typeof live.noteLevelTouches === 'function') live.noteLevelTouches();
                 if (initialZoomSet) firstChartLoadDone = true;
+                updateHeaderDate();
+                updateSpotReadout();
                 
             } catch (error) {
                 await logToBackend('error', `[Chart] Error updating chart: ${error.message || error}`);
@@ -1767,6 +1781,120 @@ function captureWindow() {
             }
         }
         
+            // ---- Header readouts & series legend ----
+            let marketHoursLocal = null;
+            let lastSpotValue = null;
+            let lastSpotChange = null;
+
+            function formatCountdown(ms) {
+                if (!Number.isFinite(ms) || ms < 0) return '';
+                const total = Math.max(0, Math.floor(ms / 1000));
+                const h = Math.floor(total / 3600);
+                const m = Math.floor((total % 3600) / 60);
+                const s = total % 60;
+                const mm = String(m).padStart(2, '0');
+                const ss = String(s).padStart(2, '0');
+                return h > 0 ? h + ':' + mm + ':' + ss : m + ':' + ss;
+            }
+
+            function updateHeaderDate() {
+                const el = document.getElementById('chart-date');
+                if (el) el.textContent = currentChartDateStr || dateFromURL || 'Live';
+            }
+
+            function updateMarketPill() {
+                const pill = document.getElementById('market-state-pill');
+                if (!pill) return;
+                if (!marketHoursLocal || !marketHoursLocal.open || !marketHoursLocal.close) {
+                    pill.className = 'pill';
+                    pill.textContent = '—';
+                    return;
+                }
+                const now = new Date();
+                const openParts = marketHoursLocal.open.split(':').map(Number);
+                const closeParts = marketHoursLocal.close.split(':').map(Number);
+                const open = new Date(now); open.setHours(openParts[0], openParts[1], 0, 0);
+                const close = new Date(now); close.setHours(closeParts[0], closeParts[1], 0, 0);
+                if (close.getTime() <= open.getTime()) close.setDate(close.getDate() + 1);
+                if (now < open) {
+                    pill.className = 'pill closed';
+                    pill.textContent = 'Closed · opens in ' + formatCountdown(open - now);
+                } else if (now < close) {
+                    pill.className = 'pill open';
+                    pill.textContent = 'Open · ' + formatCountdown(close - now) + ' to close';
+                } else {
+                    pill.className = 'pill closed';
+                    pill.textContent = 'Closed';
+                }
+            }
+
+            function updateSpotReadout() {
+                const wrap = document.getElementById('spot-readout');
+                if (!wrap) return;
+                const priceEl = wrap.querySelector('.spot-price');
+                const chgEl = wrap.querySelector('.spot-chg');
+                const spot = lastValueByEndpoint.spot;
+                if (spot == null || typeof spot !== 'number' || !isFinite(spot)) {
+                    if (priceEl) priceEl.textContent = '—';
+                    if (chgEl) chgEl.textContent = '';
+                    return;
+                }
+                if (lastSpotValue == null) lastSpotValue = spot;
+                const delta = spot - lastSpotValue;
+                if (delta !== 0) lastSpotChange = delta;
+                if (priceEl) priceEl.textContent = spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                if (chgEl) {
+                    if (lastSpotChange == null) {
+                        chgEl.textContent = '';
+                    } else {
+                        const change = lastSpotChange;
+                        const sign = change > 0 ? '+' : '';
+                        const pct = lastSpotValue ? (change / lastSpotValue) * 100 : 0;
+                        chgEl.textContent = sign + change.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
+                    }
+                }
+                wrap.classList.toggle('up', (lastSpotChange || 0) > 0);
+                wrap.classList.toggle('down', (lastSpotChange || 0) < 0);
+                lastSpotValue = spot;
+            }
+
+            async function pollRequestCount() {
+                try {
+                    const res = await fetch('/api/request-count', { cache: 'no-store' });
+                    if (res.ok) {
+                        const d = await res.json();
+                        const b = document.querySelector('#chart-req-counter b');
+                        if (b) b.textContent = ((d && d.count) || 0).toLocaleString('en-US');
+                    }
+                } catch (e) {}
+            }
+
+            function setupHeaderReadouts() {
+                getMarketHoursLocal().then((mh) => {
+                    marketHoursLocal = mh;
+                    updateMarketPill();
+                    setInterval(updateMarketPill, 1000);
+                }).catch(() => {});
+                pollRequestCount();
+                setInterval(pollRequestCount, 5000);
+                const pinBtn = document.getElementById('pin-btn');
+                if (pinBtn) {
+                    pinBtn.addEventListener('click', async () => {
+                        const on = !pinBtn.classList.contains('active');
+                        pinBtn.classList.toggle('active', on);
+                        pinBtn.title = on ? 'Unpin (always on top)' : 'Keep this window on top';
+                        try {
+                            const mod = await import('/bindings/market-terminal/app.js');
+                            if (typeof mod.SetAlwaysOnTop === 'function') await mod.SetAlwaysOnTop(ticker, on);
+                        } catch (err) {
+                            console.warn('[Chart] SetAlwaysOnTop failed:', err);
+                            pinBtn.classList.toggle('active', !on);
+                            pinBtn.title = 'Keep this window on top';
+                        }
+                    });
+                }
+            }
+
             // Show or hide a series on the plot, the right-scale label, and the segment overlay.
             function applySeriesAppearance(endpoint, opts) {
                 const series = lwSeriesByEndpoint[endpoint];
@@ -2084,7 +2212,7 @@ function captureWindow() {
 
             window.addEventListener('storage', function (event) {
                 if (!event) return;
-                const prefsKey = 'chartPrefs_' + (ticker || '') + '_' + (currentChartDateStr || dateFromURL || '');
+                const prefsKey = chartPrefsKey(ticker);
                 if (event.key === prefsKey) {
                     currentChartPrefs = loadChartPrefs(ticker, currentChartDateStr || dateFromURL || '');
                     infoBoxStateKey = '';

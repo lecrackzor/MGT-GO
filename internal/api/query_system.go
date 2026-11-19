@@ -109,14 +109,20 @@ func endpointCacheKey(settings *config.Settings) string {
 
 // PlannedEndpointsPerTicker is how many HTTP calls one ticker poll makes.
 func PlannedEndpointsPerTicker(settings *config.Settings) int {
+	return len(PlannedEndpoints(settings))
+}
+
+// PlannedEndpoints lists the endpoint names one ticker poll will call, in plan
+// order. The scheduler uses it to size the poll gap per endpoint budget.
+func PlannedEndpoints(settings *config.Settings) []string {
 	if settings == nil {
-		return 1
+		return []string{"classic_zero"}
 	}
-	n := len(endpointsForSettings(settings))
-	if n < 1 {
-		return 1
+	endpoints := endpointsForSettings(settings)
+	if len(endpoints) == 0 {
+		return []string{"classic_zero"}
 	}
-	return n
+	return endpoints
 }
 
 func endpointsForSettings(settings *config.Settings) []string {

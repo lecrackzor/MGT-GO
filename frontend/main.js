@@ -1,10 +1,7 @@
 // Main JavaScript entry point for Market Terminal Gexbot
 
 import {
-    CHART_SERIES_METADATA,
     getDefaultChartColors,
-    isChartColorOffValue,
-    getChartColorsOffFromSettings,
     computeNetGamma
 } from './js/shared/series.js';
 
@@ -28,62 +25,6 @@ async function logToBackend(level, message) {
         // Silently fail - we don't want logging failures to break the app
         console.error('[logToBackend] Failed:', err);
     }
-}
-
-// Ticker list constants (matching Python version)
-const FUTURES = ["ES_SPX", "NQ_NDX"];
-const INDEXES = ["SPX", "VIX", "NDX", "RUT", "IWM", "QQQ", "SPY"];
-const MAG7 = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"];
-const STOCKS = ["AMD", "APP", "AVGO", "BABA", "COIN", "CRWD", "CRWV", "GLD", "GOOG", "GME", "HOOD", "HYG", "IBIT", "INTC", "IONQ", "MSTR", "MU", "NFLX", "PLTR", "SLV", "SMCI", "SNOW", "SOFI", "TLT", "TQQQ", "TSM", "UNH", "USO", "UVXY", "VALE"];
-const ALL_TICKERS = [...FUTURES, ...INDEXES, ...MAG7, ...STOCKS];
-
-function renderHiddenPlotCheckboxes() {
-    const grid = document.getElementById('hidden-plots-grid');
-    if (!grid || grid.dataset.ready === '1') return;
-    grid.dataset.ready = '1';
-    grid.replaceChildren();
-    CHART_SERIES_METADATA.forEach((series) => {
-        const label = document.createElement('label');
-        label.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.25rem;';
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.id = `plot-${series.key}`;
-        input.dataset.plot = series.key;
-        input.checked = true;
-        const span = document.createElement('span');
-        span.textContent = series.label;
-        label.append(input, span);
-        grid.appendChild(label);
-    });
-}
-
-renderHiddenPlotCheckboxes();
-
-// Organize tickers by tier
-function organizeTickersByTier(tickers) {
-    const organized = {
-        'Futures': [],
-        'Indexes': [],
-        'MAG7': [],
-        'Stocks': [],
-        'Other': []
-    };
-    
-    tickers.forEach(ticker => {
-        if (FUTURES.includes(ticker)) {
-            organized['Futures'].push(ticker);
-        } else if (INDEXES.includes(ticker)) {
-            organized['Indexes'].push(ticker);
-        } else if (MAG7.includes(ticker)) {
-            organized['MAG7'].push(ticker);
-        } else if (STOCKS.includes(ticker)) {
-            organized['Stocks'].push(ticker);
-        } else {
-            organized['Other'].push(ticker);
-        }
-    });
-    
-    return organized;
 }
 
 // Wait for Wails runtime to be available
@@ -293,37 +234,6 @@ function formatDateTimeForDisplay(date) {
     return date.toLocaleString('en-US', options);
 }
 
-// Initialize settings immediately (doesn't require backend)
-let settingsFormLoading = false;
-let settingsSaveTimer = 0;
-let pendingTickerRefresh = false;
-
-function scheduleSettingsSave(refreshTickers) {
-    if (settingsFormLoading) return;
-    if (refreshTickers) pendingTickerRefresh = true;
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = setTimeout(() => {
-        flushSettingsSave();
-    }, 200);
-}
-
-function flushSettingsSave() {
-    if (!settingsSaveTimer && !pendingTickerRefresh) return;
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = 0;
-    const refreshTickers = pendingTickerRefresh;
-    pendingTickerRefresh = false;
-    saveSettings({ refreshTickers: refreshTickers }).catch((error) => {
-        console.error('Error saving settings:', error);
-        setAppStatus('Settings were not saved', true);
-    });
-}
-
-function settingsChangeNeedsTickerRefresh(target) {
-    if (!target || !target.id) return false;
-    return target.id.startsWith('ticker-') || target.id.startsWith('refresh-rate-') || target.id.startsWith('priority-');
-}
-
 function trapModalFocus(modal, onEscape) {
     if (!modal || modal.dataset.focusTrap === '1') return;
     modal.dataset.focusTrap = '1';
@@ -352,83 +262,44 @@ function trapModalFocus(modal, onEscape) {
     });
 }
 
+// Initialize settings immediately (doesn't require backend)
 function initializeSettingsImmediate() {
-    const settingsBtn = document.getElementById('settings-btn');
-    const settingsModal = document.getElementById('settings-modal');
-    const settingsClose = document.getElementById('settings-close');
-    
-    if (!settingsBtn || !settingsModal || !settingsClose) {
-        console.error('Settings elements not found');
-        return;
+    async function openLog() {
+        if (!App || typeof App.OpenLogWindow !== 'function') {
+            return;
+        }
+        try {
+            await App.OpenLogWindow();
+        } catch (err) {
+            console.error('Failed to open log window:', err);
+        }
     }
-    
+
     const logBtn = document.getElementById('log-btn');
     if (logBtn) {
-        logBtn.addEventListener('click', async () => {
-            if (!App || typeof App.OpenLogWindow !== 'function') {
+        logBtn.addEventListener('click', openLog);
+    }
+    const backfillChip = document.getElementById('backfill-chip');
+    if (backfillChip) {
+        backfillChip.style.cursor = 'pointer';
+        backfillChip.addEventListener('click', openLog);
+    }
+
+    // Settings open in their own window now.
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', async () => {
+            if (!App || typeof App.OpenSettingsWindow !== 'function') {
+                console.error('OpenSettingsWindow not available');
                 return;
             }
             try {
-                await App.OpenLogWindow();
+                await App.OpenSettingsWindow();
             } catch (err) {
-                console.error('Failed to open log window:', err);
+                console.error('Failed to open settings window:', err);
             }
         });
     }
-
-    settingsBtn.addEventListener('click', async () => {
-        settingsModal.style.display = 'block';
-        settingsClose.focus();
-        // Wait a bit for modal to be visible
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Load from cache first (instant display)
-        const cachedSettings = loadSettingsFromCache();
-        const defaultSettings = getDefaultSettings();
-        const initialSettings = cachedSettings?.settings || defaultSettings;
-        
-        loadSettingsUI(initialSettings);
-        
-        // Then try to load from backend in background
-        try {
-            await loadSettingsFromBackend();
-        } catch (err) {
-            console.warn('[Settings] Backend load failed, using cache/defaults:', err);
-            // Settings already loaded from cache, so this is fine
-        }
-    });
-    
-    function closeSettings() {
-        flushSettingsSave();
-        settingsModal.style.display = 'none';
-    }
-
-    settingsClose.addEventListener('click', closeSettings);
-    trapModalFocus(settingsModal, closeSettings);
-    
-    window.addEventListener('click', (e) => {
-        if (e.target === settingsModal) closeSettings();
-    });
-
-    settingsModal.addEventListener('change', (e) => {
-        scheduleSettingsSave(settingsChangeNeedsTickerRefresh(e.target));
-    });
-    
-    // Reset polling defaults button
-    const resetPollingBtn = document.getElementById('reset-polling-defaults');
-    if (resetPollingBtn) {
-        resetPollingBtn.addEventListener('click', () => {
-            // Reset all refresh rate inputs to 0 (auto) and priority to medium
-            ALL_TICKERS.forEach(ticker => {
-                const refreshInput = document.getElementById(`refresh-rate-${ticker}`);
-                const prioritySelect = document.getElementById(`priority-${ticker}`);
-                if (refreshInput) refreshInput.value = 0;
-                if (prioritySelect) prioritySelect.value = 'medium';
-            });
-            scheduleSettingsSave(true);
-        });
-    }
-    
 }
 
 // Market countdown timer
@@ -658,8 +529,7 @@ async function initializeApplication() {
     if (initialized) {
         return true;
     }
-    
-    
+
     try {
         // Load bindings - should always succeed since backend is ready
         const bindingsLoaded = await loadAppBindings();
@@ -719,24 +589,15 @@ async function initializeApplication() {
 // Wait for DOM to be ready
 window.addEventListener('DOMContentLoaded', async () => {
     
-    // Initialize settings button immediately (doesn't need backend)
+    // Initialize the header buttons immediately (doesn't need backend)
     initializeSettingsImmediate();
-    watchProfileChoices();
     try {
         const settingsChannel = new BroadcastChannel('market-terminal-settings');
         settingsChannel.onmessage = (event) => {
-            const settings = event.data && event.data.settings;
-            if (!event.data || event.data.type !== 'settings-updated' || !settings || !settings.ProfileSettings) return;
-            const profile = settings.ProfileSettings;
-            const side = document.getElementById('profile-side');
-            if (side && (profile.profile_side === 'left' || profile.profile_side === 'right')) side.value = profile.profile_side;
-            const sideWidth = document.getElementById('profile-side-width');
-            if (sideWidth && profile.side_width_percent != null) sideWidth.value = profile.side_width_percent;
-            const bandWidth = document.getElementById('profile-band-width');
-            if (bandWidth && profile.bar_width_percent != null) bandWidth.value = profile.bar_width_percent;
-            const bandX = document.getElementById('profile-band-x');
-            if (bandX && profile.profile_x_percent != null) bandX.value = profile.profile_x_percent;
-            applyProfileChoiceFields(profile);
+            if (!event.data || event.data.type !== 'settings-updated') return;
+            // Settings changed in another window (the settings window). Refresh
+            // the ticker table so enablement/order changes show up right away.
+            refreshTickersFromSettings().catch((e) => console.warn('[Main] ticker refresh failed:', e));
         };
     } catch (e) {}
     
@@ -774,10 +635,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     tryInitialize();
 });
 
-// Clean up on page unload. A settings edit still inside the 200ms debounce
-// is written now; the request itself can still be cut off if the process exits.
 window.addEventListener('beforeunload', () => {
-    flushSettingsSave();
     stopMarketCountdown();
 });
 
@@ -1099,942 +957,6 @@ function sortTickersByOrder(tickers, savedOrder) {
 
 // Resize main window to fit ticker count
 // Load settings UI (doesn't require backend - uses provided settings object)
-function loadSettingsUI(settings) {
-    settingsFormLoading = true;
-    try {
-        
-        if (!settings) {
-            settings = getDefaultSettings();
-        }
-        
-        // Load basic fields
-        const dataDirInput = document.getElementById('data-dir');
-        if (dataDirInput) {
-            dataDirInput.value = settings.DataDirectory || 'Tickers';
-        }
-        
-        // Show API key status
-        const apiKeyInput = document.getElementById('api-key');
-        const apiKeyStatus = document.getElementById('api-key-status');
-        if (apiKeyInput) {
-            apiKeyInput.value = '';
-            // Check if API key exists in settings
-            const hasApiKey = settings.HasAPIKey === true;
-            apiKeyInput.placeholder = hasApiKey ? '••••••••••••••••' : 'Enter your API key';
-            if (apiKeyStatus) {
-                apiKeyStatus.textContent = hasApiKey ? '✓ API key is saved' : 'No API key configured';
-                apiKeyStatus.style.color = hasApiKey ? '#4CAF50' : '#ff9800';
-            }
-        }
-        const ninjaKeyInput = document.getElementById('ninja-api-key');
-        const ninjaKeyStatus = document.getElementById('ninja-api-key-status');
-        if (ninjaKeyInput) {
-            ninjaKeyInput.value = '';
-            const hasNinjaKey = settings.HasNinjaAPIKey === true;
-            ninjaKeyInput.placeholder = hasNinjaKey ? '••••••••••••••••' : 'Enter your NinjaTrader API key';
-            if (ninjaKeyStatus) {
-                ninjaKeyStatus.textContent = hasNinjaKey ? '✓ NinjaTrader key is saved' : 'No NinjaTrader key configured. Historical call and put gamma stay off.';
-                ninjaKeyStatus.style.color = hasNinjaKey ? '#4CAF50' : '#ff9800';
-            }
-        }
-        
-        // Load subscription tiers
-        const tiers = settings.APISubscriptionTiers || ['classic'];
-        const classicCheckbox = document.getElementById('settings-tier-classic');
-        const stateCheckbox = document.getElementById('settings-tier-state');
-        const orderflowCheckbox = document.getElementById('settings-tier-orderflow');
-        
-        if (classicCheckbox) {
-            classicCheckbox.checked = tiers.includes('classic');
-        }
-        if (stateCheckbox) {
-            stateCheckbox.checked = tiers.includes('state');
-        }
-        if (orderflowCheckbox) {
-            orderflowCheckbox.checked = tiers.includes('orderflow');
-        }
-        
-        // Load data collection mode
-        const collectAllRadio = document.getElementById('collect-all');
-        const collectChartsRadio = document.getElementById('collect-charts');
-        // Default to 'all' if not set (CollectAllEndpoints defaults to true)
-        const collectAll = settings.CollectAllEndpoints !== false;
-        if (collectAllRadio) collectAllRadio.checked = collectAll;
-        if (collectChartsRadio) collectChartsRadio.checked = !collectAll;
-        
-        // Load ticker selection (organized by tier)
-        loadTickerSelection(settings);
-        
-        // Load chart colors
-        loadChartColors(settings);
-        
-        // Load general settings
-        loadGeneralSettings(settings);
-        
-        // Load hidden plots settings
-        loadHiddenPlots(settings);
-        
-    } catch (error) {
-        console.error('[Settings UI] Error loading UI:', error);
-    } finally {
-        settingsFormLoading = false;
-    }
-}
-
-// Layer and lookback checkboxes. A chart edits these through its own POSTs,
-// so a later Save must read the saved values rather than the stale form.
-let profileChoicesDirty = false;
-let profileChoicesWatched = false;
-
-function watchProfileChoices() {
-    if (profileChoicesWatched) return;
-    profileChoicesWatched = true;
-    ['profile-show-priors', 'profile-layer-classic', 'profile-layer-state', 'profile-layer-gamma', 'profile-layer-delta', 'profile-layer-vanna', 'profile-layer-charm'].forEach((id) => {
-        const input = document.getElementById(id);
-        if (!input) return;
-        input.addEventListener('change', () => { profileChoicesDirty = true; });
-    });
-}
-
-function applyProfileChoiceFields(profile) {
-    watchProfileChoices();
-    const profileSettings = profile || {};
-    const profilePriorsInput = document.getElementById('profile-show-priors');
-    if (profilePriorsInput) {
-        profilePriorsInput.checked = profileSettings.show_priors !== false;
-    }
-    const savedLayers = profileSettings.layers && typeof profileSettings.layers === 'object' ? profileSettings.layers : null;
-    ['classic', 'state', 'gamma', 'delta', 'vanna', 'charm'].forEach((id) => {
-        const input = document.getElementById('profile-layer-' + id);
-        if (!input) return;
-        input.checked = savedLayers ? savedLayers[id] === true : id === 'classic';
-    });
-    updateProfileCollectOptions();
-}
-
-async function refreshUntouchedProfileChoices() {
-    if (profileChoicesDirty) return;
-    try {
-        const res = await fetch('/api/settings');
-        if (!res.ok) return;
-        const latest = await res.json();
-        if (latest && latest.ProfileSettings) applyProfileChoiceFields(latest.ProfileSettings);
-    } catch (e) {}
-}
-
-// Load general settings into UI
-function loadGeneralSettings(settings) {
-    try {
-        
-        // UseMarketTime
-        const useMarketTimeCheckbox = document.getElementById('use-market-time');
-        if (useMarketTimeCheckbox) {
-            useMarketTimeCheckbox.checked = settings.UseMarketTime || false;
-        }
-        
-        // Use24HourTime
-        const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
-        if (use24HourTimeCheckbox) {
-            use24HourTimeCheckbox.checked = settings.Use24HourTime !== false;
-        }
-        
-        // EnableLogging
-        const enableLoggingCheckbox = document.getElementById('enable-logging');
-        if (enableLoggingCheckbox) {
-            // Default to true if not explicitly set to false
-            enableLoggingCheckbox.checked = settings.EnableLogging !== false;
-        }
-        
-        // HideConsole
-        const hideConsoleCheckbox = document.getElementById('hide-console');
-        if (hideConsoleCheckbox) {
-            // Default to true if not explicitly set to false
-            hideConsoleCheckbox.checked = settings.HideConsole !== false;
-        }
-        
-        // ChartZoomFilterPercent
-        const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
-        if (chartZoomFilterInput) {
-            chartZoomFilterInput.value = settings.ChartZoomFilterPercent || 1.0;
-        }
-        
-        // AutoFollowBufferPx
-        const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
-        if (autoFollowBufferInput) {
-            const px = Number(settings.AutoFollowBufferPx);
-            autoFollowBufferInput.value = Number.isFinite(px) && px >= 0 ? px : 16;
-        }
-        const profileSettings = settings.ProfileSettings || {};
-        const profileSideInput = document.getElementById('profile-side');
-        if (profileSideInput) {
-            profileSideInput.value = profileSettings.profile_side === 'left' ? 'left' : 'right';
-        }
-        const profileSideWidthInput = document.getElementById('profile-side-width');
-        if (profileSideWidthInput) {
-            const sideWidth = Number(profileSettings.side_width_percent);
-            profileSideWidthInput.value = (Number.isFinite(sideWidth) && sideWidth > 0) ? sideWidth : 28;
-        }
-        const profileWidthInput = document.getElementById('profile-band-width');
-        if (profileWidthInput) {
-            const width = Number(profileSettings.bar_width_percent);
-            profileWidthInput.value = (Number.isFinite(width) && width > 0) ? width : 22;
-        }
-        const profileXInput = document.getElementById('profile-band-x');
-        if (profileXInput) {
-            const x = Number(profileSettings.profile_x_percent);
-            profileXInput.value = Number.isFinite(x) ? x : 62;
-        }
-        const profileEnabledInput = document.getElementById('profile-enabled');
-        if (profileEnabledInput) {
-            profileEnabledInput.checked = profileSettings.enabled === true;
-        }
-        applyProfileChoiceFields(profileSettings);
-        // PriceAxisLocation
-        const priceAxisLocationSelect = document.getElementById('price-axis-location');
-        if (priceAxisLocationSelect) {
-            const loc = (settings.PriceAxisLocation || 'left').toLowerCase();
-            priceAxisLocationSelect.value = (loc === 'right') ? 'right' : 'left';
-        }
-    } catch (error) {
-        console.error('[General Settings] Error loading:', error);
-    }
-}
-
-// Load hidden plots settings into UI
-function loadHiddenPlots(settings) {
-    try {
-        
-        const hiddenPlots = settings.HiddenPlots || [];
-        const plotCheckboxes = document.querySelectorAll('#hidden-plots-grid input[type="checkbox"]');
-        
-        plotCheckboxes.forEach(checkbox => {
-            const plotName = checkbox.dataset.plot;
-            if (plotName) {
-                // Checkbox is CHECKED if plot is NOT in hiddenPlots array
-                checkbox.checked = !hiddenPlots.includes(plotName);
-            }
-        });
-    } catch (error) {
-        console.error('[Hidden Plots] Error loading:', error);
-    }
-}
-
-// Save general settings from UI to settings object
-function saveGeneralSettings(settings) {
-    
-    const useMarketTimeCheckbox = document.getElementById('use-market-time');
-    if (useMarketTimeCheckbox) {
-        settings.UseMarketTime = useMarketTimeCheckbox.checked;
-    }
-    
-    const use24HourTimeCheckbox = document.getElementById('use-24-hour-time');
-    if (use24HourTimeCheckbox) {
-        settings.Use24HourTime = use24HourTimeCheckbox.checked;
-    }
-    
-    const enableLoggingCheckbox = document.getElementById('enable-logging');
-    if (enableLoggingCheckbox) {
-        settings.EnableLogging = enableLoggingCheckbox.checked;
-    }
-    
-    const hideConsoleCheckbox = document.getElementById('hide-console');
-    if (hideConsoleCheckbox) {
-        settings.HideConsole = hideConsoleCheckbox.checked;
-    }
-    
-    const chartZoomFilterInput = document.getElementById('chart-zoom-filter');
-    if (chartZoomFilterInput) {
-        const value = parseFloat(chartZoomFilterInput.value);
-        if (!isNaN(value) && value >= 0.01 && value <= 100) {
-            settings.ChartZoomFilterPercent = value;
-        } else {
-            settings.ChartZoomFilterPercent = 1.0; // Default if invalid
-        }
-    }
-    
-    const autoFollowBufferInput = document.getElementById('auto-follow-buffer');
-    if (autoFollowBufferInput) {
-        const value = parseFloat(autoFollowBufferInput.value);
-        if (!isNaN(value) && value >= 0 && value <= 400) {
-            settings.AutoFollowBufferPx = value;
-        } else {
-            settings.AutoFollowBufferPx = 16;
-        }
-    }
-    const priceAxisLocationSelect = document.getElementById('price-axis-location');
-    if (priceAxisLocationSelect) {
-        settings.PriceAxisLocation = priceAxisLocationSelect.value === 'right' ? 'right' : 'left';
-    }
-    if (!settings.ProfileSettings || typeof settings.ProfileSettings !== 'object') {
-        settings.ProfileSettings = {};
-    }
-    const profileSideInput = document.getElementById('profile-side');
-    if (profileSideInput) {
-        settings.ProfileSettings.profile_side = profileSideInput.value === 'left' ? 'left' : 'right';
-    }
-    const profileSideWidthInput = document.getElementById('profile-side-width');
-    if (profileSideWidthInput) {
-        const sideWidth = parseFloat(profileSideWidthInput.value);
-        settings.ProfileSettings.side_width_percent = (!isNaN(sideWidth) && sideWidth >= 12 && sideWidth <= 50) ? sideWidth : 28;
-    }
-    const profileWidthInput = document.getElementById('profile-band-width');
-    if (profileWidthInput) {
-        const value = parseFloat(profileWidthInput.value);
-        settings.ProfileSettings.bar_width_percent = (!isNaN(value) && value >= 8 && value <= 70) ? value : 22;
-    }
-    const profileXInput = document.getElementById('profile-band-x');
-    if (profileXInput) {
-        const value = parseFloat(profileXInput.value);
-        settings.ProfileSettings.profile_x_percent = (!isNaN(value) && value >= 0 && value <= 100) ? value : 62;
-    }
-    const profilePriorsInput = document.getElementById('profile-show-priors');
-    if (profilePriorsInput) {
-        settings.ProfileSettings.show_priors = profilePriorsInput.checked;
-    }
-    const profileEnabledInput = document.getElementById('profile-enabled');
-    if (profileEnabledInput) {
-        settings.ProfileSettings.enabled = profileEnabledInput.checked;
-    }
-    const layers = {};
-    ['classic', 'state', 'gamma', 'delta', 'vanna', 'charm'].forEach((id) => {
-        const input = document.getElementById('profile-layer-' + id);
-        if (input) layers[id] = input.checked;
-    });
-    settings.ProfileSettings.layers = layers;
-}
-
-function updateProfileCollectOptions() {
-    const collectAll = document.getElementById('collect-all');
-    const enabled = document.getElementById('profile-enabled');
-    const box = document.getElementById('profile-layer-options');
-    if (!box) return;
-    const locked = (collectAll && collectAll.checked) || !(enabled && enabled.checked);
-    box.querySelectorAll('input').forEach((input) => {
-        input.disabled = locked;
-    });
-}
-window.updateProfileCollectOptions = updateProfileCollectOptions;
-
-// Save hidden plots from UI to settings object
-function saveHiddenPlots(settings) {
-    
-    const hiddenPlots = [];
-    const plotCheckboxes = document.querySelectorAll('#hidden-plots-grid input[type="checkbox"]');
-    
-    plotCheckboxes.forEach(checkbox => {
-        const plotName = checkbox.dataset.plot;
-        if (plotName && !checkbox.checked) {
-            // If checkbox is NOT checked, the plot is hidden
-            hiddenPlots.push(plotName);
-        }
-    });
-    
-    settings.HiddenPlots = hiddenPlots;
-}
-
-// Load settings from backend (optional - updates UI if available)
-async function loadSettingsFromBackend() {
-    try {
-        
-        // Wait for App to be available (retry up to 3 times, shorter timeout)
-        let retries = 0;
-        const maxRetries = 3;
-        while ((!App || typeof App.GetSettings !== 'function') && retries < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-            retries++;
-            if (!App) {
-                await loadAppBindings();
-            }
-        }
-        
-        if (!App || typeof App.GetSettings !== 'function') {
-            return null; // Not an error - just use cache/defaults
-        }
-        
-        const settings = await App.GetSettings();
-        
-        if (settings) {
-            // Update UI with backend settings
-            loadSettingsUI(settings);
-            // Cache the settings
-            saveSettingsToCache(settings);
-            return settings;
-        }
-        
-        return null;
-    } catch (error) {
-        console.warn('[Settings Backend] Error loading from backend:', error);
-        return null; // Not a fatal error - use cache/defaults
-    }
-}
-
-// Legacy function name for compatibility
-async function loadSettings() {
-    return await loadSettingsFromBackend();
-}
-
-// Load ticker selection UI
-function loadTickerSelection(settings) {
-    const tickerSelection = document.getElementById('ticker-selection');
-    if (!tickerSelection) {
-        console.warn('[Ticker Selection] Element not found');
-        return;
-    }
-    
-    try {
-        tickerSelection.innerHTML = '';
-        const tickerConfigs = settings.TickerConfigs || {};
-        const organized = organizeTickersByTier(ALL_TICKERS);
-        const tierOrder = ['Futures', 'Indexes', 'MAG7', 'Stocks', 'Other'];
-        
-        // Add search box
-        const searchBox = document.createElement('input');
-        searchBox.type = 'text';
-        searchBox.id = 'ticker-search';
-        searchBox.placeholder = 'Search tickers...';
-        searchBox.style.cssText = 'width: 100%; padding: 0.5rem; margin-bottom: 1rem; background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 4px; color: #e0e0e0;';
-        tickerSelection.appendChild(searchBox);
-        
-        // Add search functionality
-        searchBox.addEventListener('input', (e) => {
-            const searchTerm = e.target.value.toLowerCase();
-            const allLabels = tickerSelection.querySelectorAll('label[data-ticker]');
-            allLabels.forEach(label => {
-                const ticker = label.getAttribute('data-ticker').toLowerCase();
-                const tierSection = label.closest('.ticker-tier-section');
-                if (ticker.includes(searchTerm)) {
-                    label.style.display = 'flex';
-                    if (tierSection) tierSection.style.display = 'block';
-                } else {
-                    label.style.display = 'none';
-                }
-            });
-            // Hide empty tier sections
-            tickerSelection.querySelectorAll('.ticker-tier-section').forEach(section => {
-                const visibleLabels = section.querySelectorAll('label[data-ticker][style*="display: flex"], label[data-ticker]:not([style*="display: none"])');
-                if (visibleLabels.length === 0 && searchTerm !== '') {
-                    section.style.display = 'none';
-                } else {
-                    section.style.display = 'block';
-                }
-            });
-        });
-        
-        let enabledCount = 0;
-        tierOrder.forEach(tier => {
-            const tickersInTier = organized[tier];
-            if (tickersInTier.length === 0) return;
-            
-            // Create tier section (compact)
-            const tierSection = document.createElement('div');
-            tierSection.className = 'ticker-tier-section';
-            tierSection.style.cssText = 'margin-bottom: 0.75rem;';
-            
-            const tierHeader = document.createElement('h4');
-            tierHeader.textContent = `${tier} (${tickersInTier.length})`;
-            tierHeader.style.cssText = 'color: #4CAF50; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600;';
-            tierSection.appendChild(tierHeader);
-            
-            const tickerGrid = document.createElement('div');
-            tickerGrid.className = 'ticker-grid';
-            tickerGrid.style.cssText = 'display: grid; grid-template-columns: 1fr; gap: 0.15rem;';
-            
-            tickersInTier.forEach(ticker => {
-                const config = tickerConfigs[ticker];
-                const enabled = config && config.CollectionEnabled !== false; // Default to enabled if not specified
-                if (enabled) enabledCount++;
-                
-                // Default refresh rate to 0 (auto/disabled), priority to medium
-                // Note: use explicit check for undefined/null since 0 is a valid value
-                const refreshRate = config && config.RefreshRateMs !== undefined && config.RefreshRateMs !== null ? config.RefreshRateMs : 0;
-                const priority = config && config.Priority ? config.Priority : 'medium';
-                
-                // Create compact ticker row
-                const tickerRow = document.createElement('div');
-                tickerRow.className = 'ticker-config-row';
-                tickerRow.dataset.ticker = ticker;
-                tickerRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; background: #1f1f1f; border-radius: 3px; margin-bottom: 0.25rem; border: 1px solid #2a2a2a; transition: all 0.15s;';
-                tickerRow.addEventListener('mouseenter', () => {
-                    tickerRow.style.background = '#2a2a2a';
-                    tickerRow.style.borderColor = '#3a3a3a';
-                });
-                tickerRow.addEventListener('mouseleave', () => {
-                    tickerRow.style.background = '#1f1f1f';
-                    tickerRow.style.borderColor = '#2a2a2a';
-                });
-                
-                // Drag handle for reordering
-                const dragHandle = document.createElement('span');
-                dragHandle.className = 'drag-handle';
-                dragHandle.innerHTML = '☰';
-                dragHandle.title = 'Drag to reorder';
-                dragHandle.style.cssText = 'cursor: grab; color: #666; font-size: 0.9rem; padding: 0 0.25rem; user-select: none;';
-                dragHandle.draggable = true;
-                
-                // Checkbox
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.id = `ticker-${ticker}`;
-                checkbox.checked = enabled;
-                checkbox.style.cssText = 'cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;';
-                checkbox.addEventListener('change', () => {
-                    updateTickerEnabledCount();
-                });
-                
-                // Ticker name (compact)
-                const tickerName = document.createElement('span');
-                tickerName.textContent = ticker;
-                tickerName.style.cssText = 'user-select: none; min-width: 60px; font-weight: 600; color: #4CAF50; font-size: 0.85rem;';
-                
-                // Refresh rate input (compact, with placeholder)
-                const refreshInput = document.createElement('input');
-                refreshInput.type = 'number';
-                refreshInput.id = `refresh-rate-${ticker}`;
-                refreshInput.value = refreshRate;
-                refreshInput.min = '0';
-                refreshInput.step = '1000';
-                refreshInput.placeholder = '0=Auto';
-                refreshInput.title = 'Refresh rate in ms (0 = auto based on priority)';
-                refreshInput.style.cssText = 'width: 70px; padding: 0.25rem 0.35rem; background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 3px; color: #e0e0e0; font-size: 0.8rem; text-align: center;';
-                
-                // Priority select (compact)
-                const prioritySelect = document.createElement('select');
-                prioritySelect.id = `priority-${ticker}`;
-                prioritySelect.title = 'Polling priority';
-                prioritySelect.style.cssText = 'width: 75px; padding: 0.25rem; background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 3px; color: #e0e0e0; font-size: 0.8rem; cursor: pointer;';
-                ['high', 'medium', 'low'].forEach(p => {
-                    const option = document.createElement('option');
-                    option.value = p;
-                    option.textContent = p.charAt(0).toUpperCase() + p.slice(1);
-                    if (p === priority) option.selected = true;
-                    prioritySelect.appendChild(option);
-                });
-                
-                tickerRow.appendChild(dragHandle);
-                tickerRow.appendChild(checkbox);
-                tickerRow.appendChild(tickerName);
-                tickerRow.appendChild(refreshInput);
-                tickerRow.appendChild(prioritySelect);
-                
-                // Drag event handlers for settings reordering
-                tickerRow.draggable = true;
-                
-                tickerRow.addEventListener('dragstart', (e) => {
-                    tickerRow.classList.add('dragging');
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', ticker);
-                });
-                
-                tickerRow.addEventListener('dragend', () => {
-                    tickerRow.classList.remove('dragging');
-                    tickerGrid.querySelectorAll('.ticker-config-row').forEach(r => r.classList.remove('drag-over'));
-                });
-                
-                tickerRow.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    const draggingRow = tickerGrid.querySelector('.dragging');
-                    if (draggingRow && draggingRow !== tickerRow) {
-                        tickerRow.classList.add('drag-over');
-                    }
-                });
-                
-                tickerRow.addEventListener('dragleave', () => {
-                    tickerRow.classList.remove('drag-over');
-                });
-                
-                tickerRow.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    tickerRow.classList.remove('drag-over');
-                    const draggedTicker = e.dataTransfer.getData('text/plain');
-                    const draggedRow = tickerGrid.querySelector(`[data-ticker="${draggedTicker}"]`);
-                    if (draggedRow && draggedRow !== tickerRow) {
-                        tickerGrid.insertBefore(draggedRow, tickerRow);
-                        scheduleSettingsSave(true);
-                    }
-                });
-                
-                tickerGrid.appendChild(tickerRow);
-            });
-            
-            tierSection.appendChild(tickerGrid);
-            tickerSelection.appendChild(tierSection);
-        });
-        
-        // Show enabled count
-        const countDisplay = document.createElement('div');
-        countDisplay.id = 'ticker-enabled-count';
-        countDisplay.textContent = `${enabledCount} ticker${enabledCount !== 1 ? 's' : ''} enabled`;
-        countDisplay.style.cssText = 'margin-top: 1rem; padding: 0.5rem; background: #2a2a2a; border-radius: 4px; text-align: center; color: #4CAF50; font-weight: 600;';
-        tickerSelection.appendChild(countDisplay);
-        
-    } catch (error) {
-        console.error('[Ticker Selection] Error loading:', error);
-        const tickerSelection = document.getElementById('ticker-selection');
-        if (tickerSelection) {
-            tickerSelection.innerHTML = `<div style="padding: 1rem; color: #f44336;">Error loading tickers: ${error.message}</div>`;
-        }
-    }
-}
-
-// Update ticker enabled count display
-function updateTickerEnabledCount() {
-    const countDisplay = document.getElementById('ticker-enabled-count');
-    if (!countDisplay) return;
-    
-    let enabledCount = 0;
-    ALL_TICKERS.forEach(ticker => {
-        const checkbox = document.getElementById(`ticker-${ticker}`);
-        if (checkbox && checkbox.checked) {
-            enabledCount++;
-        }
-    });
-    
-    countDisplay.textContent = `${enabledCount} ticker${enabledCount !== 1 ? 's' : ''} enabled`;
-}
-
-// Load chart colors into UI
-function loadChartColors(settings) {
-    try {
-        const colorsGrid = document.getElementById('chart-colors-grid');
-        if (!colorsGrid) {
-            console.warn('[Chart Colors] chart-colors-grid element not found');
-            return;
-        }
-        
-        colorsGrid.innerHTML = '';
-        
-        // Default chart colors
-        const defaultColors = getDefaultChartColors();
-        
-        // Get chart colors from settings, use defaults if not available
-        let chartColors = {};
-        const colorsOff = getChartColorsOffFromSettings(settings);
-        if (settings && settings.ChartColors) {
-            chartColors = settings.ChartColors;
-        } else {
-        }
-        
-        CHART_SERIES_METADATA.forEach(series => {
-            let colorValue = chartColors[series.key] || defaultColors[series.key];
-            if (isChartColorOffValue(colorValue)) {
-                colorValue = defaultColors[series.key];
-            }
-            const isOff = colorsOff.has(series.key);
-            
-            const colorItem = document.createElement('div');
-            colorItem.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
-            
-            const label = document.createElement('label');
-            label.textContent = series.label;
-            label.style.cssText = 'font-size: 0.85rem; color: #aaa;';
-            
-            const controlsRow = document.createElement('div');
-            controlsRow.className = 'chart-color-controls';
-            
-            const colorInput = document.createElement('input');
-            colorInput.type = 'color';
-            colorInput.id = `color-${series.key}`;
-            colorInput.value = colorValue;
-            colorInput.disabled = isOff;
-            colorInput.style.cssText = 'flex: 1; min-width: 0; height: 40px; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer; opacity: ' + (isOff ? '0.45' : '1') + ';';
-            
-            const offLabel = document.createElement('label');
-            offLabel.className = 'chart-color-off-label';
-            offLabel.title = 'Hide on chart (data still collected)';
-            
-            const offCheckbox = document.createElement('input');
-            offCheckbox.type = 'checkbox';
-            offCheckbox.id = `color-off-${series.key}`;
-            offCheckbox.checked = isOff;
-            
-            const offText = document.createElement('span');
-            offText.textContent = 'Off';
-            
-            offLabel.appendChild(offCheckbox);
-            offLabel.appendChild(offText);
-            
-            offCheckbox.addEventListener('change', () => {
-                const off = offCheckbox.checked;
-                colorInput.disabled = off;
-                colorInput.style.opacity = off ? '0.45' : '1';
-                colorInput.style.cursor = off ? 'not-allowed' : 'pointer';
-            });
-            
-            controlsRow.appendChild(colorInput);
-            controlsRow.appendChild(offLabel);
-            colorItem.appendChild(label);
-            colorItem.appendChild(controlsRow);
-            colorsGrid.appendChild(colorItem);
-        });
-        
-        
-        // Reset colors button handler (remove old listeners first)
-        const resetBtn = document.getElementById('reset-colors');
-        if (resetBtn) {
-            // Clone and replace to remove old event listeners
-            const newResetBtn = resetBtn.cloneNode(true);
-            resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
-            
-            newResetBtn.addEventListener('click', () => {
-                CHART_SERIES_METADATA.forEach(series => {
-                    const input = document.getElementById(`color-${series.key}`);
-                    if (input) {
-                        input.value = defaultColors[series.key];
-                        input.disabled = false;
-                        input.style.opacity = '1';
-                        input.style.cursor = 'pointer';
-                    }
-                    const offInput = document.getElementById(`color-off-${series.key}`);
-                    if (offInput) offInput.checked = false;
-                });
-                scheduleSettingsSave(false);
-            });
-        }
-    } catch (error) {
-        console.error('[Chart Colors] Error loading colors:', error);
-        const colorsGrid = document.getElementById('chart-colors-grid');
-        if (colorsGrid) {
-            colorsGrid.innerHTML = `<div style="padding: 1rem; color: #f44336;">Error loading colors: ${error.message}</div>`;
-        }
-    }
-}
-
-// Save chart colors from UI to settings
-function saveChartColors(settings) {
-    if (!settings.ChartColors) {
-        settings.ChartColors = {};
-    }
-    const colorsOff = [];
-    CHART_SERIES_METADATA.forEach(series => {
-        const input = document.getElementById(`color-${series.key}`);
-        const offInput = document.getElementById(`color-off-${series.key}`);
-        if (input) {
-            settings.ChartColors[series.key] = input.value;
-        }
-        if (offInput && offInput.checked) {
-            colorsOff.push(series.key);
-        }
-    });
-    settings.ChartColorsOff = colorsOff;
-}
-
-// Save settings
-async function saveSettings(options) {
-    const refreshTickers = !options || options.refreshTickers !== false;
-    try {
-        
-        // Get current settings (from backend if available, otherwise from cache/defaults)
-        let settings = null;
-        if (App && typeof App.GetSettings === 'function') {
-            try {
-                settings = await App.GetSettings();
-            } catch (error) {
-                console.warn('[Save Settings] Failed to load from backend, using cache/defaults:', error);
-            }
-        }
-        
-        // Fallback to cache or defaults
-        if (!settings) {
-            const cached = loadSettingsFromCache();
-            settings = cached?.settings || getDefaultSettings();
-        }
-        
-        if (!settings) {
-            settings = getDefaultSettings();
-        }
-        
-        // Update settings from UI
-        const dataDirInput = document.getElementById('data-dir');
-        if (dataDirInput) {
-            settings.DataDirectory = dataDirInput.value || 'Tickers';
-        }
-        
-        // If user entered a new API key in the settings form, include it so it is saved and poller uses it
-        const apiKeyInput = document.getElementById('api-key');
-        const apiKeyStatus = document.getElementById('api-key-status');
-        const typedAPIKey = apiKeyInput ? apiKeyInput.value.trim() : '';
-        if (typedAPIKey !== '') {
-            settings.APITKey = typedAPIKey;
-        }
-        const ninjaKeyInput = document.getElementById('ninja-api-key');
-        const ninjaKeyStatus = document.getElementById('ninja-api-key-status');
-        const typedNinjaKey = ninjaKeyInput ? ninjaKeyInput.value.trim() : '';
-        if (typedNinjaKey !== '') {
-            settings.NinjaAPIKey = typedNinjaKey;
-        } else {
-            delete settings.NinjaAPIKey;
-        }
-        
-        // Save subscription tiers - read checkboxes carefully
-        const tiers = [];
-        const classicCheckbox = document.getElementById('settings-tier-classic');
-        const stateCheckbox = document.getElementById('settings-tier-state');
-        const orderflowCheckbox = document.getElementById('settings-tier-orderflow');
-        
-        if (classicCheckbox && classicCheckbox.checked) {
-            tiers.push('classic');
-        }
-        if (stateCheckbox && stateCheckbox.checked) {
-            tiers.push('state');
-        }
-        if (orderflowCheckbox && orderflowCheckbox.checked) {
-            tiers.push('orderflow');
-        }
-        
-        if (tiers.length === 0) {
-            tiers.push('classic'); // Default to classic if none selected
-        }
-        
-        settings.APISubscriptionTiers = tiers;
-        
-        // Save data collection mode
-        const collectAllRadio = document.getElementById('collect-all');
-        settings.CollectAllEndpoints = collectAllRadio ? collectAllRadio.checked : true;
-        
-        // Save ticker selection and polling preferences
-        if (!settings.TickerConfigs) {
-            settings.TickerConfigs = {};
-        }
-        
-        let enabledCount = 0;
-        ALL_TICKERS.forEach(ticker => {
-            const checkbox = document.getElementById(`ticker-${ticker}`);
-            const enabled = checkbox ? checkbox.checked : false;
-            if (enabled) enabledCount++;
-            
-            // Get polling preferences
-            const refreshRateInput = document.getElementById(`refresh-rate-${ticker}`);
-            const prioritySelect = document.getElementById(`priority-${ticker}`);
-            
-            let refreshRate = 0; // Default to 0 (auto)
-            if (refreshRateInput) {
-                const value = parseInt(refreshRateInput.value);
-                if (!isNaN(value) && value >= 0) {
-                    refreshRate = value;
-                }
-            }
-            
-            let priority = 'medium'; // Default
-            if (prioritySelect) {
-                priority = prioritySelect.value || 'medium';
-            }
-            
-            if (!settings.TickerConfigs[ticker]) {
-                settings.TickerConfigs[ticker] = {
-                    Display: enabled,
-                    CollectionEnabled: enabled,
-                    Priority: priority,
-                    RefreshRateMs: refreshRate
-                };
-            } else {
-                // Update existing config
-                const config = settings.TickerConfigs[ticker];
-                config.CollectionEnabled = enabled;
-                config.Display = enabled;
-                config.Priority = priority;
-                config.RefreshRateMs = refreshRate;
-                settings.TickerConfigs[ticker] = config;
-            }
-        });
-        
-        // Save chart colors
-        saveChartColors(settings);
-        
-        // Chart layer and lookback edits land on the server before this Save.
-        // Pull those into the form unless this window edited them itself.
-        await refreshUntouchedProfileChoices();
-
-        // Save general settings (UseMarketTime, EnableLogging, HideConsole)
-        saveGeneralSettings(settings);
-        
-        // Save hidden plots settings
-        saveHiddenPlots(settings);
-        
-        // Save ticker order from settings modal
-        const tickerOrder = [];
-        document.querySelectorAll('#ticker-selection .ticker-config-row[data-ticker]').forEach(row => {
-            tickerOrder.push(row.dataset.ticker);
-        });
-        if (tickerOrder.length > 0) {
-            settings.TickerOrder = tickerOrder;
-        }
-        
-        
-        // Save to cache immediately (works even without backend)
-        saveSettingsToCache(settings);
-        
-        // Try to save to backend if available
-        if (App && typeof App.SaveSettings === 'function') {
-            try {
-                await App.SaveSettings(settings);
-                profileChoicesDirty = false;
-                if (typedAPIKey !== '' && apiKeyInput) {
-                    apiKeyInput.value = '';
-                    if (apiKeyStatus) {
-                        apiKeyStatus.textContent = '✓ API key is saved';
-                        apiKeyStatus.style.color = '#4CAF50';
-                    }
-                }
-                if (typedNinjaKey !== '' && ninjaKeyInput) {
-                    ninjaKeyInput.value = '';
-                    ninjaKeyInput.placeholder = '••••••••••••••••';
-                    if (ninjaKeyStatus) {
-                        ninjaKeyStatus.textContent = '✓ NinjaTrader key is saved';
-                        ninjaKeyStatus.style.color = '#4CAF50';
-                    }
-                }
-            } catch (error) {
-                console.warn('[Save Settings] Failed to save to backend, but cached:', error);
-                setAppStatus('Settings were not saved', true);
-            }
-        } else {
-            setAppStatus('Settings were not saved', true);
-        }
-        
-        // Broadcast settings update to all chart windows so they can refresh colors
-        try {
-            const settingsChannel = new BroadcastChannel('market-terminal-settings');
-            settingsChannel.postMessage({ type: 'settings-updated', settings: settingsWithoutKey(settings) });
-            settingsChannel.close();
-        } catch (e) {
-            console.warn('[Save Settings] Failed to broadcast settings update:', e);
-        }
-        
-        if (!refreshTickers) return;
-
-        if (App && typeof App.GetEnabledTickers === 'function') {
-            try {
-                let enabledTickers = await App.GetEnabledTickers();
-                cachedEnabledTickers = enabledTickers; // refresh the 1s-loop cache
-                
-                if (enabledTickers && enabledTickers.length > 0) {
-                    // Sort by the ticker order we just saved
-                    if (settings.TickerOrder && settings.TickerOrder.length > 0) {
-                        enabledTickers = sortTickersByOrder(enabledTickers, settings.TickerOrder);
-                    }
-                    initializeTickerTable(enabledTickers);
-                    startPeriodicUpdates(); // Restart updates with new tickers
-                } else {
-                    console.warn('[Save Settings] No tickers enabled! GetEnabledTickers returned empty array');
-                    // No tickers enabled - clear table
-                    const tbody = document.getElementById('ticker-table-body');
-                    if (tbody) {
-                        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ff9800;">No tickers enabled. Please configure tickers in Settings.</td></tr>';
-                    }
-                }
-            } catch (error) {
-                console.error('[Save Settings] Failed to refresh main page tickers:', error);
-            }
-        } else {
-            console.warn('[Save Settings] App.GetEnabledTickers not available');
-        }
-    } catch (saveError) {
-        console.error('[Save Settings] Error saving settings:', saveError);
-        throw saveError;
-    }
-}
-
 // Periodic updates interval
 let periodicUpdateInterval = null;
 // Market date rollover check: when user is viewing "today", advance to new date after rollover (e.g. market open)
@@ -2052,6 +974,71 @@ async function getEnabledTickersCached() {
 }
 
 // Start periodic updates
+// Re-read enabled tickers from the backend and rebuild the main table. Called
+// when the settings window broadcasts a change so the table reflects it live.
+async function refreshTickersFromSettings() {
+    if (!App || typeof App.GetEnabledTickers !== 'function') return;
+    try {
+        let enabledTickers = await App.GetEnabledTickers();
+        cachedEnabledTickers = enabledTickers;
+        const settings = await App.GetSettings();
+        if (settings && settings.TickerOrder && settings.TickerOrder.length > 0) {
+            enabledTickers = sortTickersByOrder(enabledTickers, settings.TickerOrder);
+        }
+        if (enabledTickers && enabledTickers.length > 0) {
+            initializeTickerTable(enabledTickers);
+            startPeriodicUpdates();
+        } else {
+            const tbody = document.getElementById('ticker-table-body');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ff9800;">No tickers enabled. Please configure tickers in Settings.</td></tr>';
+            }
+        }
+    } catch (e) {
+        console.warn('[Main] Failed to refresh tickers after settings change:', e);
+    }
+}
+
+// Update the header's API request counter and backfill chip.
+async function updateHeaderStatus() {
+    try {
+        const res = await fetch('/api/request-count', { cache: 'no-store' });
+        if (res.ok) {
+            const d = await res.json();
+            const b = document.querySelector('#request-counter b');
+            if (b) b.textContent = (d.count ?? 0).toLocaleString('en-US');
+        }
+    } catch (e) {}
+    try {
+        const res = await fetch('/api/backfill-status', { cache: 'no-store' });
+        if (res.ok) {
+            const d = await res.json();
+            const chip = document.getElementById('backfill-chip');
+            if (!chip || !d) return;
+            const progress = `tickers=${d.tickers ?? 0} requests=${d.requests ?? 0} rows=${d.scalars ?? 0} ladders=${d.ladders ?? 0}`;
+            if (d.running) {
+                chip.className = 'header-chip pending';
+                chip.textContent = `Backfill: ${d.phase || 'running'}…`;
+                chip.title = `${progress} — running (click to open the log)`;
+            } else if (d.last_error) {
+                chip.className = 'header-chip err';
+                chip.textContent = 'Backfill: error';
+                chip.title = `${d.last_error} (click to open the log)`;
+            } else if (d.phase && d.phase !== 'idle') {
+                chip.className = 'header-chip ok';
+                chip.textContent = `Backfill: ${d.date || d.phase} recovered`;
+                chip.title = `${progress} (click to open the log)`;
+            } else {
+                chip.className = 'header-chip';
+                chip.textContent = 'Backfill: idle';
+                chip.title = 'No recovery pass has run this session. Click to open the log.';
+            }
+        }
+    } catch (e) {}
+}
+
+let headerStatusInterval = null;
+
 function startPeriodicUpdates() {
     // Clear existing interval if any
     if (periodicUpdateInterval) {
@@ -2067,6 +1054,12 @@ function startPeriodicUpdates() {
     periodicUpdateInterval = setInterval(async () => {
         await updateTickerData();
     }, 1000);
+
+    // Header counter + backfill chip (separate cadence, cheap)
+    if (!headerStatusInterval) {
+        updateHeaderStatus();
+        headerStatusInterval = setInterval(updateHeaderStatus, 3000);
+    }
     
     // Check for market date rollover every 60s (e.g. app started before open; after 8:30 AM ET we should show today)
     marketDateRolloverInterval = setInterval(async () => {

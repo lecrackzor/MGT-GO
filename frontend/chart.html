@@ -15,7 +15,15 @@
     <link rel="stylesheet" href="chart.css">
 </head>
 <body>
-    <h1 id="chart-title">Loading Chart...</h1>
+    <header id="chart-header">
+        <span id="chart-ticker" class="chart-ticker">…</span>
+        <span id="chart-date" class="chart-date"></span>
+        <span id="market-state-pill" class="pill" title="Market session status">—</span>
+        <span id="spot-readout" class="spot"><span class="spot-price">—</span><span class="spot-chg"></span></span>
+        <span id="chart-req-counter" class="chart-req" title="API requests this session">API <b>0</b> reqs</span>
+        <span class="chart-header-spacer"></span>
+        <button type="button" id="pin-btn" class="pin-btn" title="Keep this window on top">📌 Pin</button>
+    </header>
     <div id="chart-container">
         <div id="chart-div">
             <div class="crosshair-line" id="crosshair-line"></div>
@@ -37,7 +45,10 @@
         <div id="crosshair-info-box">
             <div id="crosshair-info-box-header">
                 <span id="crosshair-info-box-header-title">Crosshair Info</span>
-                <span class="crosshair-info-box-toggle" title="Collapse">▼</span>
+                <span class="crosshair-info-box-actions">
+                    <span class="crosshair-info-box-pin" title="Pin (stop following crosshair)">📌</span>
+                    <span class="crosshair-info-box-toggle" title="Collapse">▼</span>
+                </span>
             </div>
             <div id="crosshair-info-box-content"></div>
         </div>
@@ -45,24 +56,40 @@
     </div>
     <div id="chart-toolbar" class="window-toolbar">
         <div class="toolbar-left">
-            <button id="profile-toggle-btn" title="Show profile ladders" hidden>Profile</button>
-            <select id="profile-dte" aria-label="Profile expiration" hidden>
-                <option value="zero">0 DTE</option>
-                <option value="one">1 DTE</option>
-                <option value="full">90 DTE</option>
-            </select>
-            <span id="profile-layers" hidden>
-                <label><input type="checkbox" data-layer="classic" checked>Classic</label>
-                <label><input type="checkbox" data-layer="state">State</label>
-                <label><input type="checkbox" data-layer="gamma">Gamma</label>
-                <label><input type="checkbox" data-layer="delta">Delta</label>
-                <label><input type="checkbox" data-layer="vanna">Vanna</label>
-                <label><input type="checkbox" data-layer="charm">Charm</label>
-            </span>
-            <select id="profile-mode" aria-label="Profile placement" hidden>
-                <option value="side">Side</option>
-                <option value="chart">Chart</option>
-            </select>
+            <div class="tb-group" id="tb-group-view">
+                <span class="tb-label">View</span>
+                <button id="profile-toggle-btn" title="Show profile ladders" hidden>Profile</button>
+                <select id="profile-mode" aria-label="Profile placement" hidden>
+                    <option value="side">Side</option>
+                    <option value="chart">Chart</option>
+                </select>
+            </div>
+            <span class="tb-sep"></span>
+            <div class="tb-group" id="tb-group-profile">
+                <span class="tb-label">Profile</span>
+                <select id="profile-dte" aria-label="Profile expiration" hidden>
+                    <option value="zero">0 DTE</option>
+                    <option value="one">1 DTE</option>
+                    <option value="full">90 DTE</option>
+                </select>
+                <div id="profile-layers" class="layers-menu" hidden>
+                    <button type="button" id="profile-layers-btn" class="layers-btn" title="Choose which profile layers to show">Layers ▾</button>
+                    <div class="layers-pop" id="profile-layers-pop">
+                        <label><input type="checkbox" data-layer="classic" checked>Classic</label>
+                        <label><input type="checkbox" data-layer="state">State</label>
+                        <label><input type="checkbox" data-layer="gamma">Gamma</label>
+                        <label><input type="checkbox" data-layer="delta">Delta</label>
+                        <label><input type="checkbox" data-layer="vanna">Vanna</label>
+                        <label><input type="checkbox" data-layer="charm">Charm</label>
+                    </div>
+                </div>
+            </div>
+            <span class="tb-sep"></span>
+            <div class="tb-group" id="tb-group-info">
+                <span class="tb-label">Info</span>
+                <button id="metrics-toggle-btn" type="button" title="Show the information panel" aria-pressed="false" hidden>Info</button>
+            </div>
+            <span class="tb-sep"></span>
             <span class="toolbar-dock">
                 <button id="profile-detach-btn" type="button" hidden title="Open this side profile in its own window">Detach</button>
                 <button id="profile-attach-btn" type="button" hidden title="Dock the profile window back onto this chart">Attach</button>

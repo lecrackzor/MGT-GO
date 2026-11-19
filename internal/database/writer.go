@@ -33,6 +33,11 @@ type DataWriter struct {
 	// One flush at a time per ticker. The value is *sync.Mutex.
 	tickerFlush sync.Map
 
+	// profileHeads caches the newest stored ladder per file and endpoint so a
+	// flush does not rebuild the delta chain from disk.
+	profileMu    sync.Mutex
+	profileHeads map[string]profileHead
+
 	// failNextProfileFlush makes the next profile commit return an error.
 	// Chart rows for that flush stay committed. Tests use it to prove the
 	// ladder is retried on the following flush.
@@ -95,6 +100,7 @@ func NewDataWriter(settings *config.Settings, debugPrint func(string, string)) *
 		lastFlushTime:    make(map[string]time.Time),
 		settings:         settings,
 		debugPrint:       debugPrint,
+		profileHeads:     make(map[string]profileHead),
 		stopChan:         make(chan struct{}),
 	}
 
@@ -324,7 +330,8 @@ func (dw *DataWriter) shouldFlush(ticker string, isActive bool) bool {
 	return false
 }
 
-// FlushAllTickers flushes all pending writes for all tickers
+// FlushAllTickers flushes all pending writes for all tickers. Each ticker gets
+// one final ladder, so a date change or a shutdown never drops the last sample.
 func (dw *DataWriter) FlushAllTickers() error {
 	dw.mu.RLock()
 	tickers := make([]string, 0, len(dw.pendingWrites))
@@ -337,7 +344,7 @@ func (dw *DataWriter) FlushAllTickers() error {
 
 	var lastErr error
 	for _, ticker := range tickers {
-		if err := dw.FlushTicker(ticker); err != nil {
+		if err := dw.flushTicker(ticker, true); err != nil {
 			dw.logf("error", "FlushAllTickers: Failed to flush %s: %v", ticker, err)
 			lastErr = err
 		}
@@ -365,7 +372,13 @@ func (dw *DataWriter) tickerFlushLock(ticker string) *sync.Mutex {
 }
 
 // FlushTicker flushes all pending writes for a ticker
-func (dw *DataWriter) FlushTicker(ticker string) (err error) {
+func (dw *DataWriter) FlushTicker(ticker string) error {
+	return dw.flushTicker(ticker, false)
+}
+
+// flushTicker writes the pending batch. force stores one ladder per endpoint
+// even when the ladder cadence is not due yet.
+func (dw *DataWriter) flushTicker(ticker string, force bool) (err error) {
 	lock := dw.tickerFlushLock(ticker)
 	lock.Lock()
 	defer lock.Unlock()
@@ -413,7 +426,7 @@ func (dw *DataWriter) FlushTicker(ticker string) (err error) {
 	committed := make(map[time.Time]bool, len(byDate))
 	var flushErr error
 	for date, writes := range byDate {
-		if err := dw.flushDate(ticker, date, writes); err != nil {
+		if err := dw.flushDate(ticker, date, writes, force); err != nil {
 			dw.logf("error", "Failed to flush %s for date %s: %v", ticker, date.Format("2006-01-02"), err)
 			flushErr = err
 			break
@@ -448,7 +461,7 @@ func (dw *DataWriter) requeuePending(ticker string, writes []*PendingWrite) {
 }
 
 // flushDate flushes writes for a specific date
-func (dw *DataWriter) flushDate(ticker string, date time.Time, writes []*PendingWrite) error {
+func (dw *DataWriter) flushDate(ticker string, date time.Time, writes []*PendingWrite, force bool) error {
 	// Deduplicate timestamps (100ms tolerance - matches Python TIMESTAMP_DEDUP_TOLERANCE_DATA_LOADING)
 	// This prevents duplicate data points in the database
 	const tolerance = 0.1 // 100ms in seconds
@@ -462,7 +475,7 @@ func (dw *DataWriter) flushDate(ticker string, date time.Time, writes []*Pending
 	if err := dw.writeChartRows(ticker, date, writes); err != nil {
 		return err
 	}
-	if err := dw.flushProfiles(ticker, dw.getDBPath(ticker, date), writes); err != nil {
+	if err := dw.flushProfiles(ticker, dw.getDBPath(ticker, date), writes, force); err != nil {
 		return err
 	}
 
@@ -524,6 +537,10 @@ func (dw *DataWriter) writeChartRows(ticker string, date time.Time, writes []*Pe
 		"major_negative",
 		"major_pos_oi",
 		"major_neg_oi",
+		"sum_gex_vol",
+		"sum_gex_oi",
+		"major_call_gamma",
+		"major_put_gamma",
 	}
 
 	// Add expected columns that aren't already in scalarFields
@@ -546,30 +563,52 @@ func (dw *DataWriter) writeChartRows(ticker string, date time.Time, writes []*Pe
 	}
 	defer tx.Rollback()
 
-	// One statement per sample, naming only the columns that sample has.
-	// A repeated timestamp updates those columns and leaves the rest of the row.
-	// Profile ladders go to the sibling file, not profiles_blob.
+	// Group samples by their exact column set. A poll normally produces one
+	// shape, so this prepares one statement instead of one per sample.
+	type rowGroup struct {
+		sql  string
+		keys []string
+		rows [][]interface{}
+	}
+	groups := make(map[string]*rowGroup, 4)
+	order := make([]string, 0, 4)
 	for _, write := range writes {
 		keys := sortedKeys(write.Scalars)
-		insertSQL, cleanKeys := upsertSQL(keys)
-		stmt, err := tx.Prepare(insertSQL)
-		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
+		sig := strings.Join(keys, "\x00")
+		group := groups[sig]
+		if group == nil {
+			insertSQL, cleanKeys := upsertSQL(keys)
+			group = &rowGroup{sql: insertSQL, keys: cleanKeys}
+			groups[sig] = group
+			order = append(order, sig)
 		}
-
-		args := []interface{}{write.Timestamp}
-		for _, field := range cleanKeys {
+		args := make([]interface{}, 0, len(group.keys)+1)
+		args = append(args, write.Timestamp)
+		for _, field := range group.keys {
 			args = append(args, write.Scalars[field])
 		}
+		group.rows = append(group.rows, args)
+	}
 
-		_, err = stmt.Exec(args...)
-		stmt.Close()
+	stmts := make([]*sql.Stmt, 0, len(order))
+	for _, sig := range order {
+		group := groups[sig]
+		stmt, err := tx.Prepare(group.sql)
 		if err != nil {
-			tx.Rollback()
-			dw.pool.Discard(dbPath)
-			return fmt.Errorf("failed to insert: %w", err)
+			closeStatements(stmts)
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+		stmts = append(stmts, stmt)
+		for _, args := range group.rows {
+			if _, err := stmt.Exec(args...); err != nil {
+				closeStatements(stmts)
+				tx.Rollback()
+				dw.pool.Discard(dbPath)
+				return fmt.Errorf("failed to insert: %w", err)
+			}
 		}
 	}
+	closeStatements(stmts)
 
 	// Commit transaction. WAL checkpointing stays on the background flusher.
 	// A per-flush TRUNCATE checkpoint contended with readers.
@@ -579,9 +618,15 @@ func (dw *DataWriter) writeChartRows(ticker string, date time.Time, writes []*Pe
 	return nil
 }
 
+func closeStatements(stmts []*sql.Stmt) {
+	for _, stmt := range stmts {
+		stmt.Close()
+	}
+}
+
 // flushProfiles writes each endpoint's JSON into the sibling profile database.
 // A row is replaced only when this sample includes that endpoint.
-func (dw *DataWriter) flushProfiles(ticker, chartPath string, writes []*PendingWrite) error {
+func (dw *DataWriter) flushProfiles(ticker, chartPath string, writes []*PendingWrite, force bool) error {
 	if dw.failNextProfileFlush.CompareAndSwap(true, false) {
 		return fmt.Errorf("profile flush failed")
 	}
@@ -612,46 +657,72 @@ func (dw *DataWriter) flushProfiles(ticker, chartPath string, writes []*PendingW
 	}
 
 	path := ProfileDBPath(chartPath)
+
+	// Ladders are sampled on their own cadence. Chart scalars keep the poll
+	// cadence, so a crosshair row still has levels; only the ladder body is
+	// written less often.
+	sort.Slice(pending, func(i, j int) bool { return pending[i].Timestamp < pending[j].Timestamp })
+	samples, order := profileSamples(settings, pending)
+	sampleSeconds := ProfileSampleSeconds(settings)
+
+	if !force {
+		due := false
+		for _, endpoint := range order {
+			list := samples[endpoint]
+			key := profileHeadKey(path, endpoint)
+			head, ok := dw.cachedProfileHead(key)
+			if !ok || head.at <= 0 || list[len(list)-1].write.Timestamp-head.at >= sampleSeconds-profileSampleSlack {
+				due = true
+				break
+			}
+		}
+		if !due {
+			return nil
+		}
+	}
+
 	db, err := dw.pool.GetConnection(path, false)
 	if err != nil {
 		dw.pool.Discard(path)
+		dw.forgetProfileHeads(path)
 		return fmt.Errorf("failed to open profile database: %w", err)
 	}
 	if err := ensureProfileTable(db); err != nil {
 		dw.pool.Discard(path)
+		dw.forgetProfileHeads(path)
 		return fmt.Errorf("failed to ensure profile table: %w", err)
 	}
 	markProfileStoreReady(path)
 
-	sort.Slice(pending, func(i, j int) bool { return pending[i].Timestamp < pending[j].Timestamp })
-
 	tx, err := db.Begin()
 	if err != nil {
 		dw.pool.Discard(path)
+		dw.forgetProfileHeads(path)
 		return fmt.Errorf("failed to begin profile transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// The delta head has to be read in this transaction. A read before BEGIN
-	// can still see the chain a flush that has not committed yet, or miss one
-	// that just did.
-	type profileHead struct {
-		body  []byte
-		chain int
+	// The delta head and the last ladder time are kept per file and endpoint.
+	// A read happens only on the first flush after a start, a date change, or
+	// a failure, instead of on every flush.
+	dw.profileMu.Lock()
+	defer dw.profileMu.Unlock()
+	if dw.profileHeads == nil {
+		dw.profileHeads = make(map[string]profileHead)
 	}
-	heads := map[string]*profileHead{}
-	for _, write := range pending {
-		for _, endpoint := range sortedKeys(write.Profiles) {
-			if !config.KeepProfileEndpoint(settings, endpoint) || heads[endpoint] != nil {
-				continue
-			}
-			body, _, chain, err := profileAt(tx, endpoint, nil)
+	heads := make(map[string]profileHead, len(order))
+	for _, endpoint := range order {
+		key := profileHeadKey(path, endpoint)
+		head, ok := dw.profileHeads[key]
+		if !ok {
+			body, ts, chain, err := profileAtLive(tx, endpoint, nil)
 			if err != nil {
 				dw.logf("writer", "flushProfiles: %s %s will be stored in full (%v)", ticker, endpoint, err)
-				body, chain = nil, 0
+				body, chain, ts = nil, 0, 0
 			}
-			heads[endpoint] = &profileHead{body: body, chain: chain}
+			head = profileHead{body: body, chain: chain, at: ts}
 		}
+		heads[endpoint] = head
 	}
 
 	stmt, err := tx.Prepare(`
@@ -663,22 +734,37 @@ func (dw *DataWriter) flushProfiles(ticker, chartPath string, writes []*PendingW
 	}
 	defer stmt.Close()
 
-	for _, write := range pending {
-		for _, endpoint := range sortedKeys(write.Profiles) {
-			if !config.KeepProfileEndpoint(settings, endpoint) {
-				continue
-			}
-			head := heads[endpoint]
-			next, err := json.Marshal(write.Profiles[endpoint])
+	for _, endpoint := range order {
+		head := heads[endpoint]
+		list := samples[endpoint]
+		for i, sample := range list {
+			next, err := json.Marshal(sample.value)
 			if err != nil {
 				return err
 			}
-			stored, chain, skip, err := encodeProfile(head.body, head.chain, next)
+			next = normalizeProfile(next)
+
+			// The last sample of a forced flush is always stored so a day never
+			// ends on a skipped cadence tick.
+			if !force || i != len(list)-1 {
+				if head.at > 0 && sample.write.Timestamp-head.at < sampleSeconds-profileSampleSlack {
+					continue
+				}
+			}
+
+			// A payload written before this format forces a full ladder, so a
+			// delta can never mix two ladder shapes.
+			chain := head.chain
+			if !profileIsCurrent(head.body) {
+				chain = profileKeyframeEvery
+			}
+			stored, nextChain, skip, err := encodeProfile(head.body, chain, next)
 			if err != nil {
 				return err
 			}
 			head.body = next
-			head.chain = chain
+			head.chain = nextChain
+			head.at = sample.write.Timestamp
 			if skip {
 				continue
 			}
@@ -686,18 +772,99 @@ func (dw *DataWriter) flushProfiles(ticker, chartPath string, writes []*PendingW
 			if err != nil {
 				return err
 			}
-			if _, err := stmt.Exec(write.Timestamp, endpoint, payload); err != nil {
+			if _, err := stmt.Exec(sample.write.Timestamp, endpoint, payload); err != nil {
 				tx.Rollback()
 				dw.pool.Discard(path)
+				dw.forgetProfileHeads(path)
 				return fmt.Errorf("failed to insert profile %s for %s: %w", endpoint, ticker, err)
 			}
 		}
+		heads[endpoint] = head
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit profiles: %w", err)
 	}
+	for _, endpoint := range order {
+		dw.profileHeads[profileHeadKey(path, endpoint)] = heads[endpoint]
+	}
 	dw.logf("writer", "flushProfiles: wrote profiles for %s to %s", ticker, path)
 	return nil
+}
+
+// profileSampleSlack absorbs float rounding on a whole-second cadence.
+const profileSampleSlack = 0.05
+
+// profileHead is the newest stored ladder for one endpoint and how far its
+// delta chain has run.
+type profileHead struct {
+	body  []byte
+	chain int
+	at    float64
+}
+
+func profileHeadKey(path, endpoint string) string {
+	return path + "\x00" + endpoint
+}
+
+func (dw *DataWriter) cachedProfileHead(key string) (profileHead, bool) {
+	dw.profileMu.Lock()
+	defer dw.profileMu.Unlock()
+	head, ok := dw.profileHeads[key]
+	return head, ok
+}
+
+// forgetProfileHeads drops cached heads for one file after its handle is
+// discarded, so the next flush reads what is actually on disk.
+func (dw *DataWriter) forgetProfileHeads(path string) {
+	prefix := path + "\x00"
+	dw.profileMu.Lock()
+	defer dw.profileMu.Unlock()
+	for key := range dw.profileHeads {
+		if strings.HasPrefix(key, prefix) {
+			delete(dw.profileHeads, key)
+		}
+	}
+}
+
+// profileSamples groups the ladder payloads of one batch by endpoint, in
+// timestamp order.
+func profileSamples(settings *config.Settings, pending []*PendingWrite) (map[string][]profileSample, []string) {
+	samples := make(map[string][]profileSample)
+	order := make([]string, 0)
+	for _, write := range pending {
+		for _, endpoint := range sortedKeys(write.Profiles) {
+			if !config.KeepProfileEndpoint(settings, endpoint) {
+				continue
+			}
+			if _, ok := samples[endpoint]; !ok {
+				order = append(order, endpoint)
+			}
+			samples[endpoint] = append(samples[endpoint], profileSample{write: write, value: write.Profiles[endpoint]})
+		}
+	}
+	sort.Strings(order)
+	return samples, order
+}
+
+type profileSample struct {
+	write *PendingWrite
+	value interface{}
+}
+
+// ProfileSampleSeconds reads the ladder cadence. 1 restores per-poll ladders.
+// A recovered day is sampled on the same cadence so fills and live rows line up.
+func ProfileSampleSeconds(settings *config.Settings) float64 {
+	seconds := 5
+	if settings != nil && settings.ProfileSampleSeconds > 0 {
+		seconds = settings.ProfileSampleSeconds
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds > 60 {
+		seconds = 60
+	}
+	return float64(seconds)
 }
 
 // splitCollectedFields separates numeric columns from profile payloads.
@@ -933,7 +1100,7 @@ func (dw *DataWriter) Close() error {
 
 	// Flush each ticker synchronously (we're shutting down, so async doesn't matter)
 	for _, ticker := range tickersToFlush {
-		if err := dw.FlushTicker(ticker); err != nil {
+		if err := dw.flushTicker(ticker, true); err != nil {
 			dw.logf("error", "DataWriter: Warning - failed to flush %s on close: %v", ticker, err)
 		} else {
 			dw.logf("writer", "DataWriter: Flushed %s on close", ticker)

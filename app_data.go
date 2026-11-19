@@ -111,6 +111,16 @@ func (a *App) GetChartData(ticker string, dateStr string, sinceStr string) (map[
 		"major_negative",
 		"major_pos_oi",
 		"major_neg_oi",
+		// Collected already, not plotted by default.
+		"sum_gex_vol",
+		"sum_gex_oi",
+		"major_call_gamma",
+		"major_put_gamma",
+		"zgr",
+		"ocvr",
+		"net_dex",
+		"agg_dex",
+		"gexoflow",
 	}
 	result := make(map[string]interface{}, len(requiredFields)+1)
 	for _, field := range requiredFields {
@@ -152,9 +162,12 @@ func (a *App) attachHistoricalMajors(ticker string, date time.Time, result map[s
 		return
 	}
 	start, end := usSessionBounds(date)
-	samples, err := a.apiClient.FetchHistoricalMajors(context.Background(), settings.NinjaAPIKey, ticker, start, end)
+	samples, err := a.historicalMajors(context.Background(), settings.NinjaAPIKey, ticker, date, start, end)
 	if err != nil {
 		a.debugPrint(fmt.Sprintf("GetChartData: historical majors for %s: %v", ticker, err), "app")
+		return
+	}
+	if len(samples) == 0 {
 		return
 	}
 	call, put := alignHistoricalMajors(times, samples)

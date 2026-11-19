@@ -19,46 +19,76 @@ func TestShouldPollSkipsClosedMarket(t *testing.T) {
 	}
 }
 
-func TestGetMinimumIntervalScalesByEndpointCalls(t *testing.T) {
+func TestGetMinimumIntervalScalesByTickerCount(t *testing.T) {
 	rlt := NewRateLimitTracker()
-	rlt.RecordRequest(float64(time.Now().Unix()), map[string]string{
-		"X-RateLimit-Limit": "60",
-	})
-	one := rlt.GetMinimumInterval(2, 1)
-	all := rlt.GetMinimumInterval(2, 3)
-	if one != 2 {
-		t.Fatalf("one call per ticker = %v, want 2", one)
+	now := float64(time.Now().Unix())
+	// Each endpoint has its own budget of 60 per minute.
+	rlt.RecordRequest("classic_zero", now, map[string]string{"X-RateLimit-Limit": "60"})
+	rlt.RecordRequest("classic_one", now, map[string]string{"X-RateLimit-Limit": "60"})
+
+	two := rlt.GetMinimumInterval(2, []string{"classic_zero", "classic_one"})
+	if two != 2 {
+		t.Fatalf("two tickers = %v, want 2", two)
 	}
-	if all != 6 {
-		t.Fatalf("three calls per ticker = %v, want 6", all)
+	// More endpoints per poll do not spend the same pool.
+	wide := rlt.GetMinimumInterval(2, []string{"classic_zero", "classic_one", "classic_full"})
+	if wide != 2 {
+		t.Fatalf("three endpoints = %v, want 2", wide)
 	}
 }
 
-func TestCalculateIntervalScalesOpenChartByPlannedEndpoints(t *testing.T) {
+func TestGetMinimumIntervalFallsBackToSharedPool(t *testing.T) {
+	rlt := NewRateLimitTracker()
+	// A limit seen without a bucket is treated as one shared pool.
+	rlt.RecordRequest("", float64(time.Now().Unix()), map[string]string{"X-RateLimit-Limit": "60"})
+	interval := rlt.GetMinimumInterval(2, []string{"classic_zero", "classic_one", "classic_full"})
+	if interval != 6 {
+		t.Fatalf("shared pool = %v, want 6", interval)
+	}
+}
+
+func TestTightestBucketWins(t *testing.T) {
+	rlt := NewRateLimitTracker()
+	now := float64(time.Now().Unix())
+	rlt.RecordRequest("classic_zero", now, map[string]string{"X-RateLimit-Limit": "60"})
+	rlt.RecordRequest("orderflow", now, map[string]string{"X-RateLimit-Limit": "10"})
+	if got := rlt.GetMinimumInterval(2, []string{"classic_zero", "orderflow"}); got != 12 {
+		t.Fatalf("interval = %v, want 12", got)
+	}
+	if limit, _, _ := rlt.BucketSnapshot("orderflow"); limit != 10 {
+		t.Fatalf("orderflow limit = %d", limit)
+	}
+}
+
+func TestCalculateIntervalScalesOpenChartByTickerCount(t *testing.T) {
 	settings := &config.Settings{
 		CollectAllEndpoints:  true,
 		APISubscriptionTiers: []string{"classic"},
 	}
 	uas := NewUnifiedAdaptiveScheduler(settings)
 	uas.SetEnabledTickers([]string{"SPX", "QQQ"})
-	uas.rateLimitTracker.RecordRequest(float64(time.Now().Unix()), map[string]string{
+	uas.rateLimitTracker.RecordRequest("classic_zero", float64(time.Now().Unix()), map[string]string{
+		"X-RateLimit-Limit": "60",
+	})
+	uas.rateLimitTracker.RecordRequest("classic_one", float64(time.Now().Unix()), map[string]string{
+		"X-RateLimit-Limit": "60",
+	})
+	uas.rateLimitTracker.RecordRequest("classic_full", float64(time.Now().Unix()), map[string]string{
 		"X-RateLimit-Limit": "60",
 	})
 
-	// Open chart base is 1s. Two tickers times three classic endpoints
-	// at 60 requests per 60s require a 6s gap.
+	// Open chart base is 1s. Two tickers on a 60-per-minute endpoint budget
+	// need a 2s gap; the three endpoints have separate pools.
 	interval := uas.CalculateInterval("SPX", []interface{}{"SPX"})
-	if interval != 6 {
-		t.Fatalf("interval = %v, want 6", interval)
+	if interval != 2 {
+		t.Fatalf("interval = %v, want 2", interval)
 	}
 }
 
 func TestCalculateIntervalKeepsLiveTiersWithoutRateLimit(t *testing.T) {
 	settings := &config.Settings{
-		CollectAllEndpoints:         true,
-		APISubscriptionTiers:        []string{"classic"},
-		ActiveTickerRefreshRateMs:   5000,
-		DataCollectionRefreshRateMs: 30000,
+		CollectAllEndpoints:  true,
+		APISubscriptionTiers: []string{"classic"},
 	}
 	uas := NewUnifiedAdaptiveScheduler(settings)
 	uas.SetEnabledTickers([]string{"SPX", "QQQ"})

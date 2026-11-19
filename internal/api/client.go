@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +114,20 @@ func (c *Client) getAPIKey() string {
 	return c.apiKey
 }
 
+// getBaseURL returns the API host in a thread-safe way.
+func (c *Client) getBaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.baseURL
+}
+
+// SetBaseURL points the client at another host. Recovery tests use it.
+func (c *Client) SetBaseURL(base string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.baseURL = strings.TrimRight(base, "/")
+}
+
 // FetchEndpoint fetches data from a specific API endpoint.
 // ctx cancels a batch: a new attempt does not start after it is done, and a
 // request already inside Do is aborted with the context.
@@ -138,8 +154,6 @@ func (c *Client) FetchEndpoint(ctx context.Context, endpoint, ticker string) (ma
 
 	// Retry logic for transient errors
 	maxRetries := 3
-	retryDelays := []time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
-
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -164,7 +178,7 @@ func (c *Client) FetchEndpoint(ctx context.Context, endpoint, ticker string) (ma
 		if err != nil {
 			lastErr = err
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				delay := retryDelays[attempt]
+				delay := retryDelay(attempt, "")
 				c.logf("api", "⏳ Request error fetching %s for %s (attempt %d/%d) - retrying in %v", endpoint, ticker, attempt+1, maxRetries, delay)
 				if !sleepContext(ctx, delay) {
 					return nil, ctx.Err()
@@ -207,6 +221,21 @@ func (c *Client) FetchEndpoint(ctx context.Context, endpoint, ticker string) (ma
 			if len(bodyStr) > 200 {
 				bodyStr = bodyStr[:200]
 			}
+			// A gateway blip is not the account's fault. The docs require
+			// exponential backoff for 5xx, and a retry costs one quota slot.
+			if retryableStatus(resp.StatusCode) && attempt < maxRetries-1 && ctx.Err() == nil {
+				lastErr = &RequestError{
+					Endpoint:   endpoint,
+					StatusCode: resp.StatusCode,
+					Message:    fmt.Sprintf("HTTP %d error fetching %s for %s: %s", resp.StatusCode, endpoint, ticker, bodyStr),
+				}
+				delay := retryDelay(attempt, resp.Header.Get("Retry-After"))
+				c.logf("api", "⏳ HTTP %d fetching %s for %s (attempt %d/%d) - retrying in %v", resp.StatusCode, endpoint, ticker, attempt+1, maxRetries, delay)
+				if !sleepContext(ctx, delay) {
+					return nil, ctx.Err()
+				}
+				continue
+			}
 			return nil, &RequestError{
 				Endpoint:   endpoint,
 				StatusCode: resp.StatusCode,
@@ -220,7 +249,7 @@ func (c *Client) FetchEndpoint(ctx context.Context, endpoint, ticker string) (ma
 		if err != nil {
 			lastErr = err
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				delay := retryDelays[attempt]
+				delay := retryDelay(attempt, "")
 				if !sleepContext(ctx, delay) {
 					return nil, ctx.Err()
 				}
@@ -233,6 +262,17 @@ func (c *Client) FetchEndpoint(ctx context.Context, endpoint, ticker string) (ma
 		// gzipped without being decoded and encoded again.
 		data, err := decodeResponse(body)
 		if err != nil {
+			// A truncated body decodes as invalid JSON. One retry separates a
+			// dropped connection from a real API change.
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				lastErr = err
+				delay := retryDelay(attempt, "")
+				c.logf("api", "⏳ Invalid JSON from %s for %s (attempt %d/%d) - retrying in %v", endpoint, ticker, attempt+1, maxRetries, delay)
+				if !sleepContext(ctx, delay) {
+					return nil, ctx.Err()
+				}
+				continue
+			}
 			return nil, &RequestError{
 				Endpoint:      endpoint,
 				Message:       fmt.Sprintf("Invalid JSON response from %s for %s: %v", endpoint, ticker, err),
@@ -299,6 +339,11 @@ func (c *Client) SetAPIKey(apiKey string) {
 	c.apiKey = apiKey
 }
 
+// RequestCount returns the number of API requests made this session.
+func (c *Client) RequestCount() int64 {
+	return c.requestCount.Load()
+}
+
 // Close stops the usage logger and releases idle connections.
 func (c *Client) Close() {
 	c.stopOnce.Do(func() { close(c.stop) })
@@ -314,4 +359,38 @@ func sleepContext(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+// retryableStatus is the set of gateway failures worth another attempt.
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// retryDelay grows with the attempt and adds jitter so tickers that failed
+// together do not retry in lockstep. A Retry-After value wins when present.
+func retryDelay(attempt int, retryAfter string) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds > 0 {
+		if seconds > 30 {
+			seconds = 30
+		}
+		return time.Duration(seconds)*time.Second + jitter(250*time.Millisecond)
+	}
+	delays := []time.Duration{150 * time.Millisecond, 500 * time.Millisecond, 1500 * time.Millisecond}
+	delay := delays[len(delays)-1]
+	if attempt >= 0 && attempt < len(delays) {
+		delay = delays[attempt]
+	}
+	return delay + jitter(delay/2)
+}
+
+func jitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int63n(int64(max)))
 }

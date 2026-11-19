@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"market-terminal/internal/api"
+	"market-terminal/internal/backfill"
 	"market-terminal/internal/charts"
 	"market-terminal/internal/config"
 	"market-terminal/internal/coordinator"
@@ -33,6 +34,7 @@ type App struct {
 	scheduler          *scheduler.UnifiedAdaptiveScheduler
 	perTickerScheduler *scheduler.PerTickerScheduler
 	coordinator        *coordinator.DataCollectionCoordinator
+	backfillManager    *backfill.Manager
 	chartTracker       *charts.ChartTracker
 	enabledTickers     []string
 	shuttingDown       bool
@@ -43,15 +45,29 @@ type App struct {
 	chartWindowsLock   sync.RWMutex
 	logWindow          *application.WebviewWindow
 	logWindowLock      sync.Mutex
+	settingsWindow     *application.WebviewWindow // Dedicated settings window
+	settingsWindowLock sync.Mutex
 	mainWindow         *application.WebviewWindow // Main application window
 	windowSizeTimer    *time.Timer
 	windowSizeLock     sync.Mutex
+
+	// The scheduled start task only needs rewriting when the setting flips.
+	// Remembering the last applied value keeps a normal settings save from
+	// shelling out to schtasks, which would delay the window closing.
+	autoStartLock    sync.Mutex
+	autoStartKnown   bool
+	autoStartEnabled bool
 
 	// Tracks last logged market-open state so the 1s frontend poll
 	// only produces a log line on state changes
 	lastLoggedMarketOpen *bool
 	lastLoggedNextOpen   string
 	marketOpenLogLock    sync.Mutex
+
+	// Ninja historical majors cache, keyed by ticker and date.
+	majorsMu    sync.Mutex
+	majorsCache map[string]*majorsEntry
+	majorsErr   map[string]error
 }
 
 // NewApp creates a new App instance
@@ -70,7 +86,7 @@ func NewApp() *App {
 	// Only errors and system events are always logged; everything else
 	// (hot-path scheduler/coordinator/writer chatter) requires EnableDebug.
 	debugOn := func(category string) bool {
-		return settings.EnableDebug || category == "error" || category == "system"
+		return settings.EnableDebug || category == "error" || category == "system" || category == "backfill"
 	}
 	debugPrint := func(msg, category string) {
 		if debugOn(category) {
@@ -175,6 +191,10 @@ func NewApp() *App {
 	// Set per-ticker scheduler reference in coordinator for date rollover handling
 	coordinator.SetPerTickerScheduler(perTickerScheduler)
 
+	// Recovery passes. They read the same settings object the rest of the app
+	// uses, so a tier change or a new ticker applies without a restart.
+	app.backfillManager = backfill.New(apiClient, dataWriter, settingsManager.GetSettings, debugPrint)
+
 	return app
 }
 
@@ -243,6 +263,19 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	} else {
 		utils.Logf("Data directory ready: %s", dataDirPath)
 		a.debugPrint(fmt.Sprintf("Data directory: %s", dataDirPath), "system")
+	}
+
+	// Retention is off by default. When it is on, whole day folders older than
+	// the window are removed before collection starts, and never today's.
+	if settings.DataRetentionDays > 0 {
+		removed, err := database.PruneOldDays(settings.DataDirectory, settings.DataRetentionDays, time.Now())
+		if err != nil {
+			utils.Logf("[system] Retention: %v", err)
+		}
+		if len(removed) > 0 {
+			utils.Logf("[system] Retention: removed %d day folder(s) older than %d days", len(removed), settings.DataRetentionDays)
+			a.debugPrint(fmt.Sprintf("Retention: removed %d day folder(s)", len(removed)), "system")
+		}
 	}
 
 	// Start per-ticker scheduler to begin data collection (non-blocking)
@@ -341,6 +374,10 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		// The frontend has a timeout fallback that will trigger initialization
 	}
 
+	a.syncAutoStart(a.settingsManager.GetSettings())
+	a.watchMarketClose()
+	a.watchBackfill()
+
 	utils.Logf("ServiceStartup completed successfully")
 	return nil
 }
@@ -375,6 +412,8 @@ func (a *App) ServiceShutdown() error {
 		a.debugPrint(fmt.Sprintf("ServiceShutdown: Closed %d chart window(s)", chartWindowCount), "system")
 	}
 	a.closeLogWindow()
+	a.closeSettingsWindow()
+	a.closeProfileWindows()
 
 	// Stop date rollover monitor
 	if a.coordinator != nil {
@@ -417,7 +456,7 @@ func (a *App) ServiceShutdown() error {
 
 // GetVersion returns the application version
 func (a *App) GetVersion() string {
-	return "1.0.0 (Go/Wails)"
+	return "1.2.0"
 }
 
 // FocusMainWindow brings the main window to the foreground.
@@ -526,7 +565,7 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 			settings.TickerConfigs[ticker] = config.TickerConfig{
 				Display:           true,
 				CollectionEnabled: true,
-				Priority:          "1",
+				Priority:          "medium",
 				RefreshRateMs:     &refreshRate,
 			}
 		} else {
@@ -717,6 +756,15 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 		settings.NinjaAPIKey = currentSettings.NinjaAPIKey
 	}
 	settings.NinjaAPIKey = strings.TrimSpace(settings.NinjaAPIKey)
+
+	// A settings frontend that predates the backfill controls sends the whole
+	// block unset (enabled=false + empty time). Preserve a configured block so a
+	// normal save does not silently disable recovery.
+	if !settings.EODBackfillEnabled && settings.EODBackfillTime == "" && currentSettings.EODBackfillEnabled {
+		settings.EODBackfillEnabled = currentSettings.EODBackfillEnabled
+		settings.EODBackfillTime = currentSettings.EODBackfillTime
+		settings.EODMaxLadderMB = currentSettings.EODMaxLadderMB
+	}
 
 	// When user provided a new API key, persist it to file and use saveAPIKey=true so poller and all consumers get it
 	saveAPIKey := settings.APITKey != "" && settings.APITKey != currentSettings.APITKey

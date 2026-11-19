@@ -53,9 +53,8 @@ func (uas *UnifiedAdaptiveScheduler) CalculateInterval(ticker string, openCharts
 	tickerCount := len(uas.enabledTickers)
 
 	// Live intervals are the values in this switch: an open chart stays at 1s,
-	// and the other tiers stay at 6/10/15s and 16/22/30s. Settings fields
-	// ActiveTickerRefreshRateMs and DataCollectionRefreshRateMs are not the
-	// live poll. A per-ticker RefreshRateMs still overrides below.
+	// and the other tiers stay at 6/10/15s and 16/22/30s. A per-ticker
+	// RefreshRateMs still overrides below.
 	var interval float64
 	var priorityName string
 	switch priority {
@@ -90,10 +89,10 @@ func (uas *UnifiedAdaptiveScheduler) CalculateInterval(ticker string, openCharts
 		interval = float64(refreshRateMs) / 1000.0
 	}
 
-	// Ensure minimum interval based on rate limits. Scale by the calls one
-	// ticker poll actually makes, or collect-all bursts the quota.
-	callsPerTicker := api.PlannedEndpointsPerTicker(uas.settings)
-	minInterval := uas.rateLimitTracker.GetMinimumInterval(tickerCount, callsPerTicker)
+	// Ensure minimum interval based on rate limits. Buckets are per endpoint,
+	// so a poll that calls eleven endpoints does not spend eleven slots of one.
+	planned := api.PlannedEndpoints(uas.settings)
+	minInterval := uas.rateLimitTracker.GetMinimumInterval(tickerCount, planned)
 	if minInterval > 0 && interval < minInterval {
 		interval = minInterval
 	}

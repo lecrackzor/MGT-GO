@@ -47,6 +47,32 @@ func MarketOpenCloseTimes(date time.Time) (time.Time, time.Time) {
 	return marketOpen, marketClose
 }
 
+// ShouldQuitAfterClose reports whether to exit, and the seen-open flag for the next check.
+// The app quits only after a session it observed while the option was on has ended.
+func ShouldQuitAfterClose(enabled, seenOpen, marketOpen bool) (bool, bool) {
+	if !enabled {
+		return false, marketOpen
+	}
+	if marketOpen {
+		return false, true
+	}
+	return seenOpen, seenOpen
+}
+
+// SessionSkipsOpen reports a weekend or a full NYSE closure, when the cash session does not open.
+func SessionSkipsOpen(now time.Time) bool {
+	now = now.In(MARKET_TIMEZONE)
+	return IsWeekend(now) || IsFullMarketClosure(now)
+}
+
+// PreOpenLaunchClock is the local clock time five minutes before the 9:30 ET open.
+func PreOpenLaunchClock(now time.Time) (hour, minute int) {
+	et := now.In(MARKET_TIMEZONE)
+	open, _ := MarketOpenCloseTimes(et)
+	launch := open.Add(-5 * time.Minute).In(now.Location())
+	return launch.Hour(), launch.Minute()
+}
+
 // IsMarketOpen reports whether the US stock market is open right now.
 func IsMarketOpen() bool {
 	return IsMarketOpenAt(NowMarketTime())

@@ -14,6 +14,27 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as config$0 from "./internal/config/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as database$0 from "./internal/database/models.js";
+
+/**
+ * AttachProfileToChart focuses the ticker's chart, or opens one docked to the side profile.
+ * @param {string} ticker
+ * @param {string} dateStr
+ * @returns {$CancellablePromise<void>}
+ */
+export function AttachProfileToChart(ticker, dateStr) {
+    return $Call.ByID(4222259184, ticker, dateStr);
+}
+
+/**
+ * BackfillStatus is served to the UI so a recovery pass is visible.
+ * @returns {$CancellablePromise<any>}
+ */
+export function BackfillStatus() {
+    return $Call.ByID(171322673);
+}
 
 /**
  * CheckFirstRun checks if this is the first run (no API key configured)
@@ -21,6 +42,24 @@ import * as config$0 from "./internal/config/models.js";
  */
 export function CheckFirstRun() {
     return $Call.ByID(124085020);
+}
+
+/**
+ * CloseProfileWindow closes the profile-only window for a ticker, if one is open.
+ * @param {string} ticker
+ * @returns {$CancellablePromise<void>}
+ */
+export function CloseProfileWindow(ticker) {
+    return $Call.ByID(856440952, ticker);
+}
+
+/**
+ * CloseSettingsWindow closes the settings window from the webview (the Cancel
+ * button and Escape both end here).
+ * @returns {$CancellablePromise<void>}
+ */
+export function CloseSettingsWindow() {
+    return $Call.ByID(4190437658);
 }
 
 /**
@@ -63,7 +102,7 @@ export function GetAvailableDates() {
  * READ-ONLY: Only reads from the database via LoadChartData (read-only connection). Never writes to the database.
  * ticker: Ticker symbol
  * dateStr: Date in format "2006-01-02" (YYYY-MM-DD)
- * sinceStr: Optional; if non-empty, only rows with timestamp > sinceStr (Unix seconds, float) are returned (incremental load)
+ * sinceStr: Optional; if non-empty, rows with timestamp >= sinceStr (Unix seconds, float) are returned so the last point can be replaced
  * @param {string} ticker
  * @param {string} dateStr
  * @param {string} sinceStr
@@ -119,12 +158,28 @@ export function GetNextMarketOpenLocalTime() {
 }
 
 /**
- * GetSettings returns current settings
+ * GetProfile returns one gunzipped profile snapshot. atStr is unix seconds.
+ * An empty atStr returns the latest row that has a profile.
+ * @param {string} ticker
+ * @param {string} dateStr
+ * @param {string} atStr
+ * @param {string} endpointsStr
+ * @returns {$CancellablePromise<database$0.ProfileSnapshot | null>}
+ */
+export function GetProfile(ticker, dateStr, atStr, endpointsStr) {
+    return $Call.ByID(169949408, ticker, dateStr, atStr, endpointsStr).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
+ * GetSettings returns current settings for the webview.
+ * The API key is omitted. Internal callers use settingsManager.GetSettings.
  * @returns {$CancellablePromise<config$0.Settings | null>}
  */
 export function GetSettings() {
     return $Call.ByID(2554697378).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
@@ -133,7 +188,7 @@ export function GetSettings() {
  * dateStr is in format "2006-01-02" (YYYY-MM-DD). Empty string means "current market date" (resolved at request time so rollover works without restart).
  * Returns map[string][]interface{} where each key is a field name and value is an array of values
  * Returns empty data if database doesn't exist yet (data collection hasn't started)
- * CRITICAL: Uses LoadTickerData instead of LoadFromFile to skip profiles_blob and prevent memory issues
+ * Loads the latest chart row. Profile ladders are not included.
  * @param {string} ticker
  * @param {string} dateStr
  * @returns {$CancellablePromise<{ [_: string]: any }>}
@@ -162,14 +217,6 @@ export function IsMarketOpen() {
 }
 
 /**
- * OpenLogWindow opens the session log, or focuses it if it is already open.
- * @returns {$CancellablePromise<void>}
- */
-export function OpenLogWindow() {
-    return $Call.ByID(3937883445);
-}
-
-/**
  * OpenChartWindow creates and opens a new chart window for a ticker
  * dateStr is optional - if empty, chart will use current market date
  * @param {string} ticker
@@ -181,8 +228,16 @@ export function OpenChartWindow(ticker, dateStr) {
 }
 
 /**
- * OpenProfileWindow opens a profile-only window for a ticker.
- * An existing profile window is focused. The chart window is left alone.
+ * OpenLogWindow opens the session log, or focuses it if it is already open.
+ * @returns {$CancellablePromise<void>}
+ */
+export function OpenLogWindow() {
+    return $Call.ByID(3937883445);
+}
+
+/**
+ * OpenProfileWindow opens a profile-only window. An existing one is focused.
+ * It does not replace the chart window for the same ticker.
  * @param {string} ticker
  * @param {string} dateStr
  * @returns {$CancellablePromise<void>}
@@ -192,22 +247,13 @@ export function OpenProfileWindow(ticker, dateStr) {
 }
 
 /**
- * CloseProfileWindow closes the profile-only window for a ticker.
- * @param {string} ticker
+ * OpenSettingsWindow opens the dedicated settings window, or focuses it if it
+ * is already open. Settings live in their own window with a sidebar instead of
+ * a scroll inside the main window.
  * @returns {$CancellablePromise<void>}
  */
-export function CloseProfileWindow(ticker) {
-    return $Call.ByID(856440952, ticker);
-}
-
-/**
- * AttachProfileToChart focuses the chart, or opens one with the side profile docked.
- * @param {string} ticker
- * @param {string} dateStr
- * @returns {$CancellablePromise<void>}
- */
-export function AttachProfileToChart(ticker, dateStr) {
-    return $Call.ByID(4222259184, ticker, dateStr);
+export function OpenSettingsWindow() {
+    return $Call.ByID(3185921024);
 }
 
 /**
@@ -217,6 +263,15 @@ export function AttachProfileToChart(ticker, dateStr) {
  */
 export function RegisterTickerDisplay(ticker) {
     return $Call.ByID(3357579540, ticker);
+}
+
+/**
+ * RequestCount returns the number of API requests made this session, surfaced
+ * in the main header.
+ * @returns {$CancellablePromise<number>}
+ */
+export function RequestCount() {
+    return $Call.ByID(2889393473);
 }
 
 /**
@@ -241,6 +296,17 @@ export function SaveWindowSize(width, height) {
 }
 
 /**
+ * SetAlwaysOnTop pins or unpins the chart window for a ticker, so the chart can
+ * float above other windows from its header pin toggle.
+ * @param {string} ticker
+ * @param {boolean} onTop
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetAlwaysOnTop(ticker, onTop) {
+    return $Call.ByID(3581063306, ticker, onTop);
+}
+
+/**
  * SetApp sets the Wails application reference (called from main.go)
  * @param {any} app
  * @returns {$CancellablePromise<void>}
@@ -249,8 +315,37 @@ export function SetApp(app) {
     return $Call.ByID(4256893662, app);
 }
 
+/**
+ * UpdateProfileLayers saves which ladders chart-data mode should collect.
+ * @param {{ [_: string]: boolean }} layers
+ * @returns {$CancellablePromise<void>}
+ */
+export function UpdateProfileLayers(layers) {
+    return $Call.ByID(2321457875, layers);
+}
+
+/**
+ * UpdateProfileLayout saves the side and on-chart placement fields.
+ * @param {{ [_: string]: any }} body
+ * @returns {$CancellablePromise<void>}
+ */
+export function UpdateProfileLayout(body) {
+    return $Call.ByID(4289655091, body);
+}
+
+/**
+ * UpdateProfilePriors saves whether lookback dots are drawn.
+ * @param {boolean} show
+ * @returns {$CancellablePromise<void>}
+ */
+export function UpdateProfilePriors(show) {
+    return $Call.ByID(2550953816, show);
+}
+
 // Private type creation functions
 const $$createType0 = $Create.Array($Create.Any);
 const $$createType1 = $Create.Map($Create.Any, $Create.Any);
-const $$createType2 = config$0.Settings.createFrom;
+const $$createType2 = database$0.ProfileSnapshot.createFrom;
 const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = config$0.Settings.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);

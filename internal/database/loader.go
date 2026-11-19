@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -450,6 +451,17 @@ func chartColumns() []string {
 		"major_negative",
 		"major_pos_oi",
 		"major_neg_oi",
+		// Collected already; exposed so the UI can plot them.
+		"sum_gex_vol",
+		"sum_gex_oi",
+		"major_call_gamma",
+		"major_put_gamma",
+		// Orderflow series. Stored but not plotted by default.
+		"zgr",
+		"ocvr",
+		"net_dex",
+		"agg_dex",
+		"gexoflow",
 	}
 }
 
@@ -697,7 +709,7 @@ func (dl *DataLoader) loadProfileFile(path string, at *float64, endpoints []stri
 		if body == nil {
 			continue
 		}
-		profiles[name] = json.RawMessage(body)
+		profiles[name] = json.RawMessage(dl.profileWithPriors(db, name, rowTS, body))
 		if !seen || rowTS > ts {
 			ts = rowTS
 			seen = true
@@ -711,6 +723,163 @@ func (dl *DataLoader) loadProfileFile(path string, at *float64, endpoints []stri
 		Profiles:  profiles,
 		Legacy:    profilesAreLegacy(profiles),
 	}, nil
+}
+
+// Lookbacks the ladder rows carry, newest first, matching the API order.
+// Classic strikes carry 1, 5, 10, 15 and 30 minutes. The greek ladders carry
+// 5, 15 and 30 minutes.
+var (
+	profileClassicLookbacks = []int{60, 300, 600, 900, 1800}
+	profileGreekLookbacks   = []int{300, 900, 1800}
+)
+
+// ladderShape describes how a stored endpoint payload is laid out. valueIndex
+// is the value the lookbacks repeat; priorIndex is where the lookbacks sit in
+// the row the API returns.
+type ladderShape struct {
+	key        string
+	valueIndex int
+	priorIndex int
+	lookbacks  []int
+	finalWidth int
+}
+
+var profileLadderShapes = []ladderShape{
+	{key: "mini_contracts", valueIndex: 3, priorIndex: 4, lookbacks: profileGreekLookbacks, finalWidth: 7},
+	{key: "strikes", valueIndex: 1, priorIndex: 3, lookbacks: profileClassicLookbacks, finalWidth: 4},
+}
+
+// profileWithPriors puts the lookback dots back on a ladder that was stored
+// without them. The rows served to a window keep the shape the API returns, so
+// the client needs no special case. A legacy payload already has its own
+// lookbacks and is returned untouched.
+func (dl *DataLoader) profileWithPriors(db profileQuery, endpoint string, rowTS float64, body []byte) []byte {
+	if rowTS <= 0 {
+		return body
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(body, &obj) != nil {
+		return body
+	}
+	changed := false
+	for _, shape := range profileLadderShapes {
+		rows, ok := decodeRows(obj[shape.key])
+		if !ok || ladderHasPriors(rows, shape.finalWidth) {
+			continue
+		}
+		ladders := make([]map[string]float64, 0, len(shape.lookbacks))
+		for _, offset := range shape.lookbacks {
+			target := rowTS - float64(offset)
+			if target <= 0 {
+				break
+			}
+			prev, _, _, err := profileAt(db, endpoint, &target)
+			if err != nil || prev == nil {
+				break
+			}
+			values, ok := ladderValues(prev, shape.key, shape.valueIndex)
+			if !ok {
+				break
+			}
+			ladders = append(ladders, values)
+		}
+		if len(ladders) == 0 {
+			continue
+		}
+		obj[shape.key] = priorRows(rows, shape, ladders)
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	return marshalObject(obj)
+}
+
+// ladderHasPriors reports whether the rows already carry lookback values. A
+// legacy row is wider than the trimmed width.
+func ladderHasPriors(rows []json.RawMessage, trimmedWidth int) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	var values []json.RawMessage
+	if json.Unmarshal(rows[0], &values) != nil {
+		return false
+	}
+	return len(values) > trimmedWidth
+}
+
+// ladderValues reads one value per strike out of a stored ladder.
+func ladderValues(body []byte, key string, index int) (map[string]float64, bool) {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(body, &obj) != nil {
+		return nil, false
+	}
+	rows, ok := decodeRows(obj[key])
+	if !ok {
+		return nil, false
+	}
+	out := make(map[string]float64, len(rows))
+	for _, row := range rows {
+		token, ok := strikeToken(row)
+		if !ok {
+			continue
+		}
+		var values []json.RawMessage
+		if json.Unmarshal(row, &values) != nil || len(values) <= index {
+			continue
+		}
+		value, err := strconv.ParseFloat(string(compact(values[index])), 64)
+		if err != nil {
+			continue
+		}
+		out[token] = value
+	}
+	return out, true
+}
+
+// priorRows writes the restored lookbacks into each row, padded to the width
+// the API returns so every client index keeps its meaning.
+func priorRows(rows []json.RawMessage, shape ladderShape, ladders []map[string]float64) json.RawMessage {
+	out := make([]json.RawMessage, len(rows))
+	for i, row := range rows {
+		out[i] = row
+		token, ok := strikeToken(row)
+		if !ok {
+			continue
+		}
+		priors := make([]float64, 0, len(ladders))
+		for _, values := range ladders {
+			value, found := values[token]
+			if !found {
+				break
+			}
+			priors = append(priors, value)
+		}
+		if len(priors) == 0 {
+			continue
+		}
+		var values []json.RawMessage
+		if json.Unmarshal(row, &values) != nil {
+			continue
+		}
+		encoded, err := json.Marshal(priors)
+		if err != nil {
+			continue
+		}
+		for len(values) < shape.priorIndex {
+			values = append(values, json.RawMessage("0"))
+		}
+		if len(values) == shape.priorIndex {
+			values = append(values, json.RawMessage(encoded))
+		} else {
+			values[shape.priorIndex] = json.RawMessage(encoded)
+		}
+		for len(values) < shape.finalWidth {
+			values = append(values, json.RawMessage("null"))
+		}
+		out[i] = joinRows(values)
+	}
+	return joinRows(out)
 }
 
 func (dl *DataLoader) attachChartLevels(snap *ProfileSnapshot, chartPath string) {
@@ -743,9 +912,13 @@ func (dl *DataLoader) attachChartLevels(snap *ProfileSnapshot, chartPath string)
 	if cols["zero_gamma"] {
 		dest = append(dest, &zeroGamma)
 	}
+	// The ladder timestamp can land between two one-second scalar rows, so
+	// take the last row at or before it. The ten second window keeps a ladder
+	// from borrowing a spot from hours earlier when the day has a gap.
 	err = db.QueryRow(
-		"SELECT "+strings.Join(selectCols, ", ")+" FROM ticker_data WHERE timestamp = ?",
+		"SELECT "+strings.Join(selectCols, ", ")+" FROM ticker_data WHERE timestamp <= ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT 1",
 		snap.Timestamp,
+		snap.Timestamp-10,
 	).Scan(dest...)
 	if err != nil {
 		return

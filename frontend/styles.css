@@ -48,6 +48,28 @@ header h1 {
     font-size: 0.9rem;
 }
 
+.header-counter {
+    font-size: 0.8rem;
+    color: #8b8b8b;
+    white-space: nowrap;
+}
+.header-counter b {
+    color: #e0e0e0;
+    font-variant-numeric: tabular-nums;
+}
+.header-chip {
+    font-size: 0.78rem;
+    padding: 4px 9px;
+    border-radius: 5px;
+    border: 1px solid #3a3a3a;
+    background: #232323;
+    white-space: nowrap;
+    color: #8b8b8b;
+}
+.header-chip.ok { color: #7cd690; border-color: #2e5a38; }
+.header-chip.pending { color: #ffd67c; border-color: #6b5320; }
+.header-chip.err { color: #f48a8a; border-color: #6b2e2e; }
+
 main {
     flex: 1;
     display: flex;

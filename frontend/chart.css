@@ -20,12 +20,113 @@
             height: 100vh;
         }
         
-        h1 {
-            color: #4CAF50;
-            margin: 0;
-            padding: 8px 12px 0;
-            font-size: 24px;
+        #chart-header {
             flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 12px;
+            background: #1e1e1e;
+            border-bottom: 1px solid #2e2e2e;
+        }
+
+        #chart-header .chart-ticker {
+            color: #4CAF50;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+
+        #chart-header .chart-date {
+            color: #8a8a8a;
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #chart-header .pill {
+            font-size: 11px;
+            line-height: 1.1;
+            padding: 3px 9px;
+            border-radius: 5px;
+            border: 1px solid #3a3a3a;
+            white-space: nowrap;
+        }
+
+        #chart-header .pill.open {
+            color: #7cd690;
+            border-color: #2e5a38;
+            background: rgba(76, 175, 80, 0.08);
+        }
+
+        #chart-header .pill.closed {
+            color: #f48a8a;
+            border-color: #6b2e2e;
+            background: rgba(244, 67, 54, 0.08);
+        }
+
+        #chart-header .spot {
+            font-size: 14px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            color: #e0e0e0;
+        }
+
+        #chart-header .spot.up .spot-price,
+        #chart-header .spot.up .spot-chg {
+            color: #4CAF50;
+        }
+
+        #chart-header .spot.down .spot-price,
+        #chart-header .spot.down .spot-chg {
+            color: #f44336;
+        }
+
+        #chart-header .spot .spot-chg {
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        #chart-header .chart-req {
+            font-size: 11px;
+            color: #8a8a8a;
+            white-space: nowrap;
+        }
+
+        #chart-header .chart-req b {
+            color: #e0e0e0;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+        }
+
+        #chart-header .chart-header-spacer {
+            flex: 1 1 auto;
+        }
+
+        #chart-header .pin-btn {
+            flex: 0 0 auto;
+            padding: 3px 10px;
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 3px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1.1;
+            white-space: nowrap;
+        }
+
+        #chart-header .pin-btn:hover {
+            background: #3a3a3a;
+            border-color: #5a5a5a;
+        }
+
+        #chart-header .pin-btn.active {
+            background: #4CAF50;
+            border-color: #5CBF60;
+            color: #ffffff;
         }
         
         #chart-container {
@@ -251,6 +352,62 @@
             align-items: center;
         }
 
+        /* Layers dropdown (chart window): the six layer checkboxes collapse into a menu. */
+        #profile-layers.layers-menu {
+            display: inline-block;
+            position: relative;
+            flex: 0 0 auto;
+        }
+
+        #profile-layers .layers-btn {
+            padding: 3px 8px;
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 2px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 10px;
+            line-height: 1.1;
+        }
+
+        #profile-layers .layers-btn:hover {
+            background: #4a4a4a;
+            border-color: #5a5a5a;
+        }
+
+        #profile-layers .layers-pop {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 0;
+            z-index: 60;
+            min-width: 132px;
+            padding: 6px 0;
+            background: #1e1e1e;
+            border: 1px solid #3a3a3a;
+            border-radius: 5px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+        }
+
+        #profile-layers.layers-open .layers-pop {
+            display: block;
+        }
+
+        #profile-layers .layers-pop label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            font-size: 12px;
+            color: #d6d6d6;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        #profile-layers .layers-pop label:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
         #profile-canvas {
             flex: 1 1 auto;
             min-height: 0;
@@ -398,6 +555,7 @@
             width: 220px;
             min-width: 200px;
             min-height: 100px;
+            max-height: 80%;
             background: rgba(0, 0, 0, 0.9);
             border: 1px solid #4CAF50;
             border-radius: 4px;
@@ -406,10 +564,15 @@
             z-index: 1000;
             cursor: move;
             resize: both;
-            overflow: auto;
+            /* Grows with its rows; only the box scrolls, and only when it is
+               capped at max-height. Always-on scrollbars came from size
+               containment plus overflow:auto. */
+            overflow-x: hidden;
+            overflow-y: auto;
             display: none;
+            box-sizing: border-box;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
-            container-type: size;
+            container-type: inline-size;
         }
         
         #crosshair-info-box.dragging {
@@ -476,12 +639,16 @@
             color: #aaa;
             margin-right: 0.35em;
             font-size: 1em;
+            flex: 0 0 auto;
         }
         
         .crosshair-data-value {
             color: #e0e0e0;
             font-weight: 500;
             font-size: 1em;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         .crosshair-data-row.crosshair-series-row {
@@ -493,7 +660,48 @@
         .crosshair-data-row.crosshair-series-row.series-hidden {
             opacity: 0.5;
         }
-        
+
+        .crosshair-info-box-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.4em;
+            flex-shrink: 0;
+        }
+
+        .crosshair-info-box-pin {
+            cursor: pointer;
+            font-size: 0.9em;
+            color: #888;
+            padding: 0.15em 0.25em;
+            flex-shrink: 0;
+            opacity: 0.7;
+        }
+
+        .crosshair-info-box-pin:hover {
+            color: #4CAF50;
+        }
+
+        .crosshair-info-box-pin.on {
+            color: #4CAF50;
+            opacity: 1;
+        }
+
+        .crosshair-data-delta {
+            margin-left: auto;
+            padding-left: 0.6em;
+            font-size: 0.95em;
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+        }
+
+        .crosshair-data-delta.up {
+            color: #4CAF50;
+        }
+
+        .crosshair-data-delta.down {
+            color: #f44336;
+        }
+
         /* Chart context menu */
         #chart-context-menu {
             display: none;
@@ -704,13 +912,31 @@
         }
 
         .toolbar-left {
-            overflow-x: auto;
-            overflow-y: hidden;
-            scrollbar-width: none;
+            overflow: visible;
         }
 
-        .toolbar-left::-webkit-scrollbar {
-            display: none;
+        .tb-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            flex: 0 0 auto;
+            min-width: 0;
+        }
+
+        .tb-label {
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            flex: 0 0 auto;
+            user-select: none;
+        }
+
+        .tb-sep {
+            flex: 0 0 1px;
+            width: 1px;
+            height: 20px;
+            background: #3a3a3a;
         }
 
         .toolbar-right {
@@ -783,6 +1009,15 @@
             visibility: hidden;
         }
 
+        /* A layer the subscription cannot read: still visible, not clickable. */
+        #profile-layers label.layer-disabled {
+            opacity: 0.45;
+        }
+
+        #profile-layers label.layer-disabled input {
+            cursor: not-allowed;
+        }
+
         #profile-popout {
             position: absolute;
             top: 6px;
@@ -835,7 +1070,8 @@
             cursor: not-allowed;
         }
         
-        #profile-toggle-btn.active {
+        #profile-toggle-btn.active,
+        #metrics-toggle-btn.active {
             background: #4CAF50;
             border-color: #5CBF60;
             color: #ffffff;
@@ -892,6 +1128,12 @@
             border: 1px solid #444;
             border-radius: 3px;
             padding: 3px 8px;
+        }
+
+        body.profile-only #profile-toolbar #metrics-toggle-btn.active {
+            background: #4CAF50;
+            border-color: #5CBF60;
+            color: #ffffff;
         }
 
         body.profile-only #profile-layers {

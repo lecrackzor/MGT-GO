@@ -52,6 +52,35 @@ func TestHolidaySessionUsesPreviousTradingDay(t *testing.T) {
 	}
 }
 
+func TestShouldQuitAfterCloseWaitsForASession(t *testing.T) {
+	if quit, seen := ShouldQuitAfterClose(true, false, false); quit || seen {
+		t.Fatalf("closed at launch = quit %v seen %v", quit, seen)
+	}
+	quit, seen := ShouldQuitAfterClose(true, false, true)
+	if quit || !seen {
+		t.Fatalf("during session = quit %v seen %v", quit, seen)
+	}
+	quit, seen = ShouldQuitAfterClose(true, true, false)
+	if !quit || !seen {
+		t.Fatalf("after observed session = quit %v seen %v", quit, seen)
+	}
+	if quit, seen := ShouldQuitAfterClose(false, true, false); quit || seen {
+		t.Fatalf("option off = quit %v seen %v", quit, seen)
+	}
+}
+
+func TestPreOpenLaunchIsFiveMinutesBeforeOpen(t *testing.T) {
+	loc, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, loc)
+	hour, minute := PreOpenLaunchClock(now)
+	if hour != 8 || minute != 25 {
+		t.Fatalf("central launch clock = %02d:%02d, want 08:25", hour, minute)
+	}
+}
+
 func TestEarlyCloseEndsAt1300(t *testing.T) {
 	loc := GetMarketTimezone()
 	day := time.Date(2026, 11, 27, 0, 0, 0, 0, loc)

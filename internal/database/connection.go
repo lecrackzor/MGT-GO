@@ -114,7 +114,14 @@ func (p *ConnectionPool) openConnection(filepath string, readOnly bool) (*sql.DB
 	if readOnly {
 		db, err = sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", filepath))
 	} else {
-		db, err = sql.Open("sqlite", filepath)
+		// _txlock=immediate takes the write lock at BEGIN. A deferred transaction
+		// that reads before it writes cannot use the busy handler on upgrade:
+		// SQLite returns SQLITE_BUSY at once because its snapshot is stale. The
+		// profile flush reads the last ladder and then inserts, so it hit that
+		// path and dropped whole samples while another handle held the lock.
+		// _pragma repeats busy_timeout on every physical connection the driver
+		// opens, not only the one the settings below happen to land on.
+		db, err = sql.Open("sqlite", filepath+"?_txlock=immediate&_pragma=busy_timeout(10000)")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -271,6 +278,9 @@ func (p *ConnectionPool) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, err := pc.db.Conn(ctx)
 		if err == nil {
+			// optimize refreshes the query planner's statistics before the last
+			// checkpoint, so the next session starts with a good plan.
+			_, _ = conn.ExecContext(ctx, "PRAGMA optimize")
 			// Execute WAL checkpoint (TRUNCATE mode moves WAL data to main DB and truncates WAL file)
 			_, err = conn.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 			if err != nil {

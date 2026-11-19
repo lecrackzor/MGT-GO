@@ -21,12 +21,113 @@ const LAYER_SPECS = [
 const DOT_COLORS = ['#ADD8E6', '#5DD6F5', '#00A2DE', '#006CC0', '#003494'];
 const DOT_RADIUS = [5.2, 4.5, 3.9, 3.4, 2.9];
 const DOT_LABELS = ['1 min', '5 min', '10 min', '15 min', '30 min'];
+// Greek ladders carry three lookbacks: 5, 15 and 30 minutes.
+const GREEK_DOT_LABELS = ['5 min', '15 min', '30 min'];
+
+// A layer's dot labels follow the lookbacks its endpoint actually returns.
+function dotLabelsFor(layer) {
+    return layer && layer.greek ? GREEK_DOT_LABELS : DOT_LABELS;
+}
+
+// Which subscription tier serves each layer. A Classic account that checks a
+// Greek layer would request gamma_zero/delta_zero and get a 403 with an empty
+// ladder, so the layer is disabled and labelled instead.
+const LAYER_TIERS = {
+    classic: ['classic'],
+    state: ['state', 'orderflow'],
+    gamma: ['state', 'orderflow'],
+    delta: ['state', 'orderflow'],
+    vanna: ['orderflow'],
+    charm: ['orderflow'],
+};
+
+const TIER_LABELS = { classic: 'Classic', state: 'State', orderflow: 'Orderflow' };
+
+// null means the tiers are not known yet, and every layer is allowed.
+let allowedLayers = null;
+
+export function applySubscriptionTiers(tiers) {
+    if (!Array.isArray(tiers) || !tiers.length) {
+        allowedLayers = null;
+        return;
+    }
+    const subscribed = new Set(tiers.map((tier) => String(tier).toLowerCase()));
+    const allowed = new Set();
+    for (const spec of LAYER_SPECS) {
+        const needs = LAYER_TIERS[spec.id] || [];
+        if (needs.some((tier) => subscribed.has(tier))) allowed.add(spec.id);
+    }
+    allowedLayers = allowed;
+}
+
+export function layerAllowed(id) {
+    return !allowedLayers || allowedLayers.has(id);
+}
+
+function layerTierNote(id) {
+    const needs = LAYER_TIERS[id] || [];
+    if (!needs.length) return '';
+    return 'Requires the ' + needs.map((tier) => TIER_LABELS[tier] || tier).join(' or ') + ' subscription';
+}
+
+// Disable the layers this account cannot read and explain why, so a click
+// cannot start a 403 loop.
+function gateLayerBox(box) {
+    if (!box) return;
+    for (const input of box.querySelectorAll('input[data-layer]')) {
+        const id = input.dataset.layer;
+        const ok = layerAllowed(id);
+        input.disabled = !ok;
+        const label = input.closest('label');
+        if (label) {
+            label.classList.toggle('layer-disabled', !ok);
+            label.title = ok ? '' : layerTierNote(id);
+        }
+    }
+}
+
 const hoverState = { hits: [], space: '' };
 const PREF_KEY = 'profile-view';
 
+// View choices belong to the chart window (one window per ticker), not to the
+// market date currently shown in it. Older builds also appended the date.
+export function chartPrefsKey(ticker) {
+    return 'chartPrefs_' + (ticker || '');
+}
+
+function migrateDatedPrefs(ticker, dateStr) {
+    const base = chartPrefsKey(ticker) + '_';
+    try {
+        let source = dateStr ? base + dateStr : '';
+        if (!source || localStorage.getItem(source) === null) {
+            source = '';
+            for (let i = 0; i < localStorage.length; i += 1) {
+                const candidate = localStorage.key(i);
+                if (candidate && candidate.startsWith(base) && candidate.length > base.length && candidate > source) {
+                    source = candidate;
+                }
+            }
+        }
+        if (!source) return null;
+        const raw = localStorage.getItem(source);
+        if (raw === null) return null;
+        localStorage.setItem(chartPrefsKey(ticker), raw);
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+            const candidate = localStorage.key(i);
+            if (candidate && candidate.startsWith(base) && candidate.length > base.length) {
+                localStorage.removeItem(candidate);
+            }
+        }
+        return raw;
+    } catch (err) {
+        return null;
+    }
+}
+
 export function readChartPrefs(ticker, dateStr) {
     try {
-        const raw = localStorage.getItem('chartPrefs_' + (ticker || '') + '_' + (dateStr || ''));
+        let raw = localStorage.getItem(chartPrefsKey(ticker));
+        if (raw === null) raw = migrateDatedPrefs(ticker, dateStr);
         const parsed = raw ? JSON.parse(raw) : null;
         return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (err) {
@@ -37,7 +138,7 @@ export function readChartPrefs(ticker, dateStr) {
 export function writeChartPrefs(ticker, dateStr, patch) {
     const next = Object.assign({}, readChartPrefs(ticker, dateStr), patch || {});
     try {
-        localStorage.setItem('chartPrefs_' + (ticker || '') + '_' + (dateStr || ''), JSON.stringify(next));
+        localStorage.setItem(chartPrefsKey(ticker), JSON.stringify(next));
     } catch (err) {}
     return next;
 }
@@ -79,16 +180,20 @@ function profileLayersFrom(source) {
         for (const spec of LAYER_SPECS) {
             if (typeof raw[spec.id] === 'boolean') layers[spec.id] = raw[spec.id];
         }
-        return layers;
-    }
-    try {
-        const shared = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-        if (shared.layers && typeof shared.layers === 'object') {
-            for (const spec of LAYER_SPECS) {
-                if (typeof shared.layers[spec.id] === 'boolean') layers[spec.id] = shared.layers[spec.id];
+    } else {
+        try {
+            const shared = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+            if (shared.layers && typeof shared.layers === 'object') {
+                for (const spec of LAYER_SPECS) {
+                    if (typeof shared.layers[spec.id] === 'boolean') layers[spec.id] = shared.layers[spec.id];
+                }
             }
-        }
-    } catch (err) {}
+        } catch (err) {}
+    }
+    // A saved preference from a higher tier must not resurrect a 403 loop.
+    for (const spec of LAYER_SPECS) {
+        if (!layerAllowed(spec.id)) layers[spec.id] = false;
+    }
     return layers;
 }
 
@@ -342,6 +447,7 @@ function ProfilePrimitive() {
 
 export function installProfile(live) {
     const btn = document.getElementById('profile-toggle-btn');
+    const metricsBtn = document.getElementById('metrics-toggle-btn');
     const pane = document.getElementById('profile-pane');
     const dteSelect = document.getElementById('profile-dte');
     const layersBox = document.getElementById('profile-layers');
@@ -401,8 +507,38 @@ export function installProfile(live) {
     }
 
     function layerOn(id) {
-        return !!layersOn[id];
+        return layerAllowed(id) && !!layersOn[id];
     }
+
+    // Tiers decide which layers exist. Applied once from the settings route and
+    // again whenever the settings window saves.
+    function applyTiers(tiers) {
+        applySubscriptionTiers(tiers);
+        let changed = false;
+        for (const spec of LAYER_SPECS) {
+            if (!layerAllowed(spec.id) && layersOn[spec.id]) {
+                layersOn[spec.id] = false;
+                changed = true;
+            }
+        }
+        gateLayerBox(layersBox);
+        paintLayerChecks(layersBox, layersOn);
+        return changed;
+    }
+    fetch('/api/settings')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((settings) => {
+            if (!settings) return;
+            if (applyTiers(settings.APISubscriptionTiers)) schedule();
+        })
+        .catch(() => {});
+    try {
+        const tierChannel = new BroadcastChannel('market-terminal-settings');
+        tierChannel.onmessage = (event) => {
+            if (!event.data || event.data.type !== 'settings-updated' || !event.data.settings) return;
+            if (applyTiers(event.data.settings.APISubscriptionTiers)) schedule();
+        };
+    } catch (err) {}
 
     function wanted() {
         const names = [];
@@ -474,7 +610,15 @@ export function installProfile(live) {
 
     function setShowDots(on) {
         writeChartPrefs(live.ticker, profileDate(), { showPriors: !!on });
-        draw();
+        if (live.currentChartPrefs) live.currentChartPrefs.showPriors = !!on;
+        if (profileShown()) draw();
+        // A detached profile window keeps its own copy of the view; tell it to
+        // repaint so the chart menu and that window cannot disagree.
+        try {
+            const ch = new BroadcastChannel('market-terminal-profile');
+            ch.postMessage({ type: 'prefs', ticker: live.ticker });
+            ch.close();
+        } catch (err) {}
     }
     live.profileDotsOn = showDots;
     live.setProfileDots = setShowDots;
@@ -983,6 +1127,18 @@ export function installProfile(live) {
         return readChartPrefs(live.ticker, profileDate()).metricsVisible !== false;
     }
 
+    function metricsShown() {
+        return open && docked && metricsVisible();
+    }
+
+    function syncMetricsToggle() {
+        if (!metricsBtn) return;
+        const shown = metricsShown();
+        metricsBtn.classList.toggle('active', shown);
+        metricsBtn.setAttribute('aria-pressed', shown ? 'true' : 'false');
+        metricsBtn.title = shown ? 'Hide the information panel' : 'Show the information panel';
+    }
+
     function metricsOnLeft() {
         return readChartPrefs(live.ticker, profileDate()).metricsSide === 'left';
     }
@@ -991,6 +1147,7 @@ export function installProfile(live) {
         const next = writeChartPrefs(live.ticker, profileDate(), { metricsVisible: !!on });
         if (live.currentChartPrefs) Object.assign(live.currentChartPrefs, chartProfileFields(next));
         noteProfilePrefs();
+        syncMetricsToggle();
         paintMetrics();
         lastPlotSize = '';
         settleChart();
@@ -1041,7 +1198,7 @@ export function installProfile(live) {
     function paintMetrics() {
         const column = document.getElementById('profile-metrics');
         if (!column) return;
-        const shown = open && docked && metricsVisible();
+        const shown = metricsShown();
         occupyMetrics(column, shown, metricsOnLeft());
         if (metricsWasShown !== shown) {
             metricsWasShown = shown;
@@ -1078,6 +1235,8 @@ export function installProfile(live) {
         if (popout) popout.hidden = pane.hidden;
         if (!show) stopPlay();
         btn.classList.toggle('active', show);
+        if (metricsBtn) metricsBtn.hidden = !show;
+        syncMetricsToggle();
         if (!show) showNote('');
         paintMetrics();
     }
@@ -1567,7 +1726,7 @@ export function installProfile(live) {
         if (open) draw();
     };
     window.addEventListener('storage', (event) => {
-        if (!event || event.key !== 'chartPrefs_' + (live.ticker || '') + '_' + profileDate()) return;
+        if (!event || event.key !== chartPrefsKey(live.ticker)) return;
         applyChartProfilePrefs();
     });
     live.priceTickMode = priceTickMode;
@@ -1704,6 +1863,11 @@ export function installProfile(live) {
         if (profileShown()) schedule();
         else draw();
     });
+    if (metricsBtn) {
+        metricsBtn.addEventListener('click', () => {
+            setMetricsVisible(!metricsVisible());
+        });
+    }
     dteSelect.addEventListener('change', () => {
         dte = dteSelect.value === 'one' || dteSelect.value === 'full' ? dteSelect.value : 'zero';
         writeChartPrefs(live.ticker, profileDate(), { profileDte: dte });
@@ -1716,6 +1880,18 @@ export function installProfile(live) {
         saveLayerPrefs();
         schedule();
     });
+    // Layers dropdown toggle (chart window). The checkboxes keep the change
+    // handler above; this only opens/closes the popup menu.
+    const layersBtn = document.getElementById('profile-layers-btn');
+    if (layersBtn) {
+        layersBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            layersBox.classList.toggle('layers-open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!layersBox.contains(e.target)) layersBox.classList.remove('layers-open');
+        });
+    }
     modeSelect.addEventListener('change', () => {
         mode = modeSelect.value === 'chart' ? 'chart' : 'side';
         if (mode === 'side' && !docked) {
@@ -2232,7 +2408,7 @@ function drawDots(ctx, drawn, center, half, yOffset, layer, hits, dotScale, dir)
                     measure: name,
                     strike: row.strike,
                     value: prior,
-                    minutes: DOT_LABELS[i],
+                    minutes: dotLabelsFor(layer)[i],
                     x: x,
                     y: y,
                     pad: radius + 3,
@@ -3512,7 +3688,7 @@ function drawZoomedDots(ctx, item, zeroX, half, xZoom, yOffset, plot, hits) {
                 measure: name,
                 strike: row.strike,
                 value: prior,
-                minutes: DOT_LABELS[i],
+                minutes: dotLabelsFor(item.layer)[i],
                 x: x,
                 y: y,
                 pad: radius + 3,
@@ -3584,6 +3760,7 @@ export function installStandaloneProfile() {
     const layersBox = document.getElementById('profile-layers');
     const note = document.getElementById('profile-note');
     const title = document.getElementById('profile-title');
+    const metricsBtn = document.getElementById('metrics-toggle-btn');
     if (!canvas || !dteSelect || !layersBox || !note) return;
 
     const params = new URLSearchParams(window.location.search);
@@ -3693,6 +3870,22 @@ export function installStandaloneProfile() {
         return names;
     }
 
+    // Tiers decide which layers exist. A layer the account cannot read is
+    // switched off here so it is never requested and never shown.
+    function gateLayersForTiers(tiers) {
+        applySubscriptionTiers(tiers);
+        let changed = false;
+        for (const spec of LAYER_SPECS) {
+            if (!layerAllowed(spec.id) && layersOn[spec.id]) {
+                layersOn[spec.id] = false;
+                changed = true;
+            }
+        }
+        gateLayerBox(layersBox);
+        paintLayerChecks(layersBox, layersOn);
+        return changed;
+    }
+
     function draw() {
         const data = cached && cached.data;
         const layers = data ? buildLayers(data, dte, (id) => !!layersOn[id]) : [];
@@ -3713,14 +3906,18 @@ export function installStandaloneProfile() {
             labelX: levelLabelPercent(readChartPrefs(ticker, date)),
         });
         if (data) showNote(noteForStandalone(data, layers, (id) => !!layersOn[id], dte));
-        const column = document.getElementById('profile-metrics');
-        if (!column) return;
         const chartPrefs = readChartPrefs(ticker, date);
         const showInfo = chartPrefs.metricsVisible !== false;
+        if (metricsBtn) {
+            metricsBtn.classList.toggle('active', showInfo);
+            metricsBtn.setAttribute('aria-pressed', showInfo ? 'true' : 'false');
+            metricsBtn.title = showInfo ? 'Hide the information panel' : 'Show the information panel';
+        }
+        const column = document.getElementById('profile-metrics');
+        if (!column) return;
         occupyMetrics(column, showInfo, chartPrefs.metricsSide === 'left');
         column.onMetricsClose = () => {
             writeChartPrefs(ticker, date, { metricsVisible: false });
-            occupyMetrics(column, false, chartPrefs.metricsSide === 'left');
             requestAnimationFrame(() => requestAnimationFrame(draw));
         };
         if (showInfo) renderMetrics(column, data && !data.missing ? data : null, dte, (id) => !!layersOn[id], date);
@@ -4025,6 +4222,13 @@ export function installStandaloneProfile() {
             draw();
         });
     }
+    if (metricsBtn) {
+        metricsBtn.addEventListener('click', () => {
+            const shown = readChartPrefs(ticker, date).metricsVisible !== false;
+            writeChartPrefs(ticker, profileDate(), { metricsVisible: !shown });
+            draw();
+        });
+    }
     const resetBtn = document.getElementById('profile-axis-reset');
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
@@ -4075,9 +4279,18 @@ export function installStandaloneProfile() {
     if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(() => draw()).observe(canvas.parentElement || canvas);
     }
+    try {
+        const dockChannel = new BroadcastChannel('market-terminal-profile');
+        dockChannel.onmessage = function (event) {
+            const msg = event.data;
+            if (!msg) return;
+            if (msg.ticker && msg.ticker !== ticker) return;
+            if (msg.type === 'prefs') draw();
+        };
+    } catch (err) {}
     window.addEventListener('storage', function (event) {
         if (!event) return;
-        if (event.key === 'chartPrefs_' + (ticker || '') + '_' + (date || '')) {
+        if (event.key === chartPrefsKey(ticker)) {
             const next = readProfileLayers(ticker, date);
             let layersChanged = false;
             for (const spec of LAYER_SPECS) {
@@ -4107,7 +4320,8 @@ export function installStandaloneProfile() {
         settingsChannel.onmessage = (event) => {
             if (!event.data || event.data.type !== 'settings-updated' || !event.data.settings) return;
             settings = event.data.settings;
-            draw();
+            if (gateLayersForTiers(settings.APISubscriptionTiers)) schedule();
+            else draw();
         };
     } catch (err) {}
 
@@ -4324,6 +4538,10 @@ export function installStandaloneProfile() {
         try {
             const res = await fetch('/api/settings');
             if (res.ok) settings = await res.json();
+            if (gateLayersForTiers(settings.APISubscriptionTiers)) {
+                // A layer from a higher tier is now off; reload without it.
+                schedule();
+            }
         } catch (err) {}
         await refreshClock();
         schedule();

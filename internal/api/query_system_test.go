@@ -74,14 +74,17 @@ func TestChartDataProfileFollowsCheckedLayers(t *testing.T) {
 			t.Fatalf("missing %s in %v", name, got)
 		}
 	}
-	for _, name := range []string{"state_zero", "gamma_one", "vanna_zero", "delta_one"} {
+	for _, name := range []string{"gamma_one", "vanna_zero", "delta_one"} {
 		if got[name] {
 			t.Fatalf("unchecked layer was requested: %v", got)
 		}
 	}
-	// gamma_zero is the state-tier chart line, not a profile request.
-	if !got["gamma_zero"] {
-		t.Fatalf("chart gamma line was dropped: %v", got)
+	// state_zero and gamma_zero are the state-tier chart lines, not profile
+	// requests, and a State account needs state_zero for spot.
+	for _, name := range []string{"state_zero", "gamma_zero"} {
+		if !got[name] {
+			t.Fatalf("chart line %s was dropped: %v", name, got)
+		}
 	}
 }
 

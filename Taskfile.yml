@@ -7,9 +7,10 @@ tasks:
       - task: windows:build
 
   windows:build:
-    desc: Build for Windows
+    desc: Build for Windows (with embedded icon and version info)
     cmds:
-      - go build -o bin/market-terminal.exe .
+      - go-winres make
+      - go build -ldflags="-H=windowsgui" -o bin/market-terminal.exe .
 
   dev:
     desc: Run the application in development mode (fast iteration)
@@ -25,4 +26,6 @@ tasks:
     desc: Clean build artifacts
     cmds:
       - if exist bin rmdir /s /q bin
+      - if exist rsrc_windows_amd64.syso del rsrc_windows_amd64.syso
+      - if exist rsrc_windows_386.syso del rsrc_windows_386.syso
       - go clean

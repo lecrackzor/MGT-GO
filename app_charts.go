@@ -74,6 +74,7 @@ func (a *App) applyRuntimeSettings(settings *config.Settings) {
 	if a.scheduler != nil {
 		a.scheduler.SetSettings(settings)
 	}
+	a.syncAutoStart(settings)
 }
 
 func (a *App) unregisterChartTicker(ticker string) {
@@ -93,6 +94,29 @@ func (a *App) releaseTickerDisplay(ticker string) {
 		return
 	}
 	a.unregisterChartTicker(ticker)
+}
+
+// closeProfileWindows closes every detached profile window on shutdown. The
+// profile windows hold their own ticker displays, so each one is released.
+func (a *App) closeProfileWindows() {
+	a.chartWindowsLock.Lock()
+	count := len(a.profileWindows)
+	toClose := make(map[string]*application.WebviewWindow, count)
+	for ticker, window := range a.profileWindows {
+		toClose[ticker] = window
+	}
+	a.profileWindows = make(map[string]*application.WebviewWindow)
+	a.chartWindowsLock.Unlock()
+	for ticker, window := range toClose {
+		if window != nil {
+			a.debugPrint(fmt.Sprintf("ServiceShutdown: Closing profile window for %s", ticker), "system")
+			window.Close()
+		}
+		a.releaseTickerDisplay(ticker)
+	}
+	if count > 0 {
+		a.debugPrint(fmt.Sprintf("ServiceShutdown: Closed %d profile window(s)", count), "system")
+	}
 }
 
 func (a *App) watchChartWindow(ticker string, window *application.WebviewWindow) {
@@ -175,11 +199,32 @@ func (a *App) openChartWindow(ticker string, dateStr string, dockProfile bool) e
 
 	a.watchChartWindow(ticker, window)
 
+	// Two opens can pass the existence check above at the same time. The map
+	// write decides the winner; the loser is closed so no orphan window stays
+	// on screen holding a ticker display.
 	a.chartWindowsLock.Lock()
+	if current := a.chartWindows[ticker]; current != nil && current != window {
+		a.chartWindowsLock.Unlock()
+		window.Close()
+		return nil
+	}
 	a.chartWindows[ticker] = window
 	a.chartWindowsLock.Unlock()
 
 	a.RegisterTickerDisplay(ticker)
+	return nil
+}
+
+// SetAlwaysOnTop pins or unpins the chart window for a ticker, so the chart can
+// float above other windows from its header pin toggle.
+func (a *App) SetAlwaysOnTop(ticker string, onTop bool) error {
+	a.chartWindowsLock.RLock()
+	window := a.chartWindows[ticker]
+	a.chartWindowsLock.RUnlock()
+	if window == nil {
+		return fmt.Errorf("no chart window for %q", ticker)
+	}
+	window.SetAlwaysOnTop(onTop)
 	return nil
 }
 
@@ -220,7 +265,16 @@ func (a *App) OpenProfileWindow(ticker string, dateStr string) error {
 		return fmt.Errorf("failed to create profile window")
 	}
 	a.watchProfileWindow(ticker, window)
+
+	// Same guard as the chart window: a double click (or two windows asking at
+	// once) can create two profile windows for one ticker. Keep the first
+	// registered and close the extra one instead of leaking it.
 	a.chartWindowsLock.Lock()
+	if current := a.profileWindows[ticker]; current != nil && current != window {
+		a.chartWindowsLock.Unlock()
+		window.Close()
+		return nil
+	}
 	a.profileWindows[ticker] = window
 	a.chartWindowsLock.Unlock()
 	a.RegisterTickerDisplay(ticker)

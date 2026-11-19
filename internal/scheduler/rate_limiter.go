@@ -6,68 +6,85 @@ import (
 	"time"
 )
 
+// Gexbot quotas are per endpoint pool: each endpoint has its own budget, and a
+// poll that calls eleven endpoints once each does not spend eleven slots of the
+// same pool. The tracker therefore keeps one bucket per endpoint, fed by that
+// endpoint's own X-RateLimit-* headers, and sizes the poll gap from the
+// tightest bucket the poll actually uses.
+type endpointBucket struct {
+	requestTimes []float64
+	limit        int
+	remaining    int
+	reset        float64
+}
+
 // RateLimitTracker tracks API rate limits and ensures we respect them
 type RateLimitTracker struct {
-	mu                   sync.RWMutex
-	requestTimes         []float64 // Track request times in current window
-	rateLimitWindow      float64   // Default 60 second window
-	rateLimitMaxRequests int       // Max requests per window (from headers)
-	rateLimitRemaining   int       // Remaining requests (from headers)
-	rateLimitResetTime   float64   // When rate limit resets (from headers)
-	isRateLimited        bool      // Currently rate limited
-	retryAfter           float64   // When to retry after rate limit error
+	mu              sync.RWMutex
+	buckets         map[string]*endpointBucket
+	sharedTimes     []float64 // all requests, used only while no budget is known
+	sharedLimit     int       // largest limit seen, for the fallback estimate
+	rateLimitWindow float64   // Default 60 second window
+	isRateLimited   bool      // Currently rate limited
+	retryAfter      float64   // When to retry after rate limit error
 }
 
 // NewRateLimitTracker creates a new rate limit tracker
 func NewRateLimitTracker() *RateLimitTracker {
 	return &RateLimitTracker{
-		requestTimes:    make([]float64, 0, 2000),
+		buckets:         make(map[string]*endpointBucket),
+		sharedTimes:     make([]float64, 0, 2000),
 		rateLimitWindow: 60.0,
 	}
 }
 
 // RecordRequest records a successful API request and any rate-limit headers.
 // The rate-limited flag is set only by HandleRateLimitError (HTTP 429).
-func (rlt *RateLimitTracker) RecordRequest(requestTime float64, headers map[string]string) {
+func (rlt *RateLimitTracker) RecordRequest(endpoint string, requestTime float64, headers map[string]string) {
 	rlt.mu.Lock()
 	defer rlt.mu.Unlock()
 
-	// Add to request history and prune entries outside the window.
-	// Times are appended monotonically, so we can trim from the front.
-	rlt.requestTimes = append(rlt.requestTimes, requestTime)
-	cutoffTime := requestTime - rlt.rateLimitWindow
-	firstValid := 0
-	for firstValid < len(rlt.requestTimes) && rlt.requestTimes[firstValid] <= cutoffTime {
-		firstValid++
+	if endpoint == "" {
+		endpoint = "shared"
 	}
-	if firstValid > 0 {
-		rlt.requestTimes = rlt.requestTimes[firstValid:]
+	bucket := rlt.buckets[endpoint]
+	if bucket == nil {
+		bucket = &endpointBucket{requestTimes: make([]float64, 0, 256)}
+		rlt.buckets[endpoint] = bucket
 	}
+	bucket.requestTimes = appendWindow(bucket.requestTimes, requestTime, rlt.rateLimitWindow)
+
+	rlt.sharedTimes = appendWindow(rlt.sharedTimes, requestTime, rlt.rateLimitWindow)
 
 	if headers != nil {
-		rlt.updateFromHeaders(headers)
+		if limit := parseInt(headers["X-RateLimit-Limit"]); limit > 0 {
+			bucket.limit = limit
+			if limit > rlt.sharedLimit {
+				rlt.sharedLimit = limit
+			}
+		}
+		if remaining := parseInt(headers["X-RateLimit-Remaining"]); remaining >= 0 {
+			bucket.remaining = remaining
+		}
+		if reset := parseFloat(headers["X-RateLimit-Reset"]); reset > 0 {
+			bucket.reset = reset
+		}
 	}
 }
 
-// updateFromHeaders updates rate limit parameters from API response headers
-func (rlt *RateLimitTracker) updateFromHeaders(headers map[string]string) {
-	if limit, ok := headers["X-RateLimit-Limit"]; ok {
-		if val := parseInt(limit); val > 0 {
-			rlt.rateLimitMaxRequests = val
-		}
+// appendWindow appends a timestamp and drops entries outside the window. Times
+// arrive nearly monotonic, so the trim starts at the front.
+func appendWindow(times []float64, requestTime, window float64) []float64 {
+	times = append(times, requestTime)
+	cutoff := requestTime - window
+	firstValid := 0
+	for firstValid < len(times) && times[firstValid] <= cutoff {
+		firstValid++
 	}
-
-	if remaining, ok := headers["X-RateLimit-Remaining"]; ok {
-		if val := parseInt(remaining); val >= 0 {
-			rlt.rateLimitRemaining = val
-		}
+	if firstValid > 0 {
+		times = times[firstValid:]
 	}
-
-	if reset, ok := headers["X-RateLimit-Reset"]; ok {
-		if val := parseFloat(reset); val > 0 {
-			rlt.rateLimitResetTime = val
-		}
-	}
+	return times
 }
 
 // HandleRateLimitError handles 429 Too Many Requests error
@@ -80,12 +97,21 @@ func (rlt *RateLimitTracker) HandleRateLimitError(retryAfter float64) {
 
 	if retryAfter > 0 {
 		rlt.retryAfter = currentTime + retryAfter
-	} else if rlt.rateLimitResetTime > currentTime {
-		rlt.retryAfter = rlt.rateLimitResetTime
-	} else {
-		// Default: wait 60 seconds if we don't know when to retry
-		rlt.retryAfter = currentTime + 60.0
+		return
 	}
+	// Fall back to the earliest reset any bucket advertised.
+	earliest := 0.0
+	for _, bucket := range rlt.buckets {
+		if bucket.reset > currentTime && (earliest == 0 || bucket.reset < earliest) {
+			earliest = bucket.reset
+		}
+	}
+	if earliest > 0 {
+		rlt.retryAfter = earliest
+		return
+	}
+	// Default: wait 60 seconds if we don't know when to retry
+	rlt.retryAfter = currentTime + 60.0
 }
 
 // IsRateLimited checks if we're currently rate limited
@@ -118,28 +144,58 @@ func (rlt *RateLimitTracker) RetryAfterSeconds() float64 {
 	return remaining
 }
 
-// GetMinimumInterval is the gap that keeps tickerCount tickers, each firing
-// callsPerTicker endpoint calls, inside the known rate-limit window.
-// callsPerTicker below 1 counts as one call. The 429 backoff is separate.
-func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount, callsPerTicker int) float64 {
+// GetMinimumInterval is the gap that keeps tickerCount tickers inside every
+// endpoint budget the poll touches. Each bucket receives one call per ticker
+// per poll, so only the ticker count scales the gap, not the endpoint count.
+// Until a bucket's limit is known, the conservative shared-pool estimate is
+// used instead.
+func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount int, endpoints []string) float64 {
 	rlt.mu.RLock()
 	defer rlt.mu.RUnlock()
 
-	if rlt.rateLimitMaxRequests <= 0 {
-		return 0.0 // No rate limit known
+	if tickerCount < 1 {
+		tickerCount = 1
 	}
-	if callsPerTicker < 1 {
-		callsPerTicker = 1
-	}
-
-	// One poll fires every planned endpoint, not one call per ticker.
-	minInterval := rlt.rateLimitWindow / float64(rlt.rateLimitMaxRequests)
-	minInterval *= float64(callsPerTicker)
-	if tickerCount > 0 {
-		minInterval *= float64(tickerCount)
+	if len(endpoints) == 0 {
+		endpoints = []string{""}
 	}
 
-	return minInterval
+	tightest := 0.0
+	for _, endpoint := range endpoints {
+		bucket := rlt.buckets[endpoint]
+		if bucket == nil || bucket.limit <= 0 {
+			continue
+		}
+		interval := rlt.rateLimitWindow / float64(bucket.limit) * float64(tickerCount)
+		if interval > tightest {
+			tightest = interval
+		}
+	}
+	if tightest > 0 {
+		return tightest
+	}
+
+	// No per-endpoint budget yet. Assume one shared pool and count every call
+	// the poll makes, as the previous implementation did.
+	if rlt.sharedLimit <= 0 {
+		return 0
+	}
+	interval := rlt.rateLimitWindow / float64(rlt.sharedLimit)
+	interval *= float64(len(endpoints))
+	interval *= float64(tickerCount)
+	return interval
+}
+
+// BucketSnapshot reports what is known about one endpoint's budget. Tests and
+// the settings window use it; an unknown endpoint returns zeros.
+func (rlt *RateLimitTracker) BucketSnapshot(endpoint string) (limit, remaining int, reset float64) {
+	rlt.mu.RLock()
+	defer rlt.mu.RUnlock()
+	bucket := rlt.buckets[endpoint]
+	if bucket == nil {
+		return 0, 0, 0
+	}
+	return bucket.limit, bucket.remaining, bucket.reset
 }
 
 // Helper functions

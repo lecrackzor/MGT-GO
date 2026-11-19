@@ -12,6 +12,15 @@ import (
 	"market-terminal/internal/utils"
 )
 
+// RequestCount returns the number of API requests made this session, surfaced
+// in the main header.
+func (a *App) RequestCount() int64 {
+	if a.apiClient == nil {
+		return 0
+	}
+	return a.apiClient.RequestCount()
+}
+
 // GetCurrentMarketDate returns the current market date in Eastern Time as "YYYY-MM-DD"
 // Date rolls over at 8:30 AM ET (1 hour before market open)
 func (a *App) GetCurrentMarketDate() string {

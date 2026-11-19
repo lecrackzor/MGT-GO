@@ -1,9 +1,26 @@
 import { logToBackend } from '../shared/logging.js';
 import { priceScaleTag } from '../shared/series.js';
 import { getMarketDate } from './data.js';
-import { PROFILE_LEVELS } from './profile.js';
+import { PROFILE_LEVELS, readChartPrefs, writeChartPrefs } from './profile.js';
 
 export function installCrosshair(live) {
+    // Pin stops the info box from following the crosshair; delta is the change
+    // since the previous rendered sample, tracked per endpoint.
+    let infoBoxPinned = false;
+    const previousInfoValues = new Map();
+
+    function infoDeltaFor(endpoint, val) {
+        if (typeof val !== 'number' || !isFinite(val)) return '';
+        const prev = previousInfoValues.has(endpoint) ? previousInfoValues.get(endpoint) : null;
+        previousInfoValues.set(endpoint, val);
+        if (prev == null || !isFinite(prev)) return '';
+        const delta = val - prev;
+        if (delta === 0) return '<span class="crosshair-data-delta">0.00</span>';
+        const cls = delta > 0 ? 'up' : 'down';
+        const sign = delta > 0 ? '+' : '';
+        return '<span class="crosshair-data-delta ' + cls + '">' + sign + delta.toFixed(2) + '</span>';
+    }
+
 // Update crosshair info box from Lightweight Charts crosshair event
 function updateCrosshairFromParam(param) {
     if (!live.crosshairLine || !live.crosshairInfoBox || !live.crosshairInfoContent) return;
@@ -63,45 +80,48 @@ function updateCrosshairFromParam(param) {
         }
         }
     }
-    const valueByEndpoint = new Map();
-    if (param.seriesData && param.seriesData.size) {
-        param.seriesData.forEach((value, series) => {
-            const entry = live.lwSeriesList.find(e => e.series === series);
-            if (entry && value !== undefined && value !== null && typeof value === 'object' && 'value' in value) {
-                const num = Number((value).value);
-                if (typeof num === 'number' && !isNaN(num) && isFinite(num) && num !== 0) {
-                    valueByEndpoint.set(entry.endpoint, num);
+    if (!infoBoxPinned) {
+        const valueByEndpoint = new Map();
+        if (param.seriesData && param.seriesData.size) {
+            param.seriesData.forEach((value, series) => {
+                const entry = live.lwSeriesList.find(e => e.series === series);
+                if (entry && value !== undefined && value !== null && typeof value === 'object' && 'value' in value) {
+                    const num = Number((value).value);
+                    if (typeof num === 'number' && !isNaN(num) && isFinite(num) && num !== 0) {
+                        valueByEndpoint.set(entry.endpoint, num);
+                    }
                 }
-            }
+            });
+        }
+        const headerTitle = document.getElementById('crosshair-info-box-header-title');
+        if (headerTitle) headerTitle.textContent = `Time: ${timeStr}${tzIndicatorX}`;
+        let contentHTML = '';
+        live.lwSeriesList.forEach((entry) => {
+            const val = valueByEndpoint.get(entry.endpoint) ?? live.lastValueByEndpoint[entry.endpoint];
+            const hidden = live.currentChartPrefs.hiddenSeries.includes(entry.endpoint);
+            const rowClass = 'crosshair-data-row crosshair-series-row' + (hidden ? ' series-hidden' : '');
+            const displayVal = (val !== undefined && val !== null && typeof val === 'number')
+                ? val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : (hidden ? '(hidden)' : '—');
+            const deltaHtml = (!hidden && typeof val === 'number') ? infoDeltaFor(entry.endpoint, val) : '';
+            contentHTML += `
+                <div class="${rowClass}" data-endpoint="${entry.endpoint}" title="Click to show/hide on live.chart">
+                    <span class="crosshair-data-label">
+                        <span class="crosshair-color-indicator" style="background-color: ${entry.color || '#888'};"></span>
+                        ${entry.label}:
+                    </span>
+                    <span class="crosshair-data-value">${displayVal}</span>${deltaHtml}
+                </div>
+            `;
         });
+        live.crosshairInfoContent.innerHTML = contentHTML || '<div style="color: #888;">No data at this time</div>';
+        if (live.lwSeriesList.length > 0) live.crosshairInfoBox.style.display = 'block';
+        if (live.crosshairInfoBox.classList.contains('collapsed')) {
+            live.crosshairInfoContent.classList.add('content-hidden');
+            live.crosshairInfoContent.style.display = 'none';
+        }
+        requestAnimationFrame(() => clampInfoBoxMinHeight());
     }
-    const headerTitle = document.getElementById('crosshair-info-box-header-title');
-    if (headerTitle) headerTitle.textContent = `Time: ${timeStr}${tzIndicatorX}`;
-    let contentHTML = '';
-    live.lwSeriesList.forEach((entry) => {
-        const val = valueByEndpoint.get(entry.endpoint) ?? live.lastValueByEndpoint[entry.endpoint];
-        const hidden = live.currentChartPrefs.hiddenSeries.includes(entry.endpoint);
-        const rowClass = 'crosshair-data-row crosshair-series-row' + (hidden ? ' series-hidden' : '');
-        const displayVal = (val !== undefined && val !== null && typeof val === 'number')
-            ? val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-            : (hidden ? '(hidden)' : '—');
-        contentHTML += `
-            <div class="${rowClass}" data-endpoint="${entry.endpoint}" title="Click to show/hide on live.chart">
-                <span class="crosshair-data-label">
-                    <span class="crosshair-color-indicator" style="background-color: ${entry.color || '#888'};"></span>
-                    ${entry.label}:
-                </span>
-                <span class="crosshair-data-value">${displayVal}</span>
-            </div>
-        `;
-    });
-    live.crosshairInfoContent.innerHTML = contentHTML || '<div style="color: #888;">No data at this time</div>';
-    if (live.lwSeriesList.length > 0) live.crosshairInfoBox.style.display = 'block';
-    if (live.crosshairInfoBox.classList.contains('collapsed')) {
-        live.crosshairInfoContent.classList.add('content-hidden');
-        live.crosshairInfoContent.style.display = 'none';
-    }
-    requestAnimationFrame(() => clampInfoBoxMinHeight());
     if (typeof live.syncProfile === 'function') live.syncProfile(timestamp.getTime() / 1000);
 }
 
@@ -146,13 +166,14 @@ function updateCrosshairToLatest() {
         const displayVal = (v !== undefined && v !== null && typeof v === 'number')
             ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             : (hidden ? '(hidden)' : '—');
+        const deltaHtml = (!hidden && typeof v === 'number') ? infoDeltaFor(entry.endpoint, v) : '';
         contentHTML += `
             <div class="${rowClass}" data-endpoint="${entry.endpoint}" title="Click to show/hide on live.chart">
                 <span class="crosshair-data-label">
                     <span class="crosshair-color-indicator" style="background-color: ${entry.color || '#888'};"></span>
                     ${entry.label}:
                 </span>
-                <span class="crosshair-data-value">${displayVal}</span>
+                <span class="crosshair-data-value">${displayVal}</span>${deltaHtml}
             </div>
         `;
     });
@@ -189,6 +210,20 @@ if (live.crosshairInfoContent) {
     });
 }
 
+// Pin toggle: freeze the info box so it stops following the crosshair.
+if (live.crosshairInfoHeader) {
+    const pinEl = live.crosshairInfoHeader.querySelector('.crosshair-info-box-pin');
+    if (pinEl) {
+        pinEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            infoBoxPinned = !infoBoxPinned;
+            pinEl.classList.toggle('on', infoBoxPinned);
+            pinEl.title = infoBoxPinned ? 'Unpin (follow crosshair)' : 'Pin (stop following crosshair)';
+        });
+    }
+}
+
 const chartContainerEl = document.getElementById('chart-container');
 if (chartContainerEl) {
     chartContainerEl.addEventListener('mouseenter', () => { live.isMouseOverChart = true; });
@@ -209,6 +244,27 @@ const chartContextMenu = document.getElementById('chart-context-menu');
     }
     function closeChartContextMenuHandler(ev) {
         closeChartContextMenu(ev);
+    }
+    // Persist the lookback-dot choice for a profile that lives in its own
+    // window (the chart window has no profile of its own in that case).
+    function storedShowPriors() {
+        try {
+            const prefs = readChartPrefs(live.ticker, live.currentChartDateStr || live.dateFromURL || '');
+            if (typeof prefs.showPriors === 'boolean') return prefs.showPriors;
+        } catch (err) {}
+        const stored = (live.globalChartSettings && live.globalChartSettings.ProfileSettings) || {};
+        return !(stored.show_priors === false || stored.show_priors === 'false' || stored.show_priors === 0);
+    }
+    function setStoredShowPriors(on) {
+        try {
+            writeChartPrefs(live.ticker, live.currentChartDateStr || live.dateFromURL || '', { showPriors: !!on });
+            if (live.currentChartPrefs) live.currentChartPrefs.showPriors = !!on;
+        } catch (err) {}
+        try {
+            const ch = new BroadcastChannel('market-terminal-profile');
+            ch.postMessage({ type: 'prefs', ticker: live.ticker });
+            ch.close();
+        } catch (err) {}
     }
 function openChartContextMenu(clientX, clientY, view) {
     if (!chartContextMenu) return;
@@ -313,7 +369,7 @@ function openChartContextMenu(clientX, clientY, view) {
         autoFollowCb.addEventListener('change', (e) => { e.stopPropagation(); });
         autoFollowCb.addEventListener('click', (e) => {
             e.stopPropagation();
-            live.autoFollowEnabled = !live.autoFollowEnabled;
+            live.autoFollowEnabled = autoFollowCb.checked;
             const btn = document.getElementById('auto-follow-btn');
             if (btn) {
                 btn.textContent = `Auto-Follow: ${live.autoFollowEnabled ? 'ON' : 'OFF'}`;
@@ -327,17 +383,26 @@ function openChartContextMenu(clientX, clientY, view) {
         autoFollowItem.appendChild(autoFollowLabel);
         clickRowToggles(autoFollowItem, autoFollowCb);
         if (!onSide) chartContextMenu.appendChild(autoFollowItem);
-        const profileShown = typeof live.profileShown === 'function' ? live.profileShown() : true;
+        const profileShown = typeof live.profileShown === 'function' ? live.profileShown() : false;
         const dotsItem = document.createElement('div');
         dotsItem.className = 'ctx-item';
         const dotsCb = document.createElement('input');
         dotsCb.type = 'checkbox';
-        dotsCb.checked = typeof live.profileDotsOn === 'function' ? live.profileDotsOn() : true;
+        dotsCb.checked = typeof live.profileDotsOn === 'function' ? live.profileDotsOn() : storedShowPriors();
         dotsCb.id = 'ctx-profile-dots';
         dotsCb.addEventListener('change', (e) => { e.stopPropagation(); });
         dotsCb.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (typeof live.setProfileDots === 'function') live.setProfileDots(dotsCb.checked);
+            const on = dotsCb.checked;
+            if (typeof live.setProfileDots === 'function') {
+                live.setProfileDots(on);
+            } else {
+                // The profile lives in its own window: persist the choice for it
+                // and nudge that window to repaint. Without this the checkbox
+                // moved but nothing was drawn.
+                setStoredShowPriors(on);
+            }
+            if (typeof live.redrawProfile === 'function') live.redrawProfile();
         });
         dotsItem.appendChild(dotsCb);
         const dotsLabel = document.createElement('span');
@@ -534,6 +599,22 @@ function openChartContextMenu(clientX, clientY, view) {
             if (typeof live.setLevelHistoryStyle === 'function') live.setLevelHistoryStyle(historySelect.value);
         });
         layoutControl('Average or Scatter', historySelect, historyMenu);
+        const warmupItem = document.createElement('div');
+        warmupItem.className = 'ctx-item';
+        const warmupCb = document.createElement('input');
+        warmupCb.type = 'checkbox';
+        warmupCb.checked = typeof live.levelHistoryWarmupDrop === 'function' ? live.levelHistoryWarmupDrop() : false;
+        warmupCb.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof live.setLevelHistoryWarmupDrop === 'function') live.setLevelHistoryWarmupDrop(warmupCb.checked);
+        });
+        warmupItem.appendChild(warmupCb);
+        const warmupLabel = document.createElement('span');
+        warmupLabel.textContent = 'Drop warm-up samples (first 300)';
+        warmupLabel.title = 'Hide the leading samples while the moving average is still filling its window';
+        warmupItem.appendChild(warmupLabel);
+        clickRowToggles(warmupItem, warmupCb);
+        historyMenu.appendChild(warmupItem);
 
         if (!onSide && profileShown) {
             const ladderMenu = collapsedSection('Ladder');

@@ -101,10 +101,11 @@ func GetChartEndpointsForTiers(tiers []string) []string {
 			"classic_zero", // spot, zero_gamma, major_pos/neg_vol/oi
 		},
 		"state": {
+			"state_zero", // spot, zero_gamma, major volumes, gex
 			"gamma_zero", // major_long/short_gamma, major_positive/negative
 		},
 		"orderflow": {
-			// Orderflow doesn't have specific chart endpoints yet
+			"orderflow", // spot and the major levels
 		},
 	}
 
