@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-19 - v1.2.1
+
+### Backfill
+
+- Fix: intraday history recovery now calls the versioned `/v2` base URL. The `/hist` routes are only served under `/v2`; the unversioned base answered `401 Unauthorized` for a valid key, so gap-fill silently recovered nothing. Snapshot and end-of-day archive routes are served at both, so the single versioned base covers every endpoint.
+- Fix: `trimprofiles` skips its own output directory while walking for profile databases, so a second run no longer nests `out/out` copies and double-counts them.
+- Fix: `trimprofiles --apply` rebuilds a stale destination copy from the source instead of failing on the table the dry run left behind.
+
 ## 2026-11-19 - v1.2.0
 
 ### Settings window
