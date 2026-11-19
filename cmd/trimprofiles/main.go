@@ -24,6 +24,20 @@ func main() {
 		roots = []string{"."}
 	}
 
+	// The output directory holds copies from an earlier run. Walking it would
+	// re-compress those copies into out/out and count them twice.
+	outAbs, _ := filepath.Abs(*outDir)
+	insideOut := func(path string) bool {
+		if outAbs == "" {
+			return false
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return false
+		}
+		return abs == outAbs || strings.HasPrefix(abs, outAbs+string(os.PathSeparator))
+	}
+
 	var files []string
 	for _, root := range roots {
 		info, err := os.Stat(root)
@@ -38,7 +52,16 @@ func main() {
 			continue
 		}
 		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && strings.HasSuffix(path, ".profiles.db") {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				if insideOut(path) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".profiles.db") && !insideOut(path) {
 				files = append(files, path)
 			}
 			return nil
@@ -64,7 +87,7 @@ func main() {
 		totalSource += report.SourceBytes
 		totalDest += report.DestBytes
 
-		bad := report.IntegrityOK && !reportFailed(report)
+		verified := report.IntegrityOK && !reportFailed(report)
 		if reportFailed(report) {
 			problems++
 		}
@@ -91,7 +114,7 @@ func main() {
 		fmt.Printf("   integrity=%v  %s -> %s (%.1fx smaller)\n",
 			report.IntegrityOK, human(report.SourceBytes), human(report.DestBytes), ratio(report.SourceBytes, report.DestBytes))
 
-		if *apply && bad {
+		if *apply && verified {
 			if err := applySwap(src, dst); err != nil {
 				fmt.Fprintf(os.Stderr, "   swap failed: %v\n", err)
 				problems++

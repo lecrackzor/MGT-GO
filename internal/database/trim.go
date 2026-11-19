@@ -70,6 +70,16 @@ func TrimProfileFile(src, dst string, cadence float64) (*TrimReport, error) {
 		}
 	}
 
+	// A previous dry run leaves its copy here, and the intended flow is to
+	// review that report and then rerun the same command with --apply. That
+	// rerun rewrites this destination, so start from an empty one: the copy is
+	// rebuilt from the source, never appended to or reused.
+	for _, stale := range []string{dst, dst + "-wal", dst + "-shm", dst + "-journal"} {
+		if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove previous dest: %w", err)
+		}
+	}
+
 	out, err := sql.Open("sqlite", dst+"?_txlock=immediate&_pragma=busy_timeout(10000)")
 	if err != nil {
 		return nil, fmt.Errorf("open dest: %w", err)

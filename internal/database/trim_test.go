@@ -96,3 +96,53 @@ func TestTrimProfileFileDownsamplesAndReencodes(t *testing.T) {
 		t.Fatalf("last ladder lost its spot value: %s", body)
 	}
 }
+
+// The intended flow is a dry run, a review of its report, then the same command
+// again with --apply. That second run rewrites the copy the first one left, so
+// it has to start from an empty file instead of failing on the existing table.
+func TestTrimProfileFileRerunOverwritesPreviousCopy(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "SPX.profiles.db")
+	db, err := sql.Open("sqlite", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`CREATE TABLE endpoint_profile (
+		timestamp REAL, endpoint TEXT, payload BLOB,
+		PRIMARY KEY(timestamp, endpoint)) WITHOUT ROWID`); err != nil {
+		t.Fatal(err)
+	}
+	next := normalizeProfile([]byte(`{"spot":11,"strikes":[[100,1,0]]}`))
+	stored, _, _, err := encodeProfile(nil, 0, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := gzipJSON(json.RawMessage(stored))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO endpoint_profile VALUES (?, ?, ?)`, 1000.0, "classic_zero", payload); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	dst := filepath.Join(dir, "trimmed.profiles.db")
+	first, err := TrimProfileFile(src, dst, 5.0)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	second, err := TrimProfileFile(src, dst, 5.0)
+	if err != nil {
+		t.Fatalf("second run over an existing copy: %v", err)
+	}
+	if !second.IntegrityOK {
+		t.Fatalf("integrity = %v", second.IntegrityOK)
+	}
+	if len(second.Endpoints) != 1 {
+		t.Fatalf("endpoints = %d, want 1", len(second.Endpoints))
+	}
+	if got, want := second.Endpoints[0].KeptRows, first.Endpoints[0].KeptRows; got != want {
+		t.Fatalf("kept rows = %d, want %d (a rerun must rebuild, not append)", got, want)
+	}
+}
