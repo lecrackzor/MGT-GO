@@ -456,7 +456,7 @@ func (a *App) ServiceShutdown() error {
 
 // GetVersion returns the application version
 func (a *App) GetVersion() string {
-	return "1.2.1"
+	return "1.2.2"
 }
 
 // FocusMainWindow brings the main window to the foreground.

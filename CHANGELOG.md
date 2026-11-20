@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-19 - v1.2.2
+
+### Backfill
+
+- Fix: a trimmed profile copy is left in WAL mode. The loader opens a profile file read-only and then sets `journal_mode=WAL`, which only succeeds when the file is already WAL, so a copy written in the default journal mode made every swapped day unreadable. `trimprofiles` now sets WAL on the copy and fails instead of producing an unopenable file.
+
 ## 2026-11-19 - v1.2.1
 
 ### Backfill
@@ -9,7 +15,6 @@
 - Intraday gap-fill is now configurable in Settings → Data Storage: an enable toggle, the sweep interval, and the minimum gap. The minimum gap defaults to 45 seconds; smaller values recover shorter gaps (more requests), larger values are coarser.
 - Fix: `trimprofiles` skips its own output directory while walking for profile databases, so a second run no longer nests `out/out` copies and double-counts them.
 - Fix: `trimprofiles --apply` rebuilds a stale destination copy from the source instead of failing on the table the dry run left behind.
-- Fix: a trimmed copy is left in WAL mode. The loader opens a profile file read-only and then sets `journal_mode=WAL`, which only works when the file is already WAL, so a copy left in the default journal mode made every swapped day unreadable.
 
 ## 2026-11-19 - v1.2.0
 
