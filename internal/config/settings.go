@@ -19,59 +19,59 @@ type Settings struct {
 	APITKey string `yaml:"api_key" json:"APITKey,omitempty"`
 	// NinjaAPIKey is the user's NinjaTrader integration key. Historical call and put gamma
 	// require it. It is stored in the local config and is not part of the app.
-	NinjaAPIKey                     string                  `yaml:"ninja_api_key" json:"NinjaAPIKey,omitempty"`
-	HasAPIKey                       bool                    `yaml:"-" json:"HasAPIKey"`
-	HasNinjaAPIKey                  bool                    `yaml:"-" json:"HasNinjaAPIKey"`
-	APISubscriptionTiers            []string                `yaml:"api_subscription_tiers"`
-	CollectAllEndpoints             bool                    `yaml:"collect_all_endpoints"` // true = collect all available data, false = chart data only
-	DataDirectory                   string                  `yaml:"data_directory"`
-	EnableDebug                     bool                    `yaml:"enable_debug"`
-	EnableLogging                   bool                    `yaml:"enable_logging"`
-	HideConsole                     bool                    `yaml:"hide_console"`
-	UseMarketTime                   bool                    `yaml:"use_market_time"`  // Display times in ET instead of local time
-	Use24HourTime                   bool                    `yaml:"use_24_hour_time"` // Chart times: true = 24-hour (14:30), false = 12-hour AM/PM (2:30 PM)
-	CloseAfterMarketClose           bool                    `yaml:"close_after_market_close"`
-	StartBeforeMarketOpen           bool                    `yaml:"start_before_market_open"`
-	HiddenPlots                     []string                `yaml:"hidden_plots"` // Plots hidden by default on charts
-	ShowDialogWarnings              bool                    `yaml:"show_dialog_warnings"`
-	CrosshairColor                  string                  `yaml:"crosshair_color"`
-	CrosshairTextSize               int                     `yaml:"crosshair_text_size"`
-	CrosshairTextPlacement          string                  `yaml:"crosshair_text_placement"`
-	CrosshairBackgroundOpacity      int                     `yaml:"crosshair_background_opacity"`
-	CrosshairAxisMarkersEnabled     bool                    `yaml:"crosshair_axis_markers_enabled"`
-	CrosshairAxisMarkerSide         string                  `yaml:"crosshair_axis_marker_side"`
-	AlertDisplayTimeoutMs           int                     `yaml:"alert_display_timeout_ms"`
-	PriceColor                      string                  `yaml:"price_color"`
-	LegendOpacity                   int                     `yaml:"legend_opacity"`
-	LegendFontColor                 string                  `yaml:"legend_font_color"`
-	LegendFontSize                  int                     `yaml:"legend_font_size"`
-	LegendBackgroundTransparent     bool                    `yaml:"legend_background_transparent"`
-	LegendBackgroundColor           string                  `yaml:"legend_background_color"`
-	PriceAxisLocation               string                  `yaml:"price_axis_location"`
-	Alerts                          []interface{}           `yaml:"alerts"`
-	ProfileSettings                 map[string]interface{}  `yaml:"profile_settings"`
-	ProfileSampleSeconds            int                     `yaml:"profile_sample_seconds"` // how often a ladder is stored; chart scalars keep the poll cadence
-	EODBackfillEnabled              bool                    `yaml:"eod_backfill_enabled"`
-	EODBackfillTime                 string                  `yaml:"eod_backfill_time"`                  // ET, after the nightly export exists
-	IntradayBackfillEnabled         bool                    `yaml:"intraday_backfill_enabled"`          // periodic gap fill while the market is open
-	IntradayBackfillIntervalMinutes int                     `yaml:"intraday_backfill_interval_minutes"` // how often to sweep gaps during the session
-	IntradayFillMaxRequestsPerDay   int                     `yaml:"intraday_fill_max_requests_per_day"`
-	IntradayFillMinGapSeconds       int                     `yaml:"intraday_fill_min_gap_seconds"`
-	EODMaxLadderMB                  int                     `yaml:"eod_max_ladder_mb"`
-	DataRetentionDays               int                     `yaml:"data_retention_days"` // 0 keeps every day folder
-	Classic                         map[string]interface{}  `yaml:"classic"`
-	State                           map[string]interface{}  `yaml:"state"`
-	Orderflow                       map[string]interface{}  `yaml:"orderflow"`
-	Charts                          []interface{}           `yaml:"charts"`
-	Tickers                         []interface{}           `yaml:"tickers"`
-	TickerConfigs                   map[string]TickerConfig `yaml:"ticker_configs"`
-	TickerOrder                     []string                `yaml:"ticker_order,omitempty"`    // User-defined ticker display order
-	ChartColors                     map[string]string       `yaml:"chart_colors"`              // Color preferences for chart data series
-	ChartColorsOff                  []string                `yaml:"chart_colors_off"`          // Series hidden on charts via color settings (still collected)
-	ChartZoomFilterPercent          float64                 `yaml:"chart_zoom_filter_percent"` // Default Y-axis zoom filter as % of current spot price
-	AutoFollowBufferPx              float64                 `yaml:"auto_follow_buffer_px"`     // Empty pixels after the latest bar. Reset and auto-follow both use it.
-	WindowWidth                     int                     `yaml:"window_width,omitempty"`    // Last saved window width
-	WindowHeight                    int                     `yaml:"window_height,omitempty"`   // Last saved window height
+	NinjaAPIKey                        string                  `yaml:"ninja_api_key" json:"NinjaAPIKey,omitempty"`
+	HasAPIKey                          bool                    `yaml:"-" json:"HasAPIKey"`
+	HasNinjaAPIKey                     bool                    `yaml:"-" json:"HasNinjaAPIKey"`
+	APISubscriptionTiers               []string                `yaml:"api_subscription_tiers"`
+	CollectAllEndpoints                bool                    `yaml:"collect_all_endpoints"` // true = collect all available data, false = chart data only
+	DataDirectory                      string                  `yaml:"data_directory"`
+	EnableDebug                        bool                    `yaml:"enable_debug"`
+	EnableLogging                      bool                    `yaml:"enable_logging"`
+	HideConsole                        bool                    `yaml:"hide_console"`
+	UseMarketTime                      bool                    `yaml:"use_market_time"`  // Display times in ET instead of local time
+	Use24HourTime                      bool                    `yaml:"use_24_hour_time"` // Chart times: true = 24-hour (14:30), false = 12-hour AM/PM (2:30 PM)
+	CloseAfterMarketClose              bool                    `yaml:"close_after_market_close"`
+	StartBeforeMarketOpen              bool                    `yaml:"start_before_market_open"`
+	HiddenPlots                        []string                `yaml:"hidden_plots"` // Plots hidden by default on charts
+	ShowDialogWarnings                 bool                    `yaml:"show_dialog_warnings"`
+	CrosshairColor                     string                  `yaml:"crosshair_color"`
+	CrosshairTextSize                  int                     `yaml:"crosshair_text_size"`
+	CrosshairTextPlacement             string                  `yaml:"crosshair_text_placement"`
+	CrosshairBackgroundOpacity         int                     `yaml:"crosshair_background_opacity"`
+	CrosshairAxisMarkersEnabled        bool                    `yaml:"crosshair_axis_markers_enabled"`
+	CrosshairAxisMarkerSide            string                  `yaml:"crosshair_axis_marker_side"`
+	AlertDisplayTimeoutMs              int                     `yaml:"alert_display_timeout_ms"`
+	PriceColor                         string                  `yaml:"price_color"`
+	LegendOpacity                      int                     `yaml:"legend_opacity"`
+	LegendFontColor                    string                  `yaml:"legend_font_color"`
+	LegendFontSize                     int                     `yaml:"legend_font_size"`
+	LegendBackgroundTransparent        bool                    `yaml:"legend_background_transparent"`
+	LegendBackgroundColor              string                  `yaml:"legend_background_color"`
+	PriceAxisLocation                  string                  `yaml:"price_axis_location"`
+	Alerts                             []interface{}           `yaml:"alerts"`
+	ProfileSettings                    map[string]interface{}  `yaml:"profile_settings"`
+	ProfileSampleSeconds               int                     `yaml:"profile_sample_seconds"` // how often a ladder is stored; chart scalars keep the poll cadence
+	EODBackfillEnabled                 bool                    `yaml:"eod_backfill_enabled"`
+	EODBackfillTime                    string                  `yaml:"eod_backfill_time"`                       // ET, after the nightly export exists
+	IntradayBackfillEnabled            bool                    `yaml:"intraday_backfill_enabled"`               // periodic gap fill while the market is open
+	IntradayBackfillIntervalMinutes    int                     `yaml:"intraday_backfill_interval_minutes"`      // how often to sweep gaps during the session
+	IntradayFillMaxRequestsPerCategory int                     `yaml:"intraday_fill_max_requests_per_category"` // cap per category per sweep
+	IntradayFillMinGapSeconds          int                     `yaml:"intraday_fill_min_gap_seconds"`
+	EODMaxLadderMB                     int                     `yaml:"eod_max_ladder_mb"`
+	DataRetentionDays                  int                     `yaml:"data_retention_days"` // 0 keeps every day folder
+	Classic                            map[string]interface{}  `yaml:"classic"`
+	State                              map[string]interface{}  `yaml:"state"`
+	Orderflow                          map[string]interface{}  `yaml:"orderflow"`
+	Charts                             []interface{}           `yaml:"charts"`
+	Tickers                            []interface{}           `yaml:"tickers"`
+	TickerConfigs                      map[string]TickerConfig `yaml:"ticker_configs"`
+	TickerOrder                        []string                `yaml:"ticker_order,omitempty"`    // User-defined ticker display order
+	ChartColors                        map[string]string       `yaml:"chart_colors"`              // Color preferences for chart data series
+	ChartColorsOff                     []string                `yaml:"chart_colors_off"`          // Series hidden on charts via color settings (still collected)
+	ChartZoomFilterPercent             float64                 `yaml:"chart_zoom_filter_percent"` // Default Y-axis zoom filter as % of current spot price
+	AutoFollowBufferPx                 float64                 `yaml:"auto_follow_buffer_px"`     // Empty pixels after the latest bar. Reset and auto-follow both use it.
+	WindowWidth                        int                     `yaml:"window_width,omitempty"`    // Last saved window width
+	WindowHeight                       int                     `yaml:"window_height,omitempty"`   // Last saved window height
 }
 
 // SettingsManager manages loading and saving settings
@@ -234,6 +234,15 @@ func (sm *SettingsManager) LoadSettings() (*Settings, error) {
 	if yaml.Unmarshal(data, &raw) == nil {
 		if _, ok := raw["auto_follow_buffer_px"]; !ok || settings.AutoFollowBufferPx < 0 {
 			settings.AutoFollowBufferPx = 16
+		}
+		// This key was renamed from the misleading intraday_fill_max_requests_per_day,
+		// which was never a daily total, and a zero cap means unlimited, so an
+		// existing file needs a value here.
+		if settings.IntradayFillMaxRequestsPerCategory <= 0 {
+			settings.IntradayFillMaxRequestsPerCategory = getIntAny(raw, []string{"intraday_fill_max_requests_per_day"}, 8)
+			if settings.IntradayFillMaxRequestsPerCategory <= 0 {
+				settings.IntradayFillMaxRequestsPerCategory = 8
+			}
 		}
 	}
 
@@ -547,15 +556,15 @@ func getDefaultSettings() *Settings {
 			"show_reference_lines": true,
 			"enabled":              false,
 		},
-		ProfileSampleSeconds:            5,
-		EODBackfillEnabled:              true,
-		EODBackfillTime:                 "17:15",
-		IntradayBackfillEnabled:         true,
-		IntradayBackfillIntervalMinutes: 30,
-		IntradayFillMaxRequestsPerDay:   8,
-		IntradayFillMinGapSeconds:       45,
-		EODMaxLadderMB:                  200,
-		DataRetentionDays:               0,
+		ProfileSampleSeconds:               5,
+		EODBackfillEnabled:                 true,
+		EODBackfillTime:                    "17:15",
+		IntradayBackfillEnabled:            true,
+		IntradayBackfillIntervalMinutes:    30,
+		IntradayFillMaxRequestsPerCategory: 8,
+		IntradayFillMinGapSeconds:          45,
+		EODMaxLadderMB:                     200,
+		DataRetentionDays:                  0,
 		Classic: map[string]interface{}{
 			"colors": map[string]interface{}{
 				"zero_gamma":                     "fcb103",

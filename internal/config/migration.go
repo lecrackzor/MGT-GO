@@ -32,42 +32,42 @@ func MigrateOldSettings(oldSettingsPath string, newConfigPath string) (bool, err
 
 	// Create new settings struct from old data
 	newSettings := &Settings{
-		APITKey:                         apiKey,
-		APISubscriptionTiers:            getStringSlice(oldSettings, "api_subscription_tiers", []string{"classic"}),
-		DataDirectory:                   getString(oldSettings, "data_directory", "Tickers"),
-		EnableDebug:                     getBool(oldSettings, "enable_debug", false),
-		HideConsole:                     getBool(oldSettings, "hide_console", true),
-		ShowDialogWarnings:              getBool(oldSettings, "show_dialog_warnings", true),
-		CrosshairColor:                  getString(oldSettings, "crosshair_color", "808080"),
-		CrosshairTextSize:               getInt(oldSettings, "crosshair_text_size", 12),
-		CrosshairTextPlacement:          getString(oldSettings, "crosshair_text_placement", "top_center"),
-		CrosshairBackgroundOpacity:      getInt(oldSettings, "crosshair_background_opacity", 180),
-		CrosshairAxisMarkersEnabled:     getBool(oldSettings, "crosshair_axis_markers_enabled", true),
-		CrosshairAxisMarkerSide:         getString(oldSettings, "crosshair_axis_marker_side", "right"),
-		AlertDisplayTimeoutMs:           getInt(oldSettings, "alert_display_timeout_ms", 60000),
-		PriceColor:                      getString(oldSettings, "price_color", "ffffff"),
-		LegendOpacity:                   getInt(oldSettings, "legend_opacity", 100),
-		LegendFontColor:                 getString(oldSettings, "legend_font_color", "ffffff"),
-		LegendFontSize:                  getInt(oldSettings, "legend_font_size", 12),
-		LegendBackgroundTransparent:     getBool(oldSettings, "legend_background_transparent", true),
-		LegendBackgroundColor:           getString(oldSettings, "legend_background_color", "000000"),
-		PriceAxisLocation:               getString(oldSettings, "price_axis_location", "left"),
-		Alerts:                          getInterfaceSlice(oldSettings, "alerts"),
-		ProfileSettings:                 getMap(oldSettings, "profile_settings"),
-		ProfileSampleSeconds:            getInt(oldSettings, "profile_sample_seconds", 5),
-		EODBackfillEnabled:              getBool(oldSettings, "eod_backfill_enabled", true),
-		EODBackfillTime:                 getString(oldSettings, "eod_backfill_time", "17:15"),
-		IntradayBackfillEnabled:         getBool(oldSettings, "intraday_backfill_enabled", true),
-		IntradayBackfillIntervalMinutes: getInt(oldSettings, "intraday_backfill_interval_minutes", 30),
-		IntradayFillMaxRequestsPerDay:   getInt(oldSettings, "intraday_fill_max_requests_per_day", 8),
-		IntradayFillMinGapSeconds:       getInt(oldSettings, "intraday_fill_min_gap_seconds", 45),
-		EODMaxLadderMB:                  getInt(oldSettings, "eod_max_ladder_mb", 200),
-		DataRetentionDays:               getInt(oldSettings, "data_retention_days", 0),
-		Classic:                         getMap(oldSettings, "classic"),
-		State:                           getMap(oldSettings, "state"),
-		Orderflow:                       getMap(oldSettings, "orderflow"),
-		Charts:                          getInterfaceSlice(oldSettings, "charts"),
-		Tickers:                         getInterfaceSlice(oldSettings, "tickers"),
+		APITKey:                            apiKey,
+		APISubscriptionTiers:               getStringSlice(oldSettings, "api_subscription_tiers", []string{"classic"}),
+		DataDirectory:                      getString(oldSettings, "data_directory", "Tickers"),
+		EnableDebug:                        getBool(oldSettings, "enable_debug", false),
+		HideConsole:                        getBool(oldSettings, "hide_console", true),
+		ShowDialogWarnings:                 getBool(oldSettings, "show_dialog_warnings", true),
+		CrosshairColor:                     getString(oldSettings, "crosshair_color", "808080"),
+		CrosshairTextSize:                  getInt(oldSettings, "crosshair_text_size", 12),
+		CrosshairTextPlacement:             getString(oldSettings, "crosshair_text_placement", "top_center"),
+		CrosshairBackgroundOpacity:         getInt(oldSettings, "crosshair_background_opacity", 180),
+		CrosshairAxisMarkersEnabled:        getBool(oldSettings, "crosshair_axis_markers_enabled", true),
+		CrosshairAxisMarkerSide:            getString(oldSettings, "crosshair_axis_marker_side", "right"),
+		AlertDisplayTimeoutMs:              getInt(oldSettings, "alert_display_timeout_ms", 60000),
+		PriceColor:                         getString(oldSettings, "price_color", "ffffff"),
+		LegendOpacity:                      getInt(oldSettings, "legend_opacity", 100),
+		LegendFontColor:                    getString(oldSettings, "legend_font_color", "ffffff"),
+		LegendFontSize:                     getInt(oldSettings, "legend_font_size", 12),
+		LegendBackgroundTransparent:        getBool(oldSettings, "legend_background_transparent", true),
+		LegendBackgroundColor:              getString(oldSettings, "legend_background_color", "000000"),
+		PriceAxisLocation:                  getString(oldSettings, "price_axis_location", "left"),
+		Alerts:                             getInterfaceSlice(oldSettings, "alerts"),
+		ProfileSettings:                    getMap(oldSettings, "profile_settings"),
+		ProfileSampleSeconds:               getInt(oldSettings, "profile_sample_seconds", 5),
+		EODBackfillEnabled:                 getBool(oldSettings, "eod_backfill_enabled", true),
+		EODBackfillTime:                    getString(oldSettings, "eod_backfill_time", "17:15"),
+		IntradayBackfillEnabled:            getBool(oldSettings, "intraday_backfill_enabled", true),
+		IntradayBackfillIntervalMinutes:    getInt(oldSettings, "intraday_backfill_interval_minutes", 30),
+		IntradayFillMaxRequestsPerCategory: getIntAny(oldSettings, []string{"intraday_fill_max_requests_per_category", "intraday_fill_max_requests_per_day"}, 8),
+		IntradayFillMinGapSeconds:          getInt(oldSettings, "intraday_fill_min_gap_seconds", 45),
+		EODMaxLadderMB:                     getInt(oldSettings, "eod_max_ladder_mb", 200),
+		DataRetentionDays:                  getInt(oldSettings, "data_retention_days", 0),
+		Classic:                            getMap(oldSettings, "classic"),
+		State:                              getMap(oldSettings, "state"),
+		Orderflow:                          getMap(oldSettings, "orderflow"),
+		Charts:                             getInterfaceSlice(oldSettings, "charts"),
+		Tickers:                            getInterfaceSlice(oldSettings, "tickers"),
 	}
 
 	// Migrate ticker_configs if present
@@ -130,6 +130,22 @@ func getFloat64(m map[string]interface{}, key string, defaultValue float64) floa
 			return v
 		case int:
 			return float64(v)
+		}
+	}
+	return defaultValue
+}
+
+// getIntAny reads the first key that holds an integer, so a renamed setting can
+// keep the value its old key carried.
+func getIntAny(m map[string]interface{}, keys []string, defaultValue int) int {
+	for _, key := range keys {
+		if val, ok := m[key]; ok {
+			switch v := val.(type) {
+			case int:
+				return v
+			case float64:
+				return int(v)
+			}
 		}
 	}
 	return defaultValue

@@ -287,12 +287,13 @@ export class Settings {
              */
             this["IntradayBackfillIntervalMinutes"] = 0;
         }
-        if (!("IntradayFillMaxRequestsPerDay" in $$source)) {
+        if (!("IntradayFillMaxRequestsPerCategory" in $$source)) {
             /**
+             * cap per category per sweep
              * @member
              * @type {number}
              */
-            this["IntradayFillMaxRequestsPerDay"] = 0;
+            this["IntradayFillMaxRequestsPerCategory"] = 0;
         }
         if (!("IntradayFillMinGapSeconds" in $$source)) {
             /**

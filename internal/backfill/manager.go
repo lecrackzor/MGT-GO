@@ -259,7 +259,7 @@ func (m *Manager) fillToday(ctx context.Context, end float64) Report {
 
 // RunIntradayIfDue fills today's gaps on an interval while the market is open.
 // It is the autonomous counterpart to FillToday (which runs at quit): each sweep
-// is small, bounded by IntradayFillMaxRequestsPerDay, and a rate limit pauses
+// is small, bounded by IntradayFillMaxRequestsPerCategory, and a rate limit pauses
 // the sweep for the Retry-After window so the live poll is not starved.
 func (m *Manager) RunIntradayIfDue(ctx context.Context, now time.Time) {
 	settings := m.settings()
@@ -323,7 +323,7 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 	gaps = splitGaps(gaps, 8*3600)
 	cadence := database.ProfileSampleSeconds(settings)
 	profilePath := database.ProfileDBPath(chartPath)
-	budget := settings.IntradayFillMaxRequestsPerDay
+	budget := settings.IntradayFillMaxRequestsPerCategory
 
 	scalars := make(map[float64]map[string]interface{})
 	fills := make([]database.LadderFill, 0)
