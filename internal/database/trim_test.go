@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,5 +145,56 @@ func TestTrimProfileFileRerunOverwritesPreviousCopy(t *testing.T) {
 	}
 	if got, want := second.Endpoints[0].KeptRows, first.Endpoints[0].KeptRows; got != want {
 		t.Fatalf("kept rows = %d, want %d (a rerun must rebuild, not append)", got, want)
+	}
+}
+
+// The loader opens a profile file read-only and then sets journal_mode=WAL,
+// which only works when the file is already WAL. A copy left in the default
+// rollback mode made every swapped day unreadable.
+func TestTrimProfileFileLeavesCopyInWAL(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "SPY.profiles.db")
+	db, err := sql.Open("sqlite", src+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`CREATE TABLE endpoint_profile (
+		timestamp REAL, endpoint TEXT, payload BLOB,
+		PRIMARY KEY(timestamp, endpoint)) WITHOUT ROWID`); err != nil {
+		t.Fatal(err)
+	}
+	next := normalizeProfile([]byte(`{"spot":10,"strikes":[[99,1,0]]}`))
+	stored, _, _, err := encodeProfile(nil, 0, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := gzipJSON(json.RawMessage(stored))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO endpoint_profile VALUES (?, ?, ?)`, 1000.0, "classic_zero", payload); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	dst := filepath.Join(dir, "trimmed.profiles.db")
+	if _, err := TrimProfileFile(src, dst, 5.0); err != nil {
+		t.Fatalf("trim: %v", err)
+	}
+
+	// Read-only is the mode the loader uses; the pragma must not fail there.
+	ro, err := sql.Open("sqlite", "file:"+dst+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	ro.SetMaxOpenConns(1)
+	var mode string
+	if err := ro.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&mode); err != nil {
+		t.Fatalf("read-only handle cannot set WAL: %v", err)
+	}
+	if strings.ToLower(mode) != "wal" {
+		t.Fatalf("journal mode = %q, want wal", mode)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // TrimReport is the result of compacting one profile file.
@@ -160,6 +161,18 @@ func TrimProfileFile(src, dst string, cadence float64) (*TrimReport, error) {
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit dest: %w", err)
+	}
+
+	// The app opens a profile file read-only and then sets journal_mode=WAL to
+	// match the live writer. That pragma only succeeds on a read-only handle
+	// when the file is already WAL, so the copy must be left in WAL or every
+	// swapped day becomes unreadable.
+	var mode string
+	if err := out.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&mode); err != nil {
+		return nil, fmt.Errorf("set dest journal mode: %w", err)
+	}
+	if strings.ToLower(mode) != "wal" {
+		return nil, fmt.Errorf("dest journal mode is %q, want wal", mode)
 	}
 
 	var integrity string

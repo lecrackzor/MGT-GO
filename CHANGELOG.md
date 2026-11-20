@@ -9,6 +9,7 @@
 - Intraday gap-fill is now configurable in Settings → Data Storage: an enable toggle, the sweep interval, and the minimum gap. The minimum gap defaults to 45 seconds; smaller values recover shorter gaps (more requests), larger values are coarser.
 - Fix: `trimprofiles` skips its own output directory while walking for profile databases, so a second run no longer nests `out/out` copies and double-counts them.
 - Fix: `trimprofiles --apply` rebuilds a stale destination copy from the source instead of failing on the table the dry run left behind.
+- Fix: a trimmed copy is left in WAL mode. The loader opens a profile file read-only and then sets `journal_mode=WAL`, which only works when the file is already WAL, so a copy left in the default journal mode made every swapped day unreadable.
 
 ## 2026-11-19 - v1.2.0
 

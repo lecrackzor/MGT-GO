@@ -48,7 +48,7 @@ func TestProfileV2StorageReduction(t *testing.T) {
 	sort.Slice(days, func(i, j int) bool { return days[i].date.After(days[j].date) })
 
 	var before, after int64
-	var rows int
+	var rows, legacy int
 	var fullBefore, fullAfter int64
 	var fullRows int
 	for _, day := range days {
@@ -87,6 +87,9 @@ func TestProfileV2StorageReduction(t *testing.T) {
 			before += int64(len(oldSize))
 			after += int64(len(newSize))
 			rows++
+			if !profileIsCurrent(raw) {
+				legacy++
+			}
 			// A full ladder carries the whole strike list; a delta carries only
 			// the strikes that changed and was already small.
 			if !bytes.Contains(raw, []byte(`"_d"`)) && bytes.Contains(raw, []byte(`"strikes"`)) {
@@ -106,6 +109,12 @@ func TestProfileV2StorageReduction(t *testing.T) {
 	}
 	if rows == 0 {
 		t.Skip("no stored ladders to measure")
+	}
+	// Every row is already format v2: there is nothing left to shrink, so the
+	// comparison would be 1.00x by construction. The trimming itself is covered
+	// by TestNormalizeProfileTrimsLadderRows.
+	if legacy == 0 {
+		t.Skipf("all %d sampled rows are already format v2", rows)
 	}
 	ratio := float64(before) / float64(after)
 	t.Logf("profile row size: %d rows, %d -> %d bytes (%.2fx smaller per row)", rows, before/int64(rows), after/int64(rows), ratio)
