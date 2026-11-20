@@ -35,6 +35,69 @@ func DataRoot(dataDir string) string {
 	return filepath.Join(filepath.Dir(exe), dataDir)
 }
 
+// MissingDataHint explains where the day folders went when a relative data
+// directory resolves next to the executable but the data lives elsewhere. A
+// copied build started from a build folder otherwise opens an empty window and
+// creates a new day folder beside itself without saying so.
+//
+// It returns "" when there is nothing to report: the resolved root already has
+// day folders, the working directory has none either, or the two point at the
+// same tree. The working directory is the only other place checked, so this
+// costs two directory reads and never walks the disk.
+func MissingDataHint(dataDir string) string {
+	if filepath.IsAbs(strings.TrimSpace(dataDir)) {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return missingDataHint(DataRoot(dataDir), cwd)
+}
+
+// missingDataHint holds the decision so a test can supply both roots.
+func missingDataHint(root, cwd string) string {
+	if hasDayFolders(root) {
+		return ""
+	}
+	elsewhere := filepath.Join(cwd, filepath.Base(root))
+	if strings.EqualFold(filepath.Clean(elsewhere), filepath.Clean(root)) || !hasDayFolders(elsewhere) {
+		return ""
+	}
+	return fmt.Sprintf("data directory %s has no day folders; %s does, so start the app from that folder or set data_directory to it", root, elsewhere)
+}
+
+// hasDayFolders reports whether root's day folders exist. A day folder is named
+// "<root> MM.DD.YYYY" and sits beside the prefix, so the parent is what holds it.
+func hasDayFolders(root string) bool {
+	entries, err := os.ReadDir(filepath.Dir(root))
+	if err != nil {
+		return false
+	}
+	prefix := filepath.Base(root) + " "
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), prefix) && isDayFolderName(entry.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDayFolderName(name string) bool {
+	if len(name) < 12 || name[len(name)-11] != ' ' {
+		return false
+	}
+	for _, r := range name[len(name)-10:] {
+		if r != '.' && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 // MarketDataDir returns the daily data directory for a ticker date.
 // Weekends and full NYSE closures roll back to the previous trading day. The 8:30 ET session
 // rollover is applied by the caller (GetMarketDate / GetMarketDateForDate)

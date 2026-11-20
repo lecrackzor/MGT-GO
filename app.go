@@ -257,6 +257,13 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 
 	dataDirPath := database.MarketDataDir(dataDir, utils.GetMarketDate())
 
+	// A relative data directory is pinned to the executable, so a copy started
+	// from a build folder finds no day folders and opens an empty window.
+	if hint := database.MissingDataHint(dataDir); hint != "" {
+		utils.Logf("WARNING: %s", hint)
+		a.debugPrint(hint, "system")
+	}
+
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(dataDirPath, 0755); err != nil {
 		utils.Logf("WARNING: Failed to create data directory %s: %v", dataDirPath, err)
