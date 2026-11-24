@@ -59,7 +59,9 @@ func (a *App) GetTickerData(ticker string, dateStr string) (map[string]interface
 }
 
 // GetChartData serves chart data for chart windows.
-// READ-ONLY: Only reads from the database via LoadChartData (read-only connection). Never writes to the database.
+// Reads through LoadChartData on a read-only connection. The one write it
+// makes is the Ninja major levels it fetches for the day (see
+// attachHistoricalMajors); the chart rows themselves are only read.
 // ticker: Ticker symbol
 // dateStr: Date in format "2006-01-02" (YYYY-MM-DD)
 // sinceStr: Optional; if non-empty, rows with timestamp >= sinceStr (Unix seconds, float) are returned so the last point can be replaced
@@ -149,6 +151,10 @@ func (a *App) GetChartData(ticker string, dateStr string, sinceStr string) (map[
 // attachHistoricalMajors fills major_call_gamma and major_put_gamma from the
 // same Ninja history feed the gexbot indicator draws. Live major_pos_vol and
 // major_neg_vol stay as the positive and negative gamma snapshots.
+//
+// A value already stored in the day wins. The feed is only asked to fill bars
+// that are still empty, and whatever it returns is written back, so a session
+// drawn once keeps both lines after the feed has pruned it.
 func (a *App) attachHistoricalMajors(ticker string, date time.Time, result map[string]interface{}) {
 	if a.apiClient == nil || a.settingsManager == nil {
 		return
@@ -171,8 +177,55 @@ func (a *App) attachHistoricalMajors(ticker string, date time.Time, result map[s
 		return
 	}
 	call, put := alignHistoricalMajors(times, samples)
-	result["major_call_gamma"] = call
-	result["major_put_gamma"] = put
+	result["major_call_gamma"] = mergeMajorLevels(seriesOf(result["major_call_gamma"], len(times)), call)
+	result["major_put_gamma"] = mergeMajorLevels(seriesOf(result["major_put_gamma"], len(times)), put)
+	// Store what the feed just gave us. A chart is the only way some days are
+	// ever drawn, and the feed forgets a session, so this is the one chance to
+	// keep the levels for that day.
+	if stored, err := a.storeMajorLevels(ticker, date, samples); err != nil {
+		a.debugPrint(fmt.Sprintf("GetChartData: store historical majors for %s: %v", ticker, err), "error")
+	} else if stored.Filled > 0 {
+		a.debugPrint(fmt.Sprintf("GetChartData: stored %d major level row(s) for %s on %s", stored.Filled, ticker, date.Format("2006-01-02")), "app")
+	}
+}
+
+// mergeMajorLevels keeps every stored value and fills the gaps from the feed.
+func mergeMajorLevels(stored, aligned database.ChartSeries) database.ChartSeries {
+	out := make(database.ChartSeries, len(aligned))
+	for i := range aligned {
+		if i < len(stored) && isLevelValue(stored[i]) {
+			out[i] = stored[i]
+			continue
+		}
+		out[i] = aligned[i]
+	}
+	return out
+}
+
+// seriesOf returns a chart column as a float series of exactly n values, with
+// NaN where the column is shorter, longer, or not present.
+func seriesOf(v interface{}, n int) database.ChartSeries {
+	out := make(database.ChartSeries, n)
+	for i := range out {
+		out[i] = math.NaN()
+	}
+	switch series := v.(type) {
+	case database.ChartSeries:
+		for i := 0; i < n && i < len(series); i++ {
+			out[i] = series[i]
+		}
+	case []interface{}:
+		for i := 0; i < n && i < len(series); i++ {
+			if f, ok := series[i].(float64); ok {
+				out[i] = f
+			}
+		}
+	case []float64:
+		for i := 0; i < n && i < len(series); i++ {
+			out[i] = series[i]
+		}
+	}
+	return out
 }
 
 func usSessionBounds(date time.Time) (int64, int64) {

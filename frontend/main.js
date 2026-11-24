@@ -265,14 +265,14 @@ function trapModalFocus(modal, onEscape) {
 // Initialize settings immediately (doesn't require backend)
 function initializeSettingsImmediate() {
     async function openLog() {
-        if (!App || typeof App.OpenLogWindow !== 'function') {
-            return;
-        }
-        try {
-            await App.OpenLogWindow();
-        } catch (err) {
-            console.error('Failed to open log window:', err);
-        }
+            if (!App || typeof App.OpenLogWindow !== 'function') {
+                return;
+            }
+            try {
+                await App.OpenLogWindow();
+            } catch (err) {
+                console.error('Failed to open log window:', err);
+            }
     }
 
     const logBtn = document.getElementById('log-btn');
@@ -295,7 +295,7 @@ function initializeSettingsImmediate() {
             }
             try {
                 await App.OpenSettingsWindow();
-            } catch (err) {
+        } catch (err) {
                 console.error('Failed to open settings window:', err);
             }
         });
@@ -529,7 +529,7 @@ async function initializeApplication() {
     if (initialized) {
         return true;
     }
-
+    
     try {
         // Load bindings - should always succeed since backend is ready
         const bindingsLoaded = await loadAppBindings();
@@ -978,22 +978,22 @@ async function getEnabledTickersCached() {
 // when the settings window broadcasts a change so the table reflects it live.
 async function refreshTickersFromSettings() {
     if (!App || typeof App.GetEnabledTickers !== 'function') return;
-    try {
-        let enabledTickers = await App.GetEnabledTickers();
+            try {
+                let enabledTickers = await App.GetEnabledTickers();
         cachedEnabledTickers = enabledTickers;
         const settings = await App.GetSettings();
         if (settings && settings.TickerOrder && settings.TickerOrder.length > 0) {
-            enabledTickers = sortTickersByOrder(enabledTickers, settings.TickerOrder);
-        }
+                        enabledTickers = sortTickersByOrder(enabledTickers, settings.TickerOrder);
+                    }
         if (enabledTickers && enabledTickers.length > 0) {
-            initializeTickerTable(enabledTickers);
+                    initializeTickerTable(enabledTickers);
             startPeriodicUpdates();
-        } else {
-            const tbody = document.getElementById('ticker-table-body');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ff9800;">No tickers enabled. Please configure tickers in Settings.</td></tr>';
-            }
-        }
+                } else {
+                    const tbody = document.getElementById('ticker-table-body');
+                    if (tbody) {
+                        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ff9800;">No tickers enabled. Please configure tickers in Settings.</td></tr>';
+                    }
+                }
     } catch (e) {
         console.warn('[Main] Failed to refresh tickers after settings change:', e);
     }

@@ -75,6 +75,7 @@ func (a *App) applyRuntimeSettings(settings *config.Settings) {
 		a.scheduler.SetSettings(settings)
 	}
 	a.syncAutoStart(settings)
+	a.syncArchiveTask(settings)
 }
 
 func (a *App) unregisterChartTicker(ticker string) {

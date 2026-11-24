@@ -36,7 +36,8 @@ type App struct {
 	coordinator        *coordinator.DataCollectionCoordinator
 	backfillManager    *backfill.Manager
 	chartTracker       *charts.ChartTracker
-	enabledTickers     []string
+	enabledTickers     []string // live-polled tickers (scheduler + coordinator)
+	collectionTickers  []string // all collection-enabled tickers, incl. archive-only
 	shuttingDown       bool
 	shutdownLock       sync.RWMutex
 	debugPrint         func(string, string)
@@ -57,6 +58,13 @@ type App struct {
 	autoStartLock    sync.Mutex
 	autoStartKnown   bool
 	autoStartEnabled bool
+
+	// Same for the scheduled headless archive task: skip schtasks unless the
+	// enabled flag or the run time actually changed.
+	archiveTaskLock    sync.Mutex
+	archiveTaskKnown   bool
+	archiveTaskEnabled bool
+	archiveTaskTime    string
 
 	// Tracks last logged market-open state so the 1s frontend poll
 	// only produces a log line on state changes
@@ -95,8 +103,11 @@ func NewApp() *App {
 		}
 	}
 
-	// Get enabled tickers from settings
-	enabledTickers := getEnabledTickers(settings)
+	// Get enabled tickers from settings. Live tickers drive the scheduler and
+	// coordinator; the full set (incl. archive-only) is kept so a newly enabled
+	// archive-only ticker can trigger an immediate backfill.
+	enabledTickers := getLiveTickers(settings)
+	collectionTickers := getEnabledTickers(settings)
 
 	// MISSION CRITICAL: Log current time when App is created
 	nowSystem := time.Now()
@@ -125,17 +136,18 @@ func NewApp() *App {
 
 	// Create app instance first (will be fully initialized below)
 	app := &App{
-		settingsManager: settingsManager,
-		dataWriter:      dataWriter,
-		dataLoader:      dataLoader,
-		apiClient:       apiClient,
-		querySystem:     querySystem,
-		scheduler:       adaptiveScheduler,
-		chartTracker:    chartTracker,
-		enabledTickers:  enabledTickers,
-		debugPrint:      debugPrint,
-		chartWindows:    make(map[string]*application.WebviewWindow),
-		profileWindows:  make(map[string]*application.WebviewWindow),
+		settingsManager:   settingsManager,
+		dataWriter:        dataWriter,
+		dataLoader:        dataLoader,
+		apiClient:         apiClient,
+		querySystem:       querySystem,
+		scheduler:         adaptiveScheduler,
+		chartTracker:      chartTracker,
+		enabledTickers:    enabledTickers,
+		collectionTickers: collectionTickers,
+		debugPrint:        debugPrint,
+		chartWindows:      make(map[string]*application.WebviewWindow),
+		profileWindows:    make(map[string]*application.WebviewWindow),
 	}
 
 	// Initialize data collection coordinator (with reference to app)
@@ -194,6 +206,13 @@ func NewApp() *App {
 	// Recovery passes. They read the same settings object the rest of the app
 	// uses, so a tier change or a new ticker applies without a restart.
 	app.backfillManager = backfill.New(apiClient, dataWriter, settingsManager.GetSettings, debugPrint)
+	// The archive, intraday and catch-up passes fill the historical major
+	// levels for the rows they recover. The feed forgets old sessions, so this
+	// is what keeps a day that was only ever recovered (never charted) from
+	// losing them.
+	app.backfillManager.SetMajorLevelStore(func(ctx context.Context, ticker string, date time.Time) (backfill.MajorsResult, error) {
+		return app.syncMajorLevels(ctx, ticker, date)
+	})
 
 	return app
 }
@@ -210,6 +229,16 @@ func getEnabledTickers(settings *config.Settings) []string {
 	}
 
 	// Return empty array if no tickers enabled (don't use fallback - let user configure)
+	return []string{}
+}
+
+// getLiveTickers extracts the tickers that are polled live: collection-enabled
+// and not archive-only. Archive-only tickers are recovered from the EOD archive
+// instead of being polled intraday, so they must not reach the scheduler.
+func getLiveTickers(settings *config.Settings) []string {
+	if settings != nil && len(settings.TickerConfigs) > 0 {
+		return config.GetLiveTickers(settings.TickerConfigs)
+	}
 	return []string{}
 }
 
@@ -312,6 +341,11 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 				a.coordinator.StartDateRolloverMonitor()
 				utils.Logf("Date rollover monitor started")
 			}
+
+			// Keep the historical major gamma levels for live tickers even
+			// when no chart of them is open.
+			a.startMajorLevelsSync()
+			utils.Logf("Major level sync started")
 
 			// Check API key
 			apiKey := settings.APITKey
@@ -657,8 +691,9 @@ func (a *App) CompleteSetup(apiKey string, subscriptionTiers []string, initialTi
 	a.settingsManager.SetSettings(reloadedSettings)
 	a.applyRuntimeSettings(reloadedSettings)
 
-	// Update enabled tickers
-	a.enabledTickers = getEnabledTickers(reloadedSettings)
+	// Update enabled tickers (live poll set and the full collection set)
+	a.enabledTickers = getLiveTickers(reloadedSettings)
+	a.collectionTickers = getEnabledTickers(reloadedSettings)
 	if a.scheduler != nil {
 		a.scheduler.SetEnabledTickers(a.enabledTickers)
 	}
@@ -815,25 +850,36 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 				ticker, config.CollectionEnabled, config.Display, config.Priority, refreshRateStr), "app")
 		}
 
-		// Update enabled tickers - always check if they changed (not just length)
-		newEnabledTickers := getEnabledTickers(reloadedSettings)
-		a.debugPrint(fmt.Sprintf("SaveSettings: getEnabledTickers returned %d tickers: %v", len(newEnabledTickers), newEnabledTickers), "app")
+		// Update enabled tickers - always check if they changed (not just length).
+		// Live tickers drive the scheduler; the full set detects a newly enabled
+		// archive-only ticker so backfill can start immediately.
+		newEnabledTickers := getLiveTickers(reloadedSettings)
+		newCollectionTickers := getEnabledTickers(reloadedSettings)
+		a.debugPrint(fmt.Sprintf("SaveSettings: live tickers %d: %v", len(newEnabledTickers), newEnabledTickers), "app")
 
-		// Check if tickers actually changed (compare sets, not just length)
-		tickersChanged := false
-		if len(newEnabledTickers) != len(a.enabledTickers) {
-			tickersChanged = true
-		} else {
-			// Same length - check if contents are different
-			oldTickersSet := make(map[string]bool)
-			for _, ticker := range a.enabledTickers {
-				oldTickersSet[ticker] = true
+		// Check if tickers actually changed (compare sets, not just length).
+		oldTickersSet := make(map[string]bool, len(a.enabledTickers))
+		for _, ticker := range a.enabledTickers {
+			oldTickersSet[ticker] = true
+		}
+		addedTickers := make([]string, 0)
+		for _, ticker := range newEnabledTickers {
+			if !oldTickersSet[ticker] {
+				addedTickers = append(addedTickers, ticker)
 			}
-			for _, ticker := range newEnabledTickers {
-				if !oldTickersSet[ticker] {
-					tickersChanged = true
-					break
-				}
+		}
+		tickersChanged := len(addedTickers) > 0 || len(newEnabledTickers) != len(a.enabledTickers)
+
+		// Newly enabled for collection (live or archive-only) should kick off a
+		// backfill so a weekend enable recovers the last session right away.
+		addedCollection := make([]string, 0)
+		oldCollectionSet := make(map[string]bool, len(a.collectionTickers))
+		for _, ticker := range a.collectionTickers {
+			oldCollectionSet[ticker] = true
+		}
+		for _, ticker := range newCollectionTickers {
+			if !oldCollectionSet[ticker] {
+				addedCollection = append(addedCollection, ticker)
 			}
 		}
 
@@ -854,6 +900,16 @@ func (a *App) SaveSettings(settings *config.Settings) error {
 			}
 		} else {
 			a.debugPrint(fmt.Sprintf("Enabled tickers unchanged: %v", newEnabledTickers), "app")
+		}
+
+		// A ticker enabled outside market hours has no collected rows and the
+		// live poll is idle, so attempt archive recovery right away instead of
+		// waiting for the next open or the next start. The ledger makes the
+		// pass idempotent and the manager refuses to run two passes at once.
+		a.collectionTickers = newCollectionTickers
+		if len(addedCollection) > 0 && a.backfillManager != nil {
+			a.debugPrint(fmt.Sprintf("Backfill: %d ticker(s) newly enabled, attempting archive recovery", len(addedCollection)), "backfill")
+			go a.backfillAfterEnable()
 		}
 	}
 

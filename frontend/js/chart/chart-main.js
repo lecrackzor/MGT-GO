@@ -348,14 +348,37 @@ function captureWindow() {
             });
             let programmaticRangeChange = false;
             var lastProgrammaticRangeChangeTime = 0;
-            try { chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false }); } catch (e) {}
-            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-                if (programmaticRangeChange) return;
+            let programmaticRangeToken = 0;
+            // True only after the pointer has actually dragged the plot or time axis.
+            // A click, a data poll, and our own follow scroll must not clear auto-follow.
+            let userMovingTime = false;
+            let panOrigin = null;
+            // The chart applies setVisibleLogicalRange on its next animation frame.
+            // Clearing the guard with setTimeout(0) happens first, so that scroll
+            // looks like a user pan and auto-follow turns straight back off
+            // unless the view was already sitting on the follow range.
+            function markProgrammaticRange() {
+                programmaticRangeChange = true;
+                lastProgrammaticRangeChangeTime = Date.now();
+                const token = ++programmaticRangeToken;
+                requestAnimationFrame(function () {
+                    requestAnimationFrame(function () {
+                        if (token !== programmaticRangeToken) return;
+                        programmaticRangeChange = false;
+                    });
+                });
+            }
+            function disengageAutoFollow() {
                 userHasZoomed = true;
                 if (typeof saveZoomState === 'function') savedZoomState = saveZoomState();
                 if (!autoFollowEnabled) return;
                 autoFollowEnabled = false;
                 try { syncAutoFollowButton(); } catch (e) {}
+            }
+            try { chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false }); } catch (e) {}
+            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+                if (programmaticRangeChange || !userMovingTime) return;
+                disengageAutoFollow();
             });
             
             if (typeof ResizeObserver !== 'undefined') {
@@ -378,6 +401,7 @@ function captureWindow() {
                 resizeChart: function (w, h) { resizeChart(w, h); },
                 get programmaticRangeChange() { return programmaticRangeChange; },
                 set programmaticRangeChange(v) { programmaticRangeChange = v; },
+                markProgrammaticRange: function () { markProgrammaticRange(); },
                 get lastProgrammaticRangeChangeTime() { return lastProgrammaticRangeChangeTime; },
                 set lastProgrammaticRangeChangeTime(v) { lastProgrammaticRangeChangeTime = v; },
                 get chartDataCache() { return chartDataCache; },
@@ -451,9 +475,11 @@ function captureWindow() {
                 if (isOverPriceScale) {
                     applyPriceZoom(e.deltaY);
                 } else if (isOverTimeScale) {
+                    disengageAutoFollow();
                     applyTimeZoom(e.deltaY);
                 } else {
                     applyPriceZoom(e.deltaY);
+                    disengageAutoFollow();
                     applyTimeZoom(e.deltaY);
                 }
             }, { passive: false, capture: true });
@@ -464,8 +490,27 @@ function captureWindow() {
                 const onPrice = axisOnLeft
                     ? (e.clientX <= rect.left + PRICE_SCALE_WIDTH)
                     : (e.clientX >= rect.right - PRICE_SCALE_WIDTH);
-                if (onPrice) live.autoPrice = 'user';
+                if (onPrice) {
+                    live.autoPrice = 'user';
+                    panOrigin = null;
+                    return;
+                }
+                panOrigin = { x: e.clientX, y: e.clientY };
+                userMovingTime = false;
             });
+            chartContainer.addEventListener('pointermove', function (e) {
+                if (!panOrigin) return;
+                if (Math.abs(e.clientX - panOrigin.x) < 4 && Math.abs(e.clientY - panOrigin.y) < 4) return;
+                panOrigin = null;
+                userMovingTime = true;
+                disengageAutoFollow();
+            });
+            function endTimePan() {
+                panOrigin = null;
+                userMovingTime = false;
+            }
+            window.addEventListener('pointerup', endTimePan);
+            window.addEventListener('pointercancel', endTimePan);
             
             await logToBackend('info', '[Chart] Lightweight Charts instance created');
         
@@ -1268,6 +1313,7 @@ function captureWindow() {
                     chartDataMinTime = fromT;
                     chartDataMaxTime = toT;
                     chartDataLastLogicalIndex = null;
+                    markProgrammaticRange();
                     try { chart.timeScale().setVisibleRange({ from: fromT, to: toT }); } catch (e) {}
                     await logToBackend('info', '[Chart] Chart updated with empty data');
                     return;
@@ -1398,6 +1444,7 @@ function captureWindow() {
                         chartDataMinTime = dateToLWTime(xAxisMin);
                         chartDataMaxTime = dateToLWTime(xAxisMax);
                         chartDataLastLogicalIndex = null;
+                        markProgrammaticRange();
                         chart.timeScale().setVisibleRange({ from: chartDataMinTime, to: chartDataMaxTime });
                     } catch (e) {}
                     return;
@@ -1964,10 +2011,8 @@ function captureWindow() {
                 if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || !(range.to > range.from)) return;
                 var current = logicalRange();
                 if (current && Math.abs(current.from - range.from) < 0.25 && Math.abs(current.to - range.to) < 0.25) return;
-                programmaticRangeChange = true;
-                lastProgrammaticRangeChangeTime = Date.now();
+                markProgrammaticRange();
                 try { chart.timeScale().setVisibleLogicalRange({ from: range.from, to: range.to }); } catch (e) {}
-                setTimeout(function () { programmaticRangeChange = false; }, 0);
             }
             function followRange() {
                 var lastIdx = chartDataLastLogicalIndex;
@@ -2006,10 +2051,8 @@ function captureWindow() {
             function applyTimeInset() {
                 var lastIdx = chartDataLastLogicalIndex;
                 if (lastIdx == null || typeof lastIdx !== 'number' || lastIdx < 0) {
-                    programmaticRangeChange = true;
-                    lastProgrammaticRangeChangeTime = Date.now();
+                    markProgrammaticRange();
                     try { chart.timeScale().fitContent(); } catch (e) {}
-                    setTimeout(function () { programmaticRangeChange = false; }, 0);
                     return;
                 }
                 var plotWidth = plotWidthPx();

@@ -7,29 +7,107 @@
         html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; color: #d0d0d0; }
         body { display: flex; flex-direction: column; font-family: Consolas, "Courier New", monospace; }
         header { flex: 0 0 auto; padding: 0.5rem 0.75rem; background: #252525; border-bottom: 1px solid #3a3a3a; font-family: "Segoe UI", sans-serif; font-size: 0.85rem; color: #aaa; overflow-wrap: anywhere; }
+        #progress { flex: 0 0 auto; display: none; padding: 0.6rem 0.75rem; background: #20242a; border-bottom: 1px solid #3a3a3a; font-family: "Segoe UI", sans-serif; font-size: 0.8rem; color: #c8c8c8; }
+        #progress .bar { height: 8px; background: #333; border-radius: 4px; overflow: hidden; margin-top: 0.4rem; }
+        #progress .fill { height: 100%; width: 0%; background: #2b9af3; border-radius: 4px; transition: width 0.4s ease; }
+        #progress .meta { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 0.35rem; color: #8a93a0; }
+        #progress .meta b { color: #d8d8d8; font-weight: 600; }
         #log { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0.75rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.4; }
     </style>
 </head>
 <body>
     <header id="path">Loading log…</header>
+    <div id="progress">
+        <div id="progress-label">Recovering…</div>
+        <div class="bar"><div class="fill" id="progress-fill"></div></div>
+        <div class="meta">
+            <span id="progress-count"></span>
+            <span id="progress-eta"></span>
+        </div>
+    </div>
     <pre id="log"></pre>
     <script>
         const pathEl = document.getElementById('path');
         const logEl = document.getElementById('log');
+        const progressEl = document.getElementById('progress');
+        const progressLabel = document.getElementById('progress-label');
+        const progressFill = document.getElementById('progress-fill');
+        const progressCount = document.getElementById('progress-count');
+        const progressEta = document.getElementById('progress-eta');
+
+        // Follow new lines only while the user is at the bottom. Scrolling up
+        // pauses the follow; scrolling back to the bottom resumes it.
+        let follow = true;
+        logEl.addEventListener('scroll', () => {
+            follow = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+        });
+
+        function fmtTime(ms) {
+            if (!isFinite(ms) || ms <= 0) return '—';
+            const s = Math.round(ms / 1000);
+            if (s < 60) return s + 's';
+            const m = Math.floor(s / 60);
+            return m + 'm ' + (s % 60) + 's';
+        }
+
+        function fmtBytes(n) {
+            if (!n) return '0';
+            if (n < 1024) return n + ' B';
+            if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+            return (n / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        async function refreshProgress() {
+            try {
+                const response = await fetch('/api/backfill-status', { cache: 'no-store' });
+                const r = await response.json();
+                if (!r || r.running !== true || !r.total) {
+                    progressEl.style.display = 'none';
+                    return;
+                }
+                const done = r.tickers || 0;
+                const total = r.total;
+                const pct = Math.min(100, Math.round((done / total) * 100));
+                progressEl.style.display = 'block';
+                progressLabel.textContent = 'Recovering ' + r.date + ' — ' + (r.phase === 'intraday' ? 'intraday gap fill' : 'end-of-day archive');
+                progressFill.style.width = pct + '%';
+                progressCount.innerHTML = '<b>' + done + '</b> / <b>' + total + '</b> tickers · <b>' + (r.ladders || 0) + '</b> ladders · <b>' + fmtBytes(r.ladder_bytes) + '</b>';
+
+                let etaText = '';
+                if (done > 0 && r.started_at) {
+                    const started = Date.parse(r.started_at);
+                    const now = Date.now();
+                    if (isFinite(started) && now > started) {
+                        const eta = started + (now - started) * (total / done);
+                        etaText = 'ETA ' + new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    }
+                }
+                progressEta.textContent = etaText;
+            } catch (err) {
+                progressEl.style.display = 'none';
+            }
+        }
+
         async function refresh() {
-            const nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
             try {
                 const response = await fetch('/api/log', { cache: 'no-store' });
                 const data = await response.json();
                 pathEl.textContent = data.path || 'File logging is off. Turn it on in Settings and restart.';
+                const prevTop = logEl.scrollTop;
                 logEl.textContent = data.text || '';
-                if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+                if (follow) {
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else {
+                    logEl.scrollTop = prevTop;
+                }
             } catch (err) {
                 pathEl.textContent = 'Could not read the log';
             }
         }
         refresh();
+        refreshProgress();
         setInterval(refresh, 1000);
+        setInterval(refreshProgress, 1000);
     </script>
 </body>
 </html>

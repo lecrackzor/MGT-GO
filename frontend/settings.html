@@ -84,16 +84,29 @@
                     <label>Missed-data recovery</label>
                     <div class="check"><input type="checkbox" id="eod-backfill-enabled"><span class="txt">Recover missed data at startup and after the close</span></div>
                     <div class="help">Fills gaps the live poll missed from the end-of-day archive, which is available from 17:00 ET.</div>
-                    <div class="row" style="margin-top:.5rem"><label style="margin:0;width:180px">Archive time (ET)</label><input type="text" class="small" id="eod-backfill-time" placeholder="17:15" style="width:80px"></div>
-                    <div class="row" style="margin-top:.25rem"><label style="margin:0;width:180px">Ladder budget (MB)</label><input type="number" class="small" id="eod-max-ladder-mb" min="0" value="0" style="width:80px"></div>
+                    <div class="sub-rows">
+                        <div class="row"><label style="margin:0;width:180px">Archive time (ET)</label><input type="text" class="small" id="eod-backfill-time" placeholder="17:15" style="width:80px"></div>
+                        <div class="row" style="margin-top:.25rem"><label style="margin:0;width:180px" title="Per-strike profile data recovered for one ticker-day. 0 = no cap.">Ladder budget (MB)</label><input type="number" class="small" id="eod-max-ladder-mb" min="0" value="0" style="width:80px" title="Max megabytes of per-strike profile data to recover per ticker, per day. When a ticker's day would exceed this, recovery stops early for that ticker to save disk. 0 = no limit (recover the full day)."></div>
+                        <div class="help">Caps how much per-strike profile data one ticker's after-hours recovery may write. 0 = no limit.</div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>Scheduled headless archive run</label>
+                    <div class="check"><input type="checkbox" id="archive-task-enabled"><span class="txt">Download the day's archive in the background, then exit</span></div>
+                    <div class="help">Starts the app with no window at the run time, recovers every enabled ticker from the archive, then closes itself.</div>
+                    <div class="sub-rows">
+                        <div class="row"><label style="margin:0;width:180px">Run time (ET)</label><input type="text" class="small" id="archive-task-time" placeholder="17:15" style="width:80px"></div>
+                    </div>
                 </div>
                 <div class="field">
                     <label>Intraday gap fill</label>
                     <div class="check"><input type="checkbox" id="intraday-backfill-enabled"><span class="txt">Fill gaps while the market is open</span></div>
                     <div class="help">Recovers missed one-second snapshots from the intraday history route during the session.</div>
-                    <div class="row" style="margin-top:.5rem"><label style="margin:0;width:180px">Sweep interval (min)</label><input type="number" class="small" id="intraday-backfill-interval" min="1" value="30" style="width:80px"></div>
-                    <div class="row" style="margin-top:.25rem"><label style="margin:0;width:180px">Minimum gap (sec)</label><input type="number" class="small" id="intraday-fill-min-gap" min="1" value="45" style="width:80px"></div>
-                    <div class="help" style="margin-top:.25rem">Only gaps this many seconds or longer are recovered. Smaller = finer granularity (more requests).</div>
+                    <div class="sub-rows">
+                        <div class="row"><label style="margin:0;width:180px">Sweep interval (min)</label><input type="number" class="small" id="intraday-backfill-interval" min="1" value="30" style="width:80px"></div>
+                        <div class="row" style="margin-top:.25rem"><label style="margin:0;width:180px">Minimum gap (sec)</label><input type="number" class="small" id="intraday-fill-min-gap" min="1" value="45" style="width:80px"></div>
+                        <div class="help">Only gaps this many seconds or longer are recovered. Smaller = finer granularity (more requests).</div>
+                    </div>
                 </div>
                 <div class="field callout">
                     <label class="warn">Compact archived history</label>
@@ -108,16 +121,41 @@
             <div class="pane" id="pane-tickers" hidden>
                 <h2>Ticker Selection &amp; Polling</h2>
                 <div class="sub">Checkbox enables collection; Refresh 0 = automatic via Priority; drag ☰ to reorder.</div>
+                <details class="hint-box" id="priority-hint">
+                    <summary class="hint-title">What the priorities mean</summary>
+                    <div>Polling is shared across every enabled ticker, so the medium and low intervals widen as you enable more.</div>
+                    <table class="hint-table">
+                        <thead><tr><th>Priority</th><th>Live poll interval</th></tr></thead>
+                        <tbody>
+                            <tr><td>High</td><td>1s. An open chart forces this, and so does setting the priority to High.</td></tr>
+                            <tr><td>Medium</td><td>6s at 5 or fewer tickers, 10s at 20 or fewer, 15s above that. The default.</td></tr>
+                            <tr><td>Low</td><td>16s at 5 or fewer tickers, 22s at 20 or fewer, 30s above that.</td></tr>
+                        </tbody>
+                    </table>
+                    <div>Refresh (ms) overrides the priority interval for that ticker. Rate limits can raise any interval above these values.</div>
+                    <div>Priority only affects live polling. An after-hours backfill always fills the whole session at full resolution.</div>
+                </details>
                 <div class="row" style="margin-bottom:.5rem">
                     <input type="text" id="ticker-search" placeholder="Search tickers..." style="flex:1">
                 </div>
+                <div class="bulk-bar">
+                    <label class="bulk-toggle"><input type="checkbox" id="tickers-all-enabled"><span>All</span></label>
+                    <label class="bulk-toggle"><input type="checkbox" id="tickers-all-archive"><span>Archive only</span></label>
+                    <select id="tickers-bulk-priority" title="Apply a priority to every row shown">
+                        <option value="">Priority…</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
                 <div class="table-wrap">
                     <table class="ticker-table">
-                        <thead><tr><th></th><th>Enabled</th><th>Ticker</th><th>Refresh (ms)</th><th>Priority</th></tr></thead>
+                        <thead><tr><th></th><th>Enabled</th><th>Archive only</th><th>Ticker</th><th>Refresh (ms)</th><th>Priority</th></tr></thead>
                         <tbody id="ticker-selection"><!-- rows inserted here --></tbody>
                     </table>
                 </div>
                 <div class="row" style="margin-top:12px"><button class="ghost" id="reset-polling-defaults">Reset all to Auto (0)</button></div>
+                <div class="sub" style="margin-top:10px">"Archive only" skips live polling: the ticker's data is downloaded once after the close from the end-of-day archive. Priority and refresh are ignored for archive-only tickers.</div>
             </div>
 
             <div class="pane" id="pane-colors" hidden>

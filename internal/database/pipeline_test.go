@@ -87,10 +87,9 @@ func TestFlushKeepsZeroAndDoesNotWipeOtherColumns(t *testing.T) {
 	defer db.Close()
 
 	var spot, zeroGamma, posVol sql.NullFloat64
-	var blob []byte
 	err = db.QueryRow(
-		`SELECT spot, zero_gamma, major_pos_vol, profiles_blob FROM ticker_data WHERE timestamp = ?`, ts,
-	).Scan(&spot, &zeroGamma, &posVol, &blob)
+		`SELECT spot, zero_gamma, major_pos_vol FROM ticker_data WHERE timestamp = ?`, ts,
+	).Scan(&spot, &zeroGamma, &posVol)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +103,13 @@ func TestFlushKeepsZeroAndDoesNotWipeOtherColumns(t *testing.T) {
 		t.Fatalf("major_pos_vol = %+v, want 4", posVol)
 	}
 
-	if len(blob) != 0 {
-		t.Fatalf("chart file still holds a profile blob (%d bytes)", len(blob))
+	// The legacy profiles_blob column is no longer created for new databases.
+	var blobCols int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ticker_data') WHERE name = 'profiles_blob'`).Scan(&blobCols); err != nil {
+		t.Fatal(err)
+	}
+	if blobCols != 0 {
+		t.Fatalf("profiles_blob column still created (%d)", blobCols)
 	}
 	profileDB, err := sql.Open("sqlite", ProfileDBPath(path))
 	if err != nil {
@@ -250,12 +254,12 @@ func TestProfileEndpointsMergeOnSameTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer chartDB.Close()
-	var blob []byte
-	if err := chartDB.QueryRow(`SELECT profiles_blob FROM ticker_data WHERE timestamp = ?`, ts).Scan(&blob); err != nil {
+	var blobCols int
+	if err := chartDB.QueryRow(`SELECT count(*) FROM pragma_table_info('ticker_data') WHERE name = 'profiles_blob'`).Scan(&blobCols); err != nil {
 		t.Fatal(err)
 	}
-	if len(blob) != 0 {
-		t.Fatalf("chart file still holds a profile blob (%d bytes)", len(blob))
+	if blobCols != 0 {
+		t.Fatalf("profiles_blob column still created (%d)", blobCols)
 	}
 
 	var endpoints int
@@ -317,6 +321,10 @@ func TestLoadProfileFallsBackToNamespacedBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer chartDB.Close()
+	// Simulate a database written before the sibling profile file existed.
+	if _, err := chartDB.Exec(`ALTER TABLE ticker_data ADD COLUMN profiles_blob BLOB`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := chartDB.Exec(`UPDATE ticker_data SET profiles_blob = ? WHERE timestamp = ?`, blob, ts); err != nil {
 		t.Fatal(err)
 	}

@@ -302,6 +302,22 @@ export class Settings {
              */
             this["IntradayFillMinGapSeconds"] = 0;
         }
+        if (!("ArchiveTaskEnabled" in $$source)) {
+            /**
+             * scheduled headless archive run that exits when done
+             * @member
+             * @type {boolean}
+             */
+            this["ArchiveTaskEnabled"] = false;
+        }
+        if (!("ArchiveTaskTime" in $$source)) {
+            /**
+             * ET, when the headless archive run starts
+             * @member
+             * @type {string}
+             */
+            this["ArchiveTaskTime"] = "";
+        }
         if (!("EODMaxLadderMB" in $$source)) {
             /**
              * @member
@@ -429,15 +445,15 @@ export class Settings {
         const $$createField14_0 = $$createType0;
         const $$createField30_0 = $$createType1;
         const $$createField31_0 = $$createType2;
-        const $$createField41_0 = $$createType2;
-        const $$createField42_0 = $$createType2;
         const $$createField43_0 = $$createType2;
-        const $$createField44_0 = $$createType1;
-        const $$createField45_0 = $$createType1;
-        const $$createField46_0 = $$createType4;
-        const $$createField47_0 = $$createType0;
-        const $$createField48_0 = $$createType5;
+        const $$createField44_0 = $$createType2;
+        const $$createField45_0 = $$createType2;
+        const $$createField46_0 = $$createType1;
+        const $$createField47_0 = $$createType1;
+        const $$createField48_0 = $$createType4;
         const $$createField49_0 = $$createType0;
+        const $$createField50_0 = $$createType5;
+        const $$createField51_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("APISubscriptionTiers" in $$parsedSource) {
             $$parsedSource["APISubscriptionTiers"] = $$createField4_0($$parsedSource["APISubscriptionTiers"]);
@@ -452,31 +468,31 @@ export class Settings {
             $$parsedSource["ProfileSettings"] = $$createField31_0($$parsedSource["ProfileSettings"]);
         }
         if ("Classic" in $$parsedSource) {
-            $$parsedSource["Classic"] = $$createField41_0($$parsedSource["Classic"]);
+            $$parsedSource["Classic"] = $$createField43_0($$parsedSource["Classic"]);
         }
         if ("State" in $$parsedSource) {
-            $$parsedSource["State"] = $$createField42_0($$parsedSource["State"]);
+            $$parsedSource["State"] = $$createField44_0($$parsedSource["State"]);
         }
         if ("Orderflow" in $$parsedSource) {
-            $$parsedSource["Orderflow"] = $$createField43_0($$parsedSource["Orderflow"]);
+            $$parsedSource["Orderflow"] = $$createField45_0($$parsedSource["Orderflow"]);
         }
         if ("Charts" in $$parsedSource) {
-            $$parsedSource["Charts"] = $$createField44_0($$parsedSource["Charts"]);
+            $$parsedSource["Charts"] = $$createField46_0($$parsedSource["Charts"]);
         }
         if ("Tickers" in $$parsedSource) {
-            $$parsedSource["Tickers"] = $$createField45_0($$parsedSource["Tickers"]);
+            $$parsedSource["Tickers"] = $$createField47_0($$parsedSource["Tickers"]);
         }
         if ("TickerConfigs" in $$parsedSource) {
-            $$parsedSource["TickerConfigs"] = $$createField46_0($$parsedSource["TickerConfigs"]);
+            $$parsedSource["TickerConfigs"] = $$createField48_0($$parsedSource["TickerConfigs"]);
         }
         if ("TickerOrder" in $$parsedSource) {
-            $$parsedSource["TickerOrder"] = $$createField47_0($$parsedSource["TickerOrder"]);
+            $$parsedSource["TickerOrder"] = $$createField49_0($$parsedSource["TickerOrder"]);
         }
         if ("ChartColors" in $$parsedSource) {
-            $$parsedSource["ChartColors"] = $$createField48_0($$parsedSource["ChartColors"]);
+            $$parsedSource["ChartColors"] = $$createField50_0($$parsedSource["ChartColors"]);
         }
         if ("ChartColorsOff" in $$parsedSource) {
-            $$parsedSource["ChartColorsOff"] = $$createField49_0($$parsedSource["ChartColorsOff"]);
+            $$parsedSource["ChartColorsOff"] = $$createField51_0($$parsedSource["ChartColorsOff"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }
@@ -520,6 +536,14 @@ export class TickerConfig {
              * @type {number | null}
              */
             this["RefreshRateMs"] = null;
+        }
+        if (!("ArchiveOnly" in $$source)) {
+            /**
+             * collect via the EOD archive only; never poll live
+             * @member
+             * @type {boolean}
+             */
+            this["ArchiveOnly"] = false;
         }
 
         Object.assign(this, $$source);

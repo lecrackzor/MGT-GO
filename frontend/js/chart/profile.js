@@ -37,8 +37,11 @@ const LAYER_TIERS = {
     state: ['state', 'orderflow'],
     gamma: ['state', 'orderflow'],
     delta: ['state', 'orderflow'],
-    vanna: ['orderflow'],
-    charm: ['orderflow'],
+    // The Gexbot docs put every options-profile greek (delta, gamma, vanna,
+    // charm) behind State or higher. Only the orderflow feed itself needs the
+    // Orderflow package.
+    vanna: ['state', 'orderflow'],
+    charm: ['state', 'orderflow'],
 };
 
 const TIER_LABELS = { classic: 'Classic', state: 'State', orderflow: 'Orderflow' };

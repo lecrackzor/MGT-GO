@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -66,6 +67,11 @@ func (a *App) watchBackfill() {
 	}
 	go func() {
 		a.backfillManager.CatchUp(a.ctx)
+		// After the archive catch-up, top up the historical major levels for
+		// any recent session that still has empty columns. The feed keeps only
+		// a few days, so a backlog has to be taken while it is still served;
+		// the ledger stops the sweep from asking for a settled day again.
+		a.backfillManager.FillMajorsCatchUp(a.ctx)
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -78,6 +84,21 @@ func (a *App) watchBackfill() {
 			}
 		}
 	}()
+}
+
+// backfillAfterEnable attempts archive recovery for tickers that were just
+// enabled. It runs in the background and is safe at any time: the manager
+// refuses to start while another pass is running, and the ledger skips tickers
+// whose session is already recovered.
+func (a *App) backfillAfterEnable() {
+	if a.backfillManager == nil {
+		return
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.backfillManager.CatchUp(ctx)
 }
 
 // BackfillStatus is served to the UI so a recovery pass is visible.
@@ -120,4 +141,29 @@ func (a *App) syncAutoStart(settings *config.Settings) {
 	a.autoStartKnown = true
 	a.autoStartEnabled = enabled
 	a.autoStartLock.Unlock()
+}
+
+// syncArchiveTask keeps the headless archive scheduled task in step with the
+// setting, only touching schtasks when the flag or the run time changed.
+func (a *App) syncArchiveTask(settings *config.Settings) {
+	enabled := settings != nil && settings.ArchiveTaskEnabled
+	timeStr := "17:15"
+	if settings != nil && strings.TrimSpace(settings.ArchiveTaskTime) != "" {
+		timeStr = strings.TrimSpace(settings.ArchiveTaskTime)
+	}
+	a.archiveTaskLock.Lock()
+	if a.archiveTaskKnown && a.archiveTaskEnabled == enabled && a.archiveTaskTime == timeStr {
+		a.archiveTaskLock.Unlock()
+		return
+	}
+	a.archiveTaskLock.Unlock()
+	if err := syncArchiveTask(enabled, timeStr); err != nil {
+		utils.Logf("[system] scheduled archive run: %v", err)
+		return
+	}
+	a.archiveTaskLock.Lock()
+	a.archiveTaskKnown = true
+	a.archiveTaskEnabled = enabled
+	a.archiveTaskTime = timeStr
+	a.archiveTaskLock.Unlock()
 }

@@ -12,10 +12,18 @@ import (
 	"time"
 
 	"market-terminal/internal/api"
+	"market-terminal/internal/config"
 	"market-terminal/internal/database"
 	"market-terminal/internal/scheduler"
 	"market-terminal/internal/utils"
 )
+
+// fetchSemaphore bounds in-flight HTTP requests across every ticker batch to
+// the connection pool size, so concurrent polls reuse pooled idle connections
+// instead of opening a new TLS handshake per request. The per-batch worker
+// cap that used to sit here never bound, because one batch is one ticker's
+// handful of endpoints.
+var fetchSemaphore = make(chan struct{}, config.HTTPPoolMaxSize)
 
 // DataCollectionCoordinator coordinates data collection operations
 type DataCollectionCoordinator struct {
@@ -247,23 +255,21 @@ func (dcc *DataCollectionCoordinator) ProcessTickerBatch(tickers []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Execute queries in parallel
+	// Execute queries in parallel, bounded globally so every ticker batch
+	// shares one pool of connections.
 	results := make(map[api.Query]map[string]interface{})
 	fetchErrors := make(map[api.Query]error)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-
-	maxWorkers := 96 // From config
-	semaphore := make(chan struct{}, maxWorkers)
 
 	for _, query := range validatedQueries {
 		wg.Add(1)
 		go func(q api.Query) {
 			defer wg.Done()
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
+			// Acquire the shared semaphore
+			fetchSemaphore <- struct{}{}
+			defer func() { <-fetchSemaphore }()
 
 			// Skip remaining queries once this wave is cancelled or the backoff is set.
 			if ctx.Err() != nil || rateLimitTracker.IsRateLimited() {
@@ -339,71 +345,10 @@ func (dcc *DataCollectionCoordinator) recordRequestOutcome(
 	tracker.RecordRequest(endpoint, now, headers)
 }
 
-// Chart columns come from the zero-DTE endpoint that actually computes them.
-// classic_one / classic_full fill a column only when classic_zero did not.
-// gamma_one fills only when gamma_zero did not. State and the other greeks
-// repeat these keys (often as 0, or as the 1 DTE level) and must not replace them.
-// spot uses the same classic rank so a later state or greek price cannot replace it.
-//
-// State and Orderflow ranks sit below the classic ones on purpose: when the
-// account has classic data, it always wins, and a State-only or chart-only
-// account still fills the chart instead of writing nothing. Orderflow has no
-// classic or state endpoint at all, so it is last for spot and the major levels.
-var classicScalarRank = map[string]int{
-	"classic_zero": 0,
-	"classic_one":  1,
-	"classic_full": 2,
-	"state_zero":   3,
-	"state_one":    4,
-	"state_full":   5,
-}
-
-var gammaScalarRank = map[string]int{
-	"gamma_zero": 0,
-	"gamma_one":  1,
-	"state_zero": 2,
-	"state_one":  3,
-	"state_full": 4,
-}
-
-func cloneRanks(src map[string]int) map[string]int {
-	out := make(map[string]int, len(src)+1)
-	for endpoint, rank := range src {
-		out[endpoint] = rank
-	}
-	return out
-}
-
-var chartScalarSources = func() map[string]map[string]int {
-	sources := make(map[string]map[string]int, 16)
-	for _, field := range []string{
-		"zero_gamma", "major_pos_vol", "major_neg_vol", "major_pos_oi",
-		"major_neg_oi", "sum_gex_vol", "sum_gex_oi", "delta_risk_reversal",
-		"min_dte", "sec_min_dte",
-	} {
-		sources[field] = cloneRanks(classicScalarRank)
-	}
-	for _, field := range []string{
-		"major_long_gamma", "major_short_gamma", "major_positive", "major_negative",
-	} {
-		sources[field] = cloneRanks(gammaScalarRank)
-	}
-
-	// spot and the major levels are the only chart columns an Orderflow
-	// account receives, and the only ones it must be allowed to write.
-	spot := cloneRanks(classicScalarRank)
-	spot["orderflow"] = 6
-	sources["spot"] = spot
-	for _, field := range []string{"major_long_gamma", "major_short_gamma", "major_positive", "major_negative"} {
-		sources[field]["orderflow"] = 5
-	}
-	return sources
-}()
-
 // keepChartScalar reports whether this endpoint may write the shared chart column.
 // Lower rank wins. A field with no owner list keeps the previous last-write behavior.
 func keepChartScalar(written map[string]map[string]int, ticker, endpoint, field string) bool {
-	owners, owned := chartScalarSources[field]
+	owners, owned := api.ChartScalarSource(field)
 	if !owned {
 		return true
 	}

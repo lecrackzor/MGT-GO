@@ -18,10 +18,10 @@ Independent project. Not affiliated with Gexbot. Not financial advice. Read [DIS
 - A Gexbot API key. Without one the terminal starts, but collection fails.
 - Your Gexbot plan decides what can be collected:
   - `Classic` adds spot, zero gamma, and the major volume/OI levels.
-  - `State` adds the state ladders.
-  - `Orderflow` adds the order-flow ladders.
-  - Gamma, Delta, Vanna, and Charm ladders are first-party greek endpoints; they are hidden in the window when the key cannot serve them.
-  - The end-of-day archive route (`/hist/eod`) is used to recover a missed session. The intraday history route is not used.
+  - `State` adds the state ladders and every options-profile greek (delta, gamma, vanna, charm).
+  - `Orderflow` adds the orderflow feed; it also includes the greeks.
+  - A greek ladder is hidden in the window when the key cannot serve it.
+  - The intraday history route (`POST /hist/{ticker}/{package}/{category}`) fills gaps during the day. The end-of-day archive (`/hist/eod`) recovers a session that was missed entirely. Both are on Classic and higher; the intraday route has its own small quota and an 8-hour range cap.
 
 ## Install
 
@@ -85,7 +85,7 @@ Data collection starts immediately after the wizard for the tickers you keep ena
 <img src="docs/screenshots/settings.png" alt="Settings, Plots and Colors pane" width="620">
 
 - `API` - key, subscription tiers, collection mode.
-- `Storage` - data directory, retention, end-of-day archive recovery, ladder budget, and a pointer to the offline compaction tool.
+- `Storage` - data directory, retention, end-of-day archive recovery, intraday gap fill, ladder budget, and a pointer to the offline compaction tool.
 - `Tickers` - enable, refresh interval, priority, and order per ticker.
 - `Plots & Colors` - one grid of plot names with a color swatch and a Hide toggle per row.
 - `General` - close or start with the session, time display, file logging, console visibility, zoom filter, right edge.
@@ -110,6 +110,24 @@ Tickers 11.19.2026/
 - The last write of a session optimizes the file and truncates its WAL.
 - `cmd/trimprofiles` copies archived folders to the current ladder format, verifies them, and swaps them in. It runs offline, not from the app.
 
+## How collection works
+
+Collection has two halves: live polling while the session runs, and recovery that fills in whatever the poll missed.
+
+**Live polling.** Each enabled ticker polls its endpoints on its own schedule. A ticker with a chart open polls fastest; a ticker with no chart open polls more slowly. `Tickers` in Settings sets the order and can pin an interval per ticker. A ticker marked *archive only* is never polled live — it is collected entirely by the end-of-day recovery, which is the better source for a ticker you are not watching.
+
+**Recovery.** Three passes run on their own, and none of them can overwrite a row that already exists:
+
+| Pass | When | Scope |
+| --- | --- | --- |
+| Catch-up | at startup | the most recent completed session |
+| Intraday gap fill | every 30 minutes while open | live tickers, the elapsed part of today |
+| Archive roundup | after the close | every enabled ticker, the full session |
+
+A recovery pass records each session it settles in a small ledger next to the day folders, so a session is downloaded once and not requested again on the next start or the next night.
+
+**Historical majors.** The major call and put gamma levels come from a separate NinjaTrader feed rather than from the chain snapshots. That feed keeps only a short window, so the levels are written into the day files while they are still served — during the day for live tickers, and by each recovery pass for everything else.
+
 ## Troubleshooting
 
 - `401` / `403` - the key is wrong or your plan does not include the endpoint. Disabled layers in the chart mean the same thing.
@@ -133,11 +151,11 @@ CI runs those on Linux and builds for Windows on every push and pull request, in
 | --- | --- |
 | `main.go` | process entry, HTTP asset handler, single-instance guard |
 | `app*.go` | Wails app, windows, market clock, backfill wiring |
-| `internal/api` | HTTP client, query planning, history routes |
+| `internal/api` | HTTP client, query planning, history routes, and the Gexbot endpoint reference (`README.md`) |
 | `internal/coordinator` | collection and merging |
 | `internal/database` | chart rows, profile ladders, retention, trimming |
 | `internal/scheduler` | per-ticker polling and rate limiting |
-| `internal/backfill` | end-of-day archive recovery |
+| `internal/backfill` | intraday gap fill and end-of-day archive recovery |
 | `frontend/` | window UI (main, chart, profile, settings) |
 | `cmd/trimprofiles` | offline compaction tool |
 

@@ -1030,6 +1030,15 @@ func (dw *DataWriter) ensureSchema(db *sql.DB, path string, fields []string) err
 	return nil
 }
 
+// forgetSchema drops the cached column set for one file so the next
+// ensureSchema checks the file itself. Used when a column was added or removed
+// outside the writer's normal path.
+func (dw *DataWriter) forgetSchema(path string) {
+	dw.schemaMu.Lock()
+	delete(dw.knownColumns, path)
+	dw.schemaMu.Unlock()
+}
+
 func (dw *DataWriter) getDBPath(ticker string, date time.Time) string {
 	dataDir := ""
 	if dw.settings != nil {

@@ -243,3 +243,150 @@ func TestStateStoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The archive visits classic and state files for the same timestamp. The state
+// model reports zero_gamma as 0, so a plain merge would let state erase the
+// classic value. Recovery must keep the classic (lower-rank) value.
+func TestArchiveStateDoesNotOverwriteClassicZeroGamma(t *testing.T) {
+	dir := t.TempDir()
+	et := utils.GetMarketTimezone()
+	date := time.Date(2026, 11, 17, 0, 0, 0, 0, et)
+	open, _ := utils.MarketOpenCloseTimes(date)
+	base := open.Unix()
+
+	archive := buildTwoCategoryArchive(t, date, base,
+		archiveEntry{"classic", "gex_zero", 342.5},
+		archiveEntry{"state", "gex_zero", 0.0},
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/hist/eod/SPX" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="SPX_2026-11-17.zip"`)
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(archive)
+	}))
+	defer server.Close()
+
+	settings := &config.Settings{
+		DataDirectory:        filepath.Join(dir, "Tickers"),
+		APISubscriptionTiers: []string{"classic", "state"},
+		CollectAllEndpoints:  true,
+		EODBackfillEnabled:   true,
+		EODMaxLadderMB:       200,
+		ProfileSampleSeconds: 1,
+		TickerConfigs:        map[string]config.TickerConfig{"SPX": {CollectionEnabled: true}},
+	}
+	client := api.NewClient("test-key", func(string, string) {})
+	client.SetBaseURL(server.URL)
+	defer client.Close()
+	writer := database.NewDataWriter(settings, func(string, string) {})
+	defer writer.Close()
+
+	manager := New(client, writer, func() *config.Settings { return settings }, func(string, string) {})
+	report := manager.RunEOD(context.Background(), date)
+	if report.LastError != "" {
+		t.Fatalf("pass error: %s", report.LastError)
+	}
+
+	chartPath := database.DBPath(settings.DataDirectory, "SPX", date, nil, "backfill")
+	db, err := sql.Open("sqlite", chartPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var zg float64
+	if err := db.QueryRow(`SELECT zero_gamma FROM ticker_data WHERE timestamp = ?`, float64(base)).Scan(&zg); err != nil {
+		t.Fatal(err)
+	}
+	if zg != 342.5 {
+		t.Fatalf("zero_gamma = %v, want 342.5 (state's 0 must not overwrite classic)", zg)
+	}
+}
+
+// buildTwoCategoryArchive builds an archive zip with one gzipped JSON entry per
+// category, so the same timestamp is visited through two endpoints in order.
+type archiveEntry struct {
+	pkg      string
+	category string
+	zg       float64
+}
+
+func buildTwoCategoryArchive(t *testing.T, date time.Time, base int64, entries ...archiveEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, e := range entries {
+		name := fmt.Sprintf("SPX/%s/%s/%s_SPX_%s_%s.json.gz", e.pkg, e.category, date.Format("2006-01-02"), e.pkg, e.category)
+		entry, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gz := gzip.NewWriter(entry)
+		for j := int64(0); j < 10; j++ {
+			sample := map[string]interface{}{
+				"timestamp":  float64(base + j),
+				"spot":       6000.0 + float64(j),
+				"zero_gamma": e.zg,
+			}
+			line, err := json.Marshal(sample)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gz.Write(append(line, '\n')); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// A ticker-day recorded as "archive moved past this session" is permanent: the
+// archive only moves forward. The next pass must short-circuit it instead of
+// downloading the archive again to learn the same thing.
+func TestSkippedRecordShortCircuits(t *testing.T) {
+	dir := t.TempDir()
+	et := utils.GetMarketTimezone()
+	date := time.Date(2026, 11, 19, 0, 0, 0, 0, et)
+
+	settings := &config.Settings{
+		DataDirectory:        filepath.Join(dir, "Tickers"),
+		APISubscriptionTiers: []string{"classic"},
+		CollectAllEndpoints:  true,
+		EODBackfillEnabled:   true,
+		EODMaxLadderMB:       200,
+		ProfileSampleSeconds: 1,
+		TickerConfigs:        map[string]config.TickerConfig{"SPX": {CollectionEnabled: true}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("archive requested for a permanently skipped ticker-day")
+	}))
+	defer server.Close()
+	client := api.NewClient("test-key", func(string, string) {})
+	client.SetBaseURL(server.URL)
+	defer client.Close()
+	writer := database.NewDataWriter(settings, func(string, string) {})
+	defer writer.Close()
+
+	manager := New(client, writer, func() *config.Settings { return settings }, func(string, string) {})
+	store := manager.state(settings)
+	store.set("2026-11-19", "SPX", record{
+		Source:      "eod",
+		ArchiveDate: "2026-11-20",
+		Skipped:     true,
+		Reason:      "archive moved past this session",
+		At:          time.Now(),
+	})
+
+	report := manager.RunEOD(context.Background(), date)
+	if report.Requests != 0 {
+		t.Fatalf("requests = %d, want 0", report.Requests)
+	}
+}

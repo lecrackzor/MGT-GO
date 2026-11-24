@@ -56,12 +56,10 @@ export function installZoom(live) {
     function restoreZoomState(zoomState) {
         const chart = live.chart;
         if (!chart || !zoomState || zoomState.from === undefined || zoomState.to === undefined) return;
-        live.programmaticRangeChange = true;
-        live.lastProgrammaticRangeChangeTime = Date.now();
+        if (typeof live.markProgrammaticRange === 'function') live.markProgrammaticRange();
         try {
             chart.timeScale().setVisibleRange({ from: zoomState.from, to: zoomState.to });
         } catch (e) { console.warn('[Chart] restoreZoomState:', e); }
-        setTimeout(function () { live.programmaticRangeChange = false; }, 0);
     }
 
     function setVisiblePriceRange(lo, hi) {

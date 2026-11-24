@@ -57,6 +57,8 @@ type Settings struct {
 	IntradayBackfillIntervalMinutes    int                     `yaml:"intraday_backfill_interval_minutes"`      // how often to sweep gaps during the session
 	IntradayFillMaxRequestsPerCategory int                     `yaml:"intraday_fill_max_requests_per_category"` // cap per category per sweep
 	IntradayFillMinGapSeconds          int                     `yaml:"intraday_fill_min_gap_seconds"`
+	ArchiveTaskEnabled                 bool                    `yaml:"archive_task_enabled"` // scheduled headless archive run that exits when done
+	ArchiveTaskTime                    string                  `yaml:"archive_task_time"`    // ET, when the headless archive run starts
 	EODMaxLadderMB                     int                     `yaml:"eod_max_ladder_mb"`
 	DataRetentionDays                  int                     `yaml:"data_retention_days"` // 0 keeps every day folder
 	Classic                            map[string]interface{}  `yaml:"classic"`
@@ -563,6 +565,8 @@ func getDefaultSettings() *Settings {
 		IntradayBackfillIntervalMinutes:    30,
 		IntradayFillMaxRequestsPerCategory: 8,
 		IntradayFillMinGapSeconds:          45,
+		ArchiveTaskEnabled:                 false,
+		ArchiveTaskTime:                    "17:15",
 		EODMaxLadderMB:                     200,
 		DataRetentionDays:                  0,
 		Classic: map[string]interface{}{

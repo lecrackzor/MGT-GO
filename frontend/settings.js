@@ -44,6 +44,44 @@ function priorityValue(raw) {
     return (v === 'high' || v === 'low') ? v : 'medium';
 }
 
+// Rows currently shown (search filtering sets display:none). Bulk actions and
+// the header checkboxes only touch these, so a search narrows the change.
+function visibleTickerRows() {
+    return Array.prototype.filter.call(
+        $('ticker-selection').querySelectorAll('tr'),
+        (tr) => tr.style.display !== 'none' && tr.dataset.ticker,
+    );
+}
+
+// Keep the "All" and "Archive only" header checkboxes in step with the visible
+// rows: checked when all agree, indeterminate when only some do.
+function syncBulkControls() {
+    const rows = visibleTickerRows();
+    const all = $('tickers-all-enabled');
+    const arc = $('tickers-all-archive');
+    if (rows.length === 0) {
+        all.checked = false; all.indeterminate = false;
+        arc.checked = false; arc.indeterminate = false;
+        return;
+    }
+    const enabledCount = rows.filter((tr) => tr.querySelector('input.enabled-check').checked).length;
+    all.checked = enabledCount === rows.length;
+    all.indeterminate = enabledCount > 0 && enabledCount < rows.length;
+    const archiveCount = rows.filter((tr) => tr.querySelector('input.archive-check').checked).length;
+    arc.checked = archiveCount === rows.length;
+    arc.indeterminate = archiveCount > 0 && archiveCount < rows.length;
+}
+
+// Priority and refresh only affect live polling, so they are inert on an
+// archive-only row. Grey them out so the row reads as "download after close".
+function syncRowDisabled(tr) {
+    const archive = tr.querySelector('input.archive-check').checked;
+    const refreshInput = tr.querySelector('input[type=number]');
+    const sel = tr.querySelector('select');
+    if (refreshInput) { refreshInput.disabled = archive; refreshInput.style.opacity = archive ? '0.45' : ''; }
+    if (sel) { sel.disabled = archive; sel.style.opacity = archive ? '0.45' : ''; }
+}
+
 // ---------- render ----------
 
 function renderTiers(settings) {
@@ -78,7 +116,7 @@ function renderTickers(settings) {
     if (ALL_TICKERS.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 5;
+        td.colSpan = 6;
         td.style.cssText = 'text-align: center; color: #ff9800; padding: 1rem;';
         td.textContent = 'Could not load the ticker list. Reopen Settings once the backend is ready.';
         tr.appendChild(td);
@@ -89,6 +127,7 @@ function renderTickers(settings) {
     ALL_TICKERS.forEach((ticker) => {
         const cfg = configs[ticker] || {};
         const enabled = cfg.CollectionEnabled === true;
+        const archiveOnly = cfg.ArchiveOnly === true;
         const refresh = (cfg.RefreshRateMs !== undefined && cfg.RefreshRateMs !== null) ? cfg.RefreshRateMs : 0;
         const priority = cfg.Priority ? priorityValue(cfg.Priority) : 'medium';
 
@@ -103,9 +142,19 @@ function renderTickers(settings) {
         const tdEnabled = document.createElement('td');
         const chk = document.createElement('input');
         chk.type = 'checkbox';
+        chk.className = 'enabled-check';
         chk.checked = enabled;
-        chk.addEventListener('change', markDirty);
+        chk.addEventListener('change', () => { markDirty(); syncBulkControls(); });
         tdEnabled.appendChild(chk);
+
+        const tdArchive = document.createElement('td');
+        const archiveChk = document.createElement('input');
+        archiveChk.type = 'checkbox';
+        archiveChk.className = 'archive-check';
+        archiveChk.checked = archiveOnly;
+        archiveChk.title = 'Skip live polling; download from the end-of-day archive instead.';
+        archiveChk.addEventListener('change', () => { markDirty(); syncBulkControls(); syncRowDisabled(tr); });
+        tdArchive.appendChild(archiveChk);
 
         const tdName = document.createElement('td');
         tdName.textContent = ticker;
@@ -131,9 +180,12 @@ function renderTickers(settings) {
         sel.addEventListener('change', markDirty);
         tdPriority.appendChild(sel);
 
-        tr.append(tdHandle, tdEnabled, tdName, tdRefresh, tdPriority);
+        tr.append(tdHandle, tdEnabled, tdArchive, tdName, tdRefresh, tdPriority);
         tbody.appendChild(tr);
+        syncRowDisabled(tr);
     });
+
+    syncBulkControls();
 
     // drag reorder
     let dragRow = null;
@@ -231,6 +283,8 @@ function renderStorage(settings) {
     $('intraday-backfill-enabled').checked = settings.IntradayBackfillEnabled === true;
     $('intraday-backfill-interval').value = settings.IntradayBackfillIntervalMinutes || 30;
     $('intraday-fill-min-gap').value = settings.IntradayFillMinGapSeconds || 45;
+    $('archive-task-enabled').checked = settings.ArchiveTaskEnabled === true;
+    $('archive-task-time').value = settings.ArchiveTaskTime || '17:15';
 }
 
 function renderApi(settings) {
@@ -287,6 +341,8 @@ function collect(settings) {
     settings.IntradayBackfillIntervalMinutes = (!isNaN(intervalMin) && intervalMin >= 1) ? intervalMin : 30;
     const minGap = parseInt($('intraday-fill-min-gap').value, 10);
     settings.IntradayFillMinGapSeconds = (!isNaN(minGap) && minGap >= 1) ? minGap : 45;
+    settings.ArchiveTaskEnabled = $('archive-task-enabled').checked;
+    settings.ArchiveTaskTime = ($('archive-task-time').value || '').trim() || '17:15';
 
     // tickers
     if (!settings.TickerConfigs) settings.TickerConfigs = {};
@@ -294,12 +350,14 @@ function collect(settings) {
     $('ticker-selection').querySelectorAll('tr').forEach((tr) => {
         const ticker = tr.dataset.ticker;
         order.push(ticker);
-        const enabled = tr.querySelector('input[type=checkbox]').checked;
+        const enabled = tr.querySelector('input.enabled-check').checked;
+        const archiveOnly = tr.querySelector('input.archive-check').checked;
         const refresh = parseInt(tr.querySelector('input[type=number]').value, 10) || 0;
         const priority = tr.querySelector('select').value;
         const cfg = settings.TickerConfigs[ticker] || {};
         cfg.Display = enabled;
         cfg.CollectionEnabled = enabled;
+        cfg.ArchiveOnly = archiveOnly;
         cfg.Priority = priority;
         cfg.RefreshRateMs = refresh;
         settings.TickerConfigs[ticker] = cfg;
@@ -500,9 +558,10 @@ function wireFooter() {
         setSavedFlash();
     });
 
-    // dirty tracking on any input change (excluding the search box)
+    // dirty tracking on any input change (excluding the search box and the bulk
+    // priority dropdown, which only takes effect when Apply is pressed)
     document.addEventListener('change', (e) => {
-        if (e.target && e.target.id === 'ticker-search') return;
+        if (e.target && (e.target.id === 'ticker-search' || e.target.id === 'tickers-bulk-priority')) return;
         if (e.target && e.target.closest && e.target.closest('.pane, .footer')) markDirty();
     });
     document.addEventListener('input', (e) => {
@@ -517,6 +576,7 @@ function wireFooter() {
         $('ticker-selection').querySelectorAll('tr').forEach((tr) => {
             tr.style.display = tr.dataset.ticker.toLowerCase().includes(term) ? '' : 'none';
         });
+        syncBulkControls();
     });
 
     $('reset-polling-defaults').addEventListener('click', () => {
@@ -524,6 +584,34 @@ function wireFooter() {
             tr.querySelector('input[type=number]').value = 0;
             tr.querySelector('select').value = 'medium';
         });
+        markDirty();
+    });
+
+    // Header "All" checkbox: tri-state. Clicking checks every shown row when
+    // unchecked/mixed, and unchecks every shown row when fully checked.
+    $('tickers-all-enabled').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        visibleTickerRows().forEach((tr) => { tr.querySelector('input.enabled-check').checked = checked; });
+        markDirty();
+        syncBulkControls();
+    });
+
+    $('tickers-all-archive').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        visibleTickerRows().forEach((tr) => {
+            tr.querySelector('input.archive-check').checked = checked;
+            syncRowDisabled(tr);
+        });
+        markDirty();
+        syncBulkControls();
+    });
+
+    // Priority dropdown applies to every shown row the moment it is picked.
+    $('tickers-bulk-priority').addEventListener('change', (e) => {
+        const value = e.target.value;
+        if (!value) return;
+        visibleTickerRows().forEach((tr) => { tr.querySelector('select').value = value; });
+        e.target.value = ''; // reset so it reads as an action, not a state
         markDirty();
     });
 

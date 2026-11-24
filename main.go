@@ -28,7 +28,20 @@ func scheduledStartShouldExit(args []string) bool {
 	return false
 }
 
+func archiveRunRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "--archive-run" {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
+	if archiveRunRequested(os.Args[1:]) {
+		runArchiveAndExit()
+		return
+	}
 	if scheduledStartShouldExit(os.Args[1:]) {
 		return
 	}

@@ -73,6 +73,16 @@ func PreOpenLaunchClock(now time.Time) (hour, minute int) {
 	return launch.Hour(), launch.Minute()
 }
 
+// ArchiveTaskClock converts an "HH:MM" ET clock time to the equivalent local
+// clock time, so a scheduled task configured in ET fires at the right local
+// moment on a machine outside Eastern time.
+func ArchiveTaskClock(now time.Time, hourET, minuteET int) (int, int) {
+	et := now.In(MARKET_TIMEZONE)
+	t := time.Date(et.Year(), et.Month(), et.Day(), hourET, minuteET, 0, 0, MARKET_TIMEZONE)
+	local := t.In(now.Location())
+	return local.Hour(), local.Minute()
+}
+
 // IsMarketOpen reports whether the US stock market is open right now.
 func IsMarketOpen() bool {
 	return IsMarketOpenAt(NowMarketTime())

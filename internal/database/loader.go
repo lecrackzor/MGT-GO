@@ -124,6 +124,11 @@ func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int, 
 		"major_negative",    // Major negative strike
 		"major_pos_oi",      // Major positive OI
 		"major_neg_oi",      // Major negative OI
+		// Filled from the Ninja historical majors feed, not from a chain
+		// snapshot. Stored so a past session still draws them after the feed
+		// has pruned the day.
+		"major_call_gamma",
+		"major_put_gamma",
 	}
 
 	// Check which columns actually exist in the table.
@@ -245,6 +250,69 @@ func (dl *DataLoader) LoadChartData(ticker string, date time.Time, maxRows int, 
 
 	dl.logf("loader", "LoadChartData: [END] Returning data for %s with %d timestamps", ticker, len(result["timestamp"]))
 	return result, nil
+}
+
+// LoadBarsMissingMajorLevels returns the timestamps whose major call or put
+// gamma column is still empty, oldest first. The fill pass writes only these
+// bars, so re-running it after an intraday recovery picks up the rows that
+// recovery created and leaves every bar it already filled alone.
+func (dl *DataLoader) LoadBarsMissingMajorLevels(ticker string, date time.Time) (ChartSeries, error) {
+	empty := ChartSeries{}
+	dbPath := dl.getDBPath(ticker, date)
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return empty, nil
+		}
+		return nil, fmt.Errorf("failed to check file existence: %w", err)
+	}
+	dl.migrateFile(dbPath)
+	db, err := dl.pool.GetConnection(dbPath, true) // Read-only
+	if err != nil {
+		dl.pool.Discard(dbPath)
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	columns, err := dl.tableColumnsCached(db, dbPath, []string{"major_call_gamma", "major_put_gamma"})
+	if err != nil {
+		dl.pool.Discard(dbPath)
+		return nil, fmt.Errorf("failed to read columns: %w", err)
+	}
+
+	// A day recovered from the archive is written without these two columns:
+	// the recovery path only creates columns the archive actually carries.
+	// Absent means every row is missing a level, so the fill adds the columns
+	// and populates them.
+	clause := "1=1"
+	switch {
+	case !columns["major_call_gamma"] && !columns["major_put_gamma"]:
+		clause = "1=1"
+	case columns["major_call_gamma"] && columns["major_put_gamma"]:
+		clause = "(major_call_gamma IS NULL OR major_call_gamma = 0 OR major_put_gamma IS NULL OR major_put_gamma = 0)"
+	case columns["major_call_gamma"]:
+		clause = "(major_call_gamma IS NULL OR major_call_gamma = 0)"
+	default:
+		clause = "(major_put_gamma IS NULL OR major_put_gamma = 0)"
+	}
+	rows, err := db.Query("SELECT timestamp FROM ticker_data WHERE " + clause + " ORDER BY timestamp ASC")
+	if err != nil {
+		dl.pool.Discard(dbPath)
+		return nil, fmt.Errorf("failed to query empty major levels: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(ChartSeries, 0, 256)
+	for rows.Next() {
+		var ts sql.NullFloat64
+		if err := rows.Scan(&ts); err != nil {
+			return nil, fmt.Errorf("failed to scan timestamp: %w", err)
+		}
+		if ts.Valid {
+			out = append(out, ts.Float64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read empty major level timestamps: %w", err)
+	}
+	return out, nil
 }
 
 // LoadTickerData loads only the columns needed for main window ticker table display

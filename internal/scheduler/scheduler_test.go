@@ -19,21 +19,51 @@ func TestShouldPollSkipsClosedMarket(t *testing.T) {
 	}
 }
 
-func TestGetMinimumIntervalScalesByTickerCount(t *testing.T) {
+func TestEndpointPoolMapsSnapshotsToOnePool(t *testing.T) {
+	for _, ep := range []string{
+		"classic_full", "classic_zero", "classic_one",
+		"state_full", "state_zero", "state_one",
+		"delta_zero", "gamma_zero", "delta_one", "gamma_one",
+		"vanna_zero", "charm_zero", "vanna_one", "charm_one",
+		"orderflow",
+	} {
+		if got := endpointPool(ep); got != "api_default" {
+			t.Fatalf("endpointPool(%q) = %q, want api_default", ep, got)
+		}
+	}
+}
+
+func TestGetMinimumIntervalSharesOnePool(t *testing.T) {
 	rlt := NewRateLimitTracker()
 	now := float64(time.Now().Unix())
-	// Each endpoint has its own budget of 60 per minute.
+	// One pool limit learned through one endpoint's headers.
 	rlt.RecordRequest("classic_zero", now, map[string]string{"X-RateLimit-Limit": "60"})
-	rlt.RecordRequest("classic_one", now, map[string]string{"X-RateLimit-Limit": "60"})
 
+	// Two endpoints in the same pool, two tickers: each sweep spends four
+	// slots of one 60/min budget, so the gap is 4s, not the 2s the old
+	// per-endpoint model produced.
 	two := rlt.GetMinimumInterval(2, []string{"classic_zero", "classic_one"})
-	if two != 2 {
-		t.Fatalf("two tickers = %v, want 2", two)
+	if two != 4 {
+		t.Fatalf("two tickers on a shared pool = %v, want 4", two)
 	}
-	// More endpoints per poll do not spend the same pool.
-	wide := rlt.GetMinimumInterval(2, []string{"classic_zero", "classic_one", "classic_full"})
-	if wide != 2 {
-		t.Fatalf("three endpoints = %v, want 2", wide)
+}
+
+func TestGetMinimumIntervalCountsEverySnapshotEndpoint(t *testing.T) {
+	rlt := NewRateLimitTracker()
+	now := float64(time.Now().Unix())
+	rlt.RecordRequest("classic_zero", now, map[string]string{"X-RateLimit-Limit": "60"})
+
+	endpoints := []string{
+		"classic_full", "classic_zero", "classic_one",
+		"state_full", "state_zero", "state_one",
+		"delta_zero", "gamma_zero", "delta_one", "gamma_one",
+		"vanna_zero", "charm_zero", "vanna_one", "charm_one",
+	}
+	got := rlt.GetMinimumInterval(1, endpoints)
+	// Fourteen endpoints share one 60/min pool: one ticker needs fourteen
+	// slots per sweep, so the gap is 14s, not 1s.
+	if got != 14 {
+		t.Fatalf("interval = %v, want 14 (14 endpoints, one shared pool)", got)
 	}
 }
 
@@ -47,19 +77,6 @@ func TestGetMinimumIntervalFallsBackToSharedPool(t *testing.T) {
 	}
 }
 
-func TestTightestBucketWins(t *testing.T) {
-	rlt := NewRateLimitTracker()
-	now := float64(time.Now().Unix())
-	rlt.RecordRequest("classic_zero", now, map[string]string{"X-RateLimit-Limit": "60"})
-	rlt.RecordRequest("orderflow", now, map[string]string{"X-RateLimit-Limit": "10"})
-	if got := rlt.GetMinimumInterval(2, []string{"classic_zero", "orderflow"}); got != 12 {
-		t.Fatalf("interval = %v, want 12", got)
-	}
-	if limit, _, _ := rlt.BucketSnapshot("orderflow"); limit != 10 {
-		t.Fatalf("orderflow limit = %d", limit)
-	}
-}
-
 func TestCalculateIntervalScalesOpenChartByTickerCount(t *testing.T) {
 	settings := &config.Settings{
 		CollectAllEndpoints:  true,
@@ -70,18 +87,12 @@ func TestCalculateIntervalScalesOpenChartByTickerCount(t *testing.T) {
 	uas.rateLimitTracker.RecordRequest("classic_zero", float64(time.Now().Unix()), map[string]string{
 		"X-RateLimit-Limit": "60",
 	})
-	uas.rateLimitTracker.RecordRequest("classic_one", float64(time.Now().Unix()), map[string]string{
-		"X-RateLimit-Limit": "60",
-	})
-	uas.rateLimitTracker.RecordRequest("classic_full", float64(time.Now().Unix()), map[string]string{
-		"X-RateLimit-Limit": "60",
-	})
 
-	// Open chart base is 1s. Two tickers on a 60-per-minute endpoint budget
-	// need a 2s gap; the three endpoints have separate pools.
+	// Open chart base is 1s. Two tickers on a 60-per-minute pool with three
+	// classic endpoints per sweep need a 6s gap (3 endpoints * 2 tickers).
 	interval := uas.CalculateInterval("SPX", []interface{}{"SPX"})
-	if interval != 2 {
-		t.Fatalf("interval = %v, want 2", interval)
+	if interval != 6 {
+		t.Fatalf("interval = %v, want 6", interval)
 	}
 }
 

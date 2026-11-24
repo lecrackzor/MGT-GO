@@ -24,6 +24,7 @@ type Report struct {
 	Date        string    `json:"date"`
 	Running     bool      `json:"running"`
 	Tickers     int       `json:"tickers"`
+	Total       int       `json:"total,omitempty"`
 	Requests    int       `json:"requests"`
 	Scalars     int       `json:"scalars"`
 	Ladders     int       `json:"ladders"`
@@ -32,6 +33,8 @@ type Report struct {
 	LastError   string    `json:"last_error,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	FinishedAt  time.Time `json:"finished_at"`
+	// Majors counts bars that gained a historical major level during the pass.
+	Majors int `json:"majors"`
 }
 
 // Manager runs both recovery passes. It never assumes a Quant key: every
@@ -56,7 +59,36 @@ type Manager struct {
 	// or 403: the account cannot use it, so the sweep stops for the session
 	// instead of logging an error every interval.
 	intradayDenied bool
+
+	// storeMajors, when set, writes the session's historical major gamma
+	// levels for one ticker. The archive pass runs it for every enabled
+	// ticker, including archive-only ones that are never polled live and may
+	// never have a chart opened.
+	storeMajors func(ctx context.Context, ticker string, date time.Time) (MajorsResult, error)
+
+	// majorsDryRun suppresses ledger writes during a sweep, so a dry run can
+	// walk the same code path without settling days it did not write.
+	majorsDryRun bool
 }
+
+// MajorsResult is the outcome of one historical-majors fill for a ticker-day.
+// The caller uses it to decide whether the day is settled: the feed only
+// shrinks, so a day with no samples left will never gain a level.
+type MajorsResult struct {
+	Filled  int // timestamps that gained a level
+	Pending int // timestamps that still have none afterwards
+	Samples int // samples the feed returned for the session
+}
+
+// majorsLookbackDays bounds the catch-up sweep. The feed keeps roughly a four
+// day rolling window; asking for more only spends requests on empty answers.
+const majorsLookbackDays = 4
+
+// MajorsLookbackDays exposes the sweep's default window.
+func MajorsLookbackDays() int { return majorsLookbackDays }
+
+// majorsSweepInterval keeps the catch-up sweep from running on every startup.
+const majorsSweepInterval = 6 * time.Hour
 
 // New builds a manager. A nil client or writer disables every pass, so the app
 // can run without recovery while the rest of the terminal keeps working.
@@ -78,6 +110,42 @@ func (m *Manager) settings() *config.Settings {
 	return m.settingsFn()
 }
 
+// SetMajorLevelStore installs the callback the recovery passes use to fill the
+// historical major gamma levels for the rows they recover. Without it the
+// passes still recover chart rows; only the level fill is skipped.
+func (m *Manager) SetMajorLevelStore(fn func(ctx context.Context, ticker string, date time.Time) (MajorsResult, error)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.storeMajors = fn
+	m.mu.Unlock()
+}
+
+// majorLevelStore returns the installed callback under the lock.
+func (m *Manager) majorLevelStore() func(ctx context.Context, ticker string, date time.Time) (MajorsResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.storeMajors
+}
+
+// SetMajorsDryRun makes a sweep report what it would do without recording the
+// outcome. The ledger stays untouched, so a dry run cannot settle a day.
+func (m *Manager) SetMajorsDryRun(on bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.majorsDryRun = on
+	m.mu.Unlock()
+}
+
+func (m *Manager) majorsIsDryRun() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.majorsDryRun
+}
+
 func (m *Manager) log(category, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	if m.logf != nil {
@@ -97,6 +165,27 @@ func (m *Manager) Status() Report {
 	report := m.report
 	report.Running = m.running
 	return report
+}
+
+// publishProgress snapshots a running pass into m.report so Status() and the
+// log window's progress bar see live counters, not the zeroed report begin()
+// installed. It copies only the scalar fields the UI reads; the Skipped list is
+// left to finish().
+func (m *Manager) publishProgress(phase, date string, started time.Time, done, total, requests, scalars, ladders int, ladderBytes int64) {
+	m.mu.Lock()
+	m.report = Report{
+		Phase:       phase,
+		Date:        date,
+		Running:     true,
+		Tickers:     done,
+		Total:       total,
+		Requests:    requests,
+		Scalars:     scalars,
+		Ladders:     ladders,
+		LadderBytes: ladderBytes,
+		StartedAt:   started,
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) begin(phase, date string) bool {
@@ -133,6 +222,15 @@ func (m *Manager) tickers(settings *config.Settings) []string {
 	return tickers
 }
 
+// liveTickers returns only the tickers polled live, excluding archive-only
+// tickers. The intraday gap fill uses the quota-limited history route, so an
+// archive-only ticker must not spend that quota: the EOD archive covers it.
+func (m *Manager) liveTickers(settings *config.Settings) []string {
+	tickers := config.GetLiveTickers(settings.TickerConfigs)
+	sort.Strings(tickers)
+	return tickers
+}
+
 // endpoints is the exact endpoint set the account can call, from the same tier
 // mapping the live collector uses.
 func (m *Manager) endpoints(settings *config.Settings) []string {
@@ -151,7 +249,8 @@ func intOr(value, fallback int) int {
 }
 
 // CatchUp recovers the most recent completed session that is not in the ledger
-// yet. It is safe at any time: a successful ticker-day is skipped.
+// yet. The archive serves exactly one report — the latest session whose 17:00
+// ET export exists — so exactly one date is attempted, never two.
 func (m *Manager) CatchUp(ctx context.Context) {
 	settings := m.settings()
 	if !m.enabled(settings) {
@@ -161,11 +260,16 @@ func (m *Manager) CatchUp(ctx context.Context) {
 	now := time.Now().In(location)
 	marketDate := utils.GetMarketDate()
 
-	// The archive for today exists only from 17:00 ET.
+	// The archive for the market date exists only from 17:00 ET. Once it is
+	// out, it is the latest report, and any older session has already rolled
+	// off — attempting the day before would download the same archive once per
+	// ticker just to discover it has moved past that session.
 	archiveOpen := time.Date(marketDate.Year(), marketDate.Month(), marketDate.Day(), 17, 0, 0, 0, location)
 	if !now.Before(archiveOpen) {
 		m.RunEOD(ctx, marketDate)
+		return
 	}
+	// Before the close, the latest report is still the previous trading day.
 	previous := utils.GetLastTradingDay(marketDate.AddDate(0, 0, -1))
 	if !previous.Equal(marketDate) {
 		m.RunEOD(ctx, previous)
@@ -227,8 +331,12 @@ func (m *Manager) fillToday(ctx context.Context, end float64) Report {
 		return m.Status()
 	}
 	report := Report{Phase: "intraday", Date: dateStr, StartedAt: time.Now()}
+	tickers := m.liveTickers(settings)
+	report.Total = len(tickers)
+	m.log("backfill", "intraday gap fill %s starting: %d ticker(s)", dateStr, len(tickers))
+	m.publishProgress("intraday", dateStr, report.StartedAt, 0, len(tickers), 0, 0, 0, 0)
 
-	for _, ticker := range m.tickers(settings) {
+	for _, ticker := range tickers {
 		if ctx.Err() != nil {
 			break
 		}
@@ -251,9 +359,10 @@ func (m *Manager) fillToday(ctx context.Context, end float64) Report {
 				break
 			}
 		}
+		m.publishProgress("intraday", dateStr, report.StartedAt, report.Tickers, len(tickers), report.Requests, report.Scalars, report.Ladders, report.LadderBytes)
 	}
-	m.log("backfill", "intraday gap fill %s: %d tickers, %d requests, %d rows, %d ladders",
-		dateStr, report.Tickers, report.Requests, report.Scalars, report.Ladders)
+	m.log("backfill", "intraday gap fill %s: %d tickers, %d requests, %d rows, %d ladders, %d major levels",
+		dateStr, report.Tickers, report.Requests, report.Scalars, report.Ladders, report.Majors)
 	return m.finish(report)
 }
 
@@ -318,6 +427,9 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 		return err
 	}
 	if len(gaps) == 0 {
+		// No missing bars to recover, but a bar can exist without its major
+		// level. Top those up anyway; the fill only touches empty columns.
+		report.Majors += m.fillTickerMajors(ctx, ticker, date, nil)
 		return nil
 	}
 	gaps = splitGaps(gaps, 8*3600)
@@ -326,6 +438,7 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 	budget := settings.IntradayFillMaxRequestsPerCategory
 
 	scalars := make(map[float64]map[string]interface{})
+	scalarRanks := make(map[float64]map[string]int)
 	fills := make([]database.LadderFill, 0)
 	lastFill := make(map[string]float64)
 
@@ -356,7 +469,7 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 					continue
 				}
 				rowScalars, rowProfiles := database.SplitBackfillSample(sample.Payload)
-				mergeScalars(scalars, sample.Timestamp, rowScalars)
+				mergeScalars(scalars, scalarRanks, sample.Timestamp, category.Endpoint, rowScalars)
 				if !config.KeepProfileEndpoint(settings, category.Endpoint) {
 					continue
 				}
@@ -380,7 +493,125 @@ func (m *Manager) fillTickerIntraday(ctx context.Context, settings *config.Setti
 	if err := m.writeRecovered(ticker, date, settings, scalars, fills, report); err != nil {
 		return err
 	}
+	report.Majors += m.fillTickerMajors(ctx, ticker, date, nil)
 	return nil
+}
+
+// fillTickerMajors runs the historical majors fill for one ticker and day and
+// returns how many timestamps gained a level. A failure here never fails the
+// pass: the levels are an addition to the recovered rows, not the recovery
+// itself.
+//
+// A non-nil store records the outcome. Only a completed past session should be
+// passed a store: the current session still gains rows, so settling it would
+// stop the next sweep from covering them.
+func (m *Manager) fillTickerMajors(ctx context.Context, ticker string, date time.Time, store *stateStore) int {
+	fill := m.majorLevelStore()
+	if fill == nil || ctx.Err() != nil {
+		return 0
+	}
+	dateStr := date.Format("2006-01-02")
+	if store != nil && !m.majorsIsDryRun() {
+		// A settled day is not asked for again. The feed only shrinks, so a
+		// second request returns the same coverage or less; the remaining
+		// empty rows are ones it never served (pre-market, or pruned).
+		if _, settled := store.majorsState(dateStr, ticker); settled {
+			return 0
+		}
+	}
+	res, err := fill(ctx, ticker, date)
+	if err != nil {
+		m.log("backfill", "major levels for %s on %s: %v", ticker, dateStr, err)
+		if store != nil && !m.majorsIsDryRun() {
+			// Not settled: a transient failure must be retried, unlike a
+			// session the feed genuinely no longer serves.
+			store.forgetMajorsState(dateStr, ticker)
+		}
+		return 0
+	}
+	if store != nil && !m.majorsIsDryRun() {
+		reason := "complete"
+		switch {
+		case res.Samples == 0 && res.Pending > 0:
+			reason = "unavailable"
+		case res.Pending > 0:
+			reason = "partial"
+		}
+		store.setMajorsState(dateStr, ticker, majorsRecord{
+			Reason:  reason,
+			Pending: res.Pending,
+			At:      time.Now(),
+		})
+	}
+	return res.Filled
+}
+
+// FillMajorsCatchUp fills historical major levels for every enabled ticker on
+// any past session that still has empty rows, at most once per interval. Used
+// at startup, where a backlog is taken while the feed still serves it.
+func (m *Manager) FillMajorsCatchUp(ctx context.Context) int {
+	settings := m.settings()
+	if !m.enabled(settings) || m.majorLevelStore() == nil {
+		return 0
+	}
+	if !m.markPass("majors-catchup-"+utils.GetMarketDate().Format("2006-01-02"), majorsSweepInterval) {
+		return 0
+	}
+	return m.SweepMajors(ctx, majorsLookbackDays)
+}
+
+// fillMajorsCatchUpLocked is the sweep for a caller that already holds the
+// pass (the nightly archive roundup), so it does not need the interval gate.
+func (m *Manager) fillMajorsCatchUpLocked(ctx context.Context) int {
+	if !m.enabled(m.settings()) || m.majorLevelStore() == nil {
+		return 0
+	}
+	return m.SweepMajors(ctx, majorsLookbackDays)
+}
+
+// SweepMajors fills levels for every enabled ticker on each past session within
+// the last `days` calendar days that the ledger has not settled, and reports how
+// many timestamps gained a value. Weekends are skipped and the current session
+// is never touched: it is still gaining rows and the live fill covers it.
+//
+// A session is settled once it is complete, partial, or no longer served. The
+// feed only shrinks, so re-asking can only return less; only a failed request
+// leaves the day unsettled for the next sweep.
+func (m *Manager) SweepMajors(ctx context.Context, days int) int {
+	settings := m.settings()
+	if !m.enabled(settings) || m.majorLevelStore() == nil || days <= 0 {
+		return 0
+	}
+	store := m.state(settings)
+	tickers := m.tickers(settings)
+	et := utils.GetMarketTimezone()
+	now := time.Now().In(et)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, et)
+
+	total := 0
+	checked := 0
+	for offset := 1; offset <= days; offset++ {
+		day := today.AddDate(0, 0, -offset)
+		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+			continue
+		}
+		dateStr := day.Format("2006-01-02")
+		for _, ticker := range tickers {
+			if ctx.Err() != nil {
+				return total
+			}
+			if _, settled := store.majorsState(dateStr, ticker); settled {
+				continue
+			}
+			checked++
+			total += m.fillTickerMajors(ctx, ticker, day, store)
+		}
+	}
+	if checked > 0 {
+		m.log("backfill", "major levels catch-up: %d ticker-day(s) checked, %d timestamp(s) filled",
+			checked, total)
+	}
+	return total
 }
 
 // RunEOD recovers one session from the end-of-day archive. It is the authority
@@ -394,9 +625,11 @@ func (m *Manager) RunEOD(ctx context.Context, date time.Time) Report {
 	if !m.begin("eod", dateStr) {
 		return m.Status()
 	}
-	report := Report{Phase: "eod", Date: dateStr, StartedAt: time.Now()}
 	store := m.state(settings)
 	queue := m.tickers(settings)
+	report := Report{Phase: "eod", Date: dateStr, StartedAt: time.Now(), Total: len(queue)}
+	m.log("backfill", "archive pass %s starting: %d ticker(s) to check", dateStr, len(queue))
+	m.publishProgress("eod", dateStr, report.StartedAt, 0, len(queue), 0, 0, 0, 0)
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -410,17 +643,32 @@ func (m *Manager) RunEOD(ctx context.Context, date time.Time) Report {
 					continue
 				}
 				scalars, ladders, bytes, requests, err := m.recoverTickerEOD(ctx, settings, store, ticker, date)
+				// The majors feed is independent of the archive, so this runs
+				// even when the ledger already considers the day settled: a day
+				// recovered before this fill existed still has empty columns.
+				majors := m.fillTickerMajors(ctx, ticker, date, store)
 				mu.Lock()
+				report.Majors += majors
 				report.Tickers++
 				report.Requests += requests
 				report.Scalars += scalars
 				report.Ladders += ladders
 				report.LadderBytes += bytes
+				done := report.Tickers
 				if err != nil {
 					report.Skipped = append(report.Skipped, ticker+": "+err.Error())
 					report.LastError = err.Error()
 				}
+				m.publishProgress("eod", dateStr, report.StartedAt, done, len(queue), report.Requests, report.Scalars, report.Ladders, report.LadderBytes)
 				mu.Unlock()
+
+				if err != nil {
+					m.log("backfill", "archive pass %s: %s failed [%d/%d]%s: %v", dateStr, ticker, done, len(queue), etaSuffix(report.StartedAt, done, len(queue)), err)
+				} else if scalars > 0 || ladders > 0 {
+					m.log("backfill", "archive pass %s: %s recovered %d scalars, %d ladders (%d KB) [%d/%d]%s", dateStr, ticker, scalars, ladders, bytes/1024, done, len(queue), etaSuffix(report.StartedAt, done, len(queue)))
+				} else {
+					m.log("backfill", "archive pass %s: %s already recovered, skipped [%d/%d]%s", dateStr, ticker, done, len(queue), etaSuffix(report.StartedAt, done, len(queue)))
+				}
 			}
 		}()
 	}
@@ -430,14 +678,21 @@ func (m *Manager) RunEOD(ctx context.Context, date time.Time) Report {
 	close(jobs)
 	wg.Wait()
 
-	m.log("backfill", "archive pass %s: %d tickers, %d scalars, %d ladders (%d KB)",
-		dateStr, report.Tickers, report.Scalars, report.Ladders, report.LadderBytes/1024)
+	m.log("backfill", "archive pass %s: %d tickers, %d scalars, %d ladders (%d KB), %d major levels",
+		dateStr, report.Tickers, report.Scalars, report.Ladders, report.LadderBytes/1024, report.Majors)
+	// The archive only covers its own day. Older sessions that still have
+	// empty level columns are picked up here, while the feed still serves
+	// them, and each one is settled in the ledger so it is not asked again.
+	m.fillMajorsCatchUpLocked(ctx)
 	return m.finish(report)
 }
 
 func (m *Manager) recoverTickerEOD(ctx context.Context, settings *config.Settings, store *stateStore, ticker string, date time.Time) (int, int, int64, int, error) {
 	dateStr := date.Format("2006-01-02")
-	if rec, ok := store.record(dateStr, ticker); ok && !rec.Skipped && rec.Source == "eod" && rec.ArchiveDate == dateStr {
+	if rec, ok := store.record(dateStr, ticker); ok && rec.Source == "eod" {
+		// A ledger record means this ticker-day is settled: either recovered
+		// successfully, or permanently skipped because the archive moved past
+		// this session. Neither is worth another download.
 		return 0, 0, 0, 0, nil
 	}
 	if ctx.Err() != nil {
@@ -449,6 +704,7 @@ func (m *Manager) recoverTickerEOD(ctx context.Context, settings *config.Setting
 	profilePath := database.ProfileDBPath(database.DBPath(settings.DataDirectory, ticker, date, nil, "backfill"))
 
 	scalars := make(map[float64]map[string]interface{})
+	scalarRanks := make(map[float64]map[string]int)
 	fills := make(map[string][]database.LadderFill)
 	live := make(map[string][]float64)
 	lastFill := make(map[string]float64)
@@ -458,7 +714,7 @@ func (m *Manager) recoverTickerEOD(ctx context.Context, settings *config.Setting
 			return nil
 		}
 		rowScalars, rowProfiles := database.SplitBackfillSample(sample.Payload)
-		mergeScalars(scalars, sample.Timestamp, rowScalars)
+		mergeScalars(scalars, scalarRanks, sample.Timestamp, endpoint, rowScalars)
 		if endpoint == "" || !config.KeepProfileEndpoint(settings, endpoint) {
 			return nil
 		}
@@ -568,7 +824,7 @@ func (m *Manager) state(settings *config.Settings) *stateStore {
 	return store
 }
 
-func mergeScalars(into map[float64]map[string]interface{}, ts float64, scalars map[string]interface{}) {
+func mergeScalars(into map[float64]map[string]interface{}, ranks map[float64]map[string]int, ts float64, endpoint string, scalars map[string]interface{}) {
 	if len(scalars) == 0 {
 		return
 	}
@@ -577,7 +833,29 @@ func mergeScalars(into map[float64]map[string]interface{}, ts float64, scalars m
 		row = make(map[string]interface{}, len(scalars))
 		into[ts] = row
 	}
+	rowRanks := ranks[ts]
+	if rowRanks == nil {
+		rowRanks = make(map[string]int)
+		ranks[ts] = rowRanks
+	}
 	for key, value := range scalars {
+		// Shared chart columns (zero_gamma, spot, major levels) are owned by a
+		// specific endpoint, lowest rank winning. The archive visits classic and
+		// state files for the same timestamp, and the state model reports these
+		// as 0, so a plain merge would let state erase the classic value. An
+		// empty endpoint (the non-zip stream fallback) keeps last-write-wins.
+		if endpoint != "" {
+			if owners, owned := api.ChartScalarSource(key); owned {
+				rank, allowed := owners[endpoint]
+				if !allowed {
+					continue
+				}
+				if prev, seen := rowRanks[key]; seen && rank >= prev {
+					continue
+				}
+				rowRanks[key] = rank
+			}
+		}
 		row[key] = value
 	}
 }
@@ -620,4 +898,18 @@ func isRateLimited(err error) bool {
 func isSubscriptionDenied(err error) bool {
 	var denied *api.SubscriptionError
 	return errors.As(err, &denied)
+}
+
+// etaSuffix projects when the pass finishes from linear progress, formatted for
+// a log line. done is the number of tickers completed; total is the queue size.
+func etaSuffix(started time.Time, done, total int) string {
+	if done <= 0 || total <= 0 || done >= total {
+		return ""
+	}
+	elapsed := time.Since(started)
+	if elapsed <= 0 {
+		return ""
+	}
+	eta := started.Add(elapsed * time.Duration(total) / time.Duration(done))
+	return fmt.Sprintf(" (ETA %s)", eta.Format("15:04:05 MST"))
 }

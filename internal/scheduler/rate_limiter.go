@@ -6,11 +6,13 @@ import (
 	"time"
 )
 
-// Gexbot quotas are per endpoint pool: each endpoint has its own budget, and a
-// poll that calls eleven endpoints once each does not spend eleven slots of the
-// same pool. The tracker therefore keeps one bucket per endpoint, fed by that
-// endpoint's own X-RateLimit-* headers, and sizes the poll gap from the
-// tightest bucket the poll actually uses.
+// Gexbot quotas are per endpoint group, not per endpoint. Every chain snapshot
+// route the app polls (/{ticker}/{package}/{category}) draws from one shared
+// pool, api_default; the majors and maxchange sub-routes use separate pools
+// the app never requests. A poll that calls fourteen endpoints once each for
+// one ticker therefore spends fourteen slots of the same pool, so the tracker
+// keys its buckets by pool and sizes the poll gap from the pool's budget.
+// See docs.gexbot.com/apidocs/general/rate-limits.
 type endpointBucket struct {
 	requestTimes []float64
 	limit        int
@@ -44,13 +46,14 @@ func (rlt *RateLimitTracker) RecordRequest(endpoint string, requestTime float64,
 	rlt.mu.Lock()
 	defer rlt.mu.Unlock()
 
-	if endpoint == "" {
-		endpoint = "shared"
+	pool := "shared"
+	if endpoint != "" {
+		pool = endpointPool(endpoint)
 	}
-	bucket := rlt.buckets[endpoint]
+	bucket := rlt.buckets[pool]
 	if bucket == nil {
 		bucket = &endpointBucket{requestTimes: make([]float64, 0, 256)}
-		rlt.buckets[endpoint] = bucket
+		rlt.buckets[pool] = bucket
 	}
 	bucket.requestTimes = appendWindow(bucket.requestTimes, requestTime, rlt.rateLimitWindow)
 
@@ -145,10 +148,10 @@ func (rlt *RateLimitTracker) RetryAfterSeconds() float64 {
 }
 
 // GetMinimumInterval is the gap that keeps tickerCount tickers inside every
-// endpoint budget the poll touches. Each bucket receives one call per ticker
-// per poll, so only the ticker count scales the gap, not the endpoint count.
-// Until a bucket's limit is known, the conservative shared-pool estimate is
-// used instead.
+// quota pool the poll touches. One poll spends one call per ticker per
+// endpoint, so all endpoints in the same pool draw from that pool's single
+// budget. Until a pool's limit is known, the conservative shared-pool estimate
+// is used instead.
 func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount int, endpoints []string) float64 {
 	rlt.mu.RLock()
 	defer rlt.mu.RUnlock()
@@ -156,17 +159,21 @@ func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount int, endpoints []str
 	if tickerCount < 1 {
 		tickerCount = 1
 	}
-	if len(endpoints) == 0 {
-		endpoints = []string{""}
+
+	// Group the poll's endpoints by quota pool. Every endpoint the app polls
+	// maps to api_default today, but a pool boundary must not be assumed.
+	poolCounts := make(map[string]int)
+	for _, endpoint := range endpoints {
+		poolCounts[endpointPool(endpoint)]++
 	}
 
 	tightest := 0.0
-	for _, endpoint := range endpoints {
-		bucket := rlt.buckets[endpoint]
+	for pool, count := range poolCounts {
+		bucket := rlt.buckets[pool]
 		if bucket == nil || bucket.limit <= 0 {
 			continue
 		}
-		interval := rlt.rateLimitWindow / float64(bucket.limit) * float64(tickerCount)
+		interval := rlt.rateLimitWindow / float64(bucket.limit) * float64(count) * float64(tickerCount)
 		if interval > tightest {
 			tightest = interval
 		}
@@ -175,23 +182,35 @@ func (rlt *RateLimitTracker) GetMinimumInterval(tickerCount int, endpoints []str
 		return tightest
 	}
 
-	// No per-endpoint budget yet. Assume one shared pool and count every call
-	// the poll makes, as the previous implementation did.
+	// No per-pool budget yet. Assume one shared pool and count every call
+	// the poll makes.
 	if rlt.sharedLimit <= 0 {
 		return 0
 	}
+	callCount := len(endpoints)
+	if callCount == 0 {
+		callCount = 1
+	}
 	interval := rlt.rateLimitWindow / float64(rlt.sharedLimit)
-	interval *= float64(len(endpoints))
+	interval *= float64(callCount)
 	interval *= float64(tickerCount)
 	return interval
 }
 
-// BucketSnapshot reports what is known about one endpoint's budget. Tests and
-// the settings window use it; an unknown endpoint returns zeros.
+// endpointPool maps an endpoint to the gexbot quota pool it draws from. Every
+// endpoint the app polls is a chain snapshot route, and all of them share one
+// pool: api_default. The majors (api_majors) and maxchange (api_max_change)
+// sub-routes use separate pools the app never requests.
+func endpointPool(endpoint string) string {
+	return "api_default"
+}
+
+// BucketSnapshot reports what is known about one endpoint's pool budget. Tests
+// use it; an unknown endpoint returns zeros.
 func (rlt *RateLimitTracker) BucketSnapshot(endpoint string) (limit, remaining int, reset float64) {
 	rlt.mu.RLock()
 	defer rlt.mu.RUnlock()
-	bucket := rlt.buckets[endpoint]
+	bucket := rlt.buckets[endpointPool(endpoint)]
 	if bucket == nil {
 		return 0, 0, 0
 	}

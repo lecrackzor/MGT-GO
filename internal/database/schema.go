@@ -16,13 +16,15 @@ func NewSchemaManager(db *sql.DB) *SchemaManager {
 	return &SchemaManager{db: db}
 }
 
-// EnsureTable ensures the ticker_data table exists with proper schema
+// EnsureTable ensures the ticker_data table exists with proper schema.
+// The legacy profiles_blob column is intentionally not created: ladders now
+// live in the sibling .profiles.db file. Old databases that still carry the
+// column are read through the fallback in DataLoader.LoadProfile.
 func (sm *SchemaManager) EnsureTable(scalarFields []string) error {
 	// Create base table if it doesn't exist
 	_, err := sm.db.Exec(`
 		CREATE TABLE IF NOT EXISTS ticker_data (
-			timestamp REAL PRIMARY KEY,
-			profiles_blob BLOB
+			timestamp REAL PRIMARY KEY
 		) WITHOUT ROWID
 	`)
 	if err != nil {

@@ -67,6 +67,12 @@ body {
 .check input { margin-top: 2px; }
 .check .txt { font-size: .84rem; }
 
+/* Sub-settings sit under the parent checkbox they belong to. The indent and
+   the left rule make the ownership visible without a nested label. */
+.sub-rows { margin: .35rem 0 0 1.55rem; padding-left: .65rem; border-left: 1px solid var(--border); }
+.sub-rows .row + .row { margin-top: .3rem; }
+.sub-rows .help { margin-top: .3rem; }
+
 select, button, input[type=text], input[type=number], input[type=password] {
   background: var(--panel2); border: 1px solid var(--border); border-radius: 5px;
   color: var(--text); padding: 6px 10px; font-size: .82rem;
@@ -79,6 +85,24 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 input[type=number].small { width: 84px; max-width: 100%; }
 
 /* ---------- Ticker table ---------- */
+.hint-box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; font-size: .8rem; color: var(--muted); line-height: 1.5; }
+.hint-box .hint-title { color: var(--accent); font-weight: 600; margin-bottom: 6px; font-size: .82rem; }
+.hint-box summary.hint-title { cursor: pointer; user-select: none; margin-bottom: 0; list-style: none; display: flex; align-items: center; gap: 7px; }
+.hint-box summary.hint-title::-webkit-details-marker { display: none; }
+.hint-box summary.hint-title::before { content: '▸'; font-size: .78rem; transition: transform .15s ease; color: var(--muted); }
+.hint-box[open] summary.hint-title::before { transform: rotate(90deg); }
+.hint-box summary.hint-title:hover { color: var(--text); }
+.hint-box[open] summary.hint-title { margin-bottom: 8px; }
+.hint-box > div + div { margin-top: 8px; }
+.hint-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: .78rem; }
+.hint-table th { text-align: left; padding: 5px 8px; color: var(--text); border-bottom: 1px solid var(--border); font-weight: 600; }
+.hint-table td { padding: 5px 8px; border-bottom: 1px solid #242424; vertical-align: top; }
+.hint-table td:first-child { color: var(--text); white-space: nowrap; }
+.bulk-bar { display: flex; gap: 16px; align-items: center; margin-bottom: .5rem; font-size: .8rem; color: var(--muted); }
+.bulk-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.bulk-toggle input[type=checkbox] { margin: 0; }
+.bulk-bar select { padding: 5px 10px; }
+.row-sep { font-size: .8rem; color: var(--muted); }
 .table-wrap { overflow-x: auto; }
 .ticker-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 .ticker-table th { text-align: left; padding: 8px 10px; color: var(--accent); border-bottom: 2px solid var(--border); font-weight: 600; white-space: nowrap; }

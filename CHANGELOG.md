@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-11-24 - v1.3.0
+
+### Collection
+
+- Historical major gamma levels are now stored. The major call and put gamma
+  lines come from the NinjaTrader majors feed, not from the chain snapshots, and
+  were previously only ever held in memory for whichever chart had fetched them.
+  They are now written into the day file: during the session for live tickers,
+  and by each recovery pass for everything else, including archive-only tickers.
+  The feed keeps only a short rolling window, so a session is captured while it
+  is still served.
+- A day recovered from the archive used to keep those two columns empty for
+  good. It now gets them, and `cmd/majors-backfill` recovers what the feed still
+  serves for recent days.
+
+### Backfill
+
+- Recovery is ledger-aware. A session that is complete, partially served, or no
+  longer available is recorded and not requested again, so a nightly roundup
+  asks only for the day that just closed.
+- Intraday gap fill now tops up the major levels for every live ticker, not only
+  when it recovers rows.
+- The nightly archive roundup sweeps the recent sessions after its own pass, so
+  a session missed while the app was closed is picked up while the feed still
+  serves it.
+
+### Chart
+
+- Auto-follow stays on. Toggling it scrolled the chart, and that scroll was read
+  as a manual pan, so the toggle turned itself back off unless the view already
+  happened to be in place.
+
+### Storage
+
+- The major levels land only on timestamps that already exist; the fill never
+  inserts a row, never rewrites a known level, and is therefore safe to re-run.
+- A day is settled once it is complete, partially served (the remainder is
+  pre-market rows the feed never carries), or no longer available. Only a failed
+  request leaves it open for a retry. A dry run settles nothing.
+- `cmd/majors-backfill` runs the same sweep by hand for recent days.
+
 ## 2026-11-19 - v1.2.2
 
 ### Backfill
